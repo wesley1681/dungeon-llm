@@ -1,0 +1,94 @@
+============================================================
+USER: （開場，請描述初始場景，引導玩家進入冒險）
+============================================================
+think=True  show_thinking=True  options={'temperature': 0.8, 'num_predict': 1500}
+============================================================
+RESPONSE
+============================================================
+
+[思考中]
+
+*   Context: The players are hired adventurers tasked with retrieving a mayor's amulet from goblins in an abandoned dungeon.
+    *   Current Setting: Damp stone walls, descending stairs, smell of mold and rot, goblin laughter ahead.
+    *   Characters: Aria (HP 22, AC 14), Thor (HP 31, AC 16), Goblins (1, 2, 3).
+    *   Goal: Provide the opening scene, guide players into adventure.
+
+    *   Step 1: Analyze: This is the starting point. No player actions yet.
+    *   Step 2: Mechanism: [INITIATIVE: start] will be needed when combat begins, but since we are just starting, maybe just setting the mood. However, the prompt says "start combat" for [INITIATIVE: start], so I'll prepare the environment.
+    *   Step 3: Narrative: Describe the dark, eerie descent into the dungeon to set the tone.
+    *   Step 4: Output: The actual response.
+
+    *   *Drafting the scene:*
+        火把的光芒在潮濕的石壁上搖曳，空氣中瀰漫著霉味和隱約的腐臭。你們正站在通往地底深處的階梯入口，前方轉角處傳來幾聲尖銳且令人不安的地精笑聲。這座廢棄的石造地下城，似乎正等待著你們去揭開它的祕密。
+
+        艾里亞，你感覺到手心有些濕熱；索爾，你的武器在黑暗中隱約閃著寒光。
+
+        你們打算如何行動？是悄悄潛入，還是直接衝進那片笑聲之中？
+
+    *   *Checking constraints:*
+        - Under 150 words? Yes.
+        - Natural tags? I'll include the starting prompt for the players to act.
+        - Character status: Aria and Thor are ready.
+
+    *   *Wait, the prompt asks me to start. I should establish the scene and wait for player input.*
+
+    *   *Refining Step 2:* Since we aren't in combat *yet*, I won't trigger [INITIATIVE] immediately unless they decide to jump in. I'll describe the environment.
+
+    *   *Final Polish:*
+        火把的光芒在潮濕的石壁上搖曳，空氣中瀰漫著霉味與腐臭。你們正站在通往地底深處的階梯前，前方轉角處隱約傳來幾聲尖銳、粗嘎的地精笑聲，彷彿在嘲笑闖入者。
+
+        這座廢棄的地下城，就是你們尋找鎮長護身符的地點。艾里亞，你感覺到空氣中不安的流動；索爾，你的手正握著武器，準備迎接未知。
+
+        前方就是戰鬥的開端，你們打算如何行動？
+
+    *   *Actually, the prompt says: "If starting combat, use [INITIATIVE: start]". I will wait for their action to trigger combat, but I'll set the stage.*
+
+    *   *Wait, I should check if I need to output the thinking process first.*
+    *   *Instruction says: "Step 1... Step 2... Step 3... Step 4... Output"*
+
+    *   Step 1: 初始場景，無玩家動作。
+    *   Step 2: 無（等待玩家決定是否進入戰鬥）。
+    *   Step 3: 描述昏暗、潮濕的地下城入口與地精的笑聲，引導玩家決定行動方式。
+
+    *   Let's go.
+
+    *   *Wait, the user provided the "Initial Scene" in the prompt description. I should expand on it to start the game.*
+
+    *   *Revised Plan:*
+        Step 1: 初始場景，引導玩家進入。
+        Step 2: 無（等待玩家決定是否展開戰鬥）。
+        Step 3: 描述昏暗、潮濕的地下城入口與地精的笑聲，引導玩家決定行動方式。
+
+        (Self-Correction: The prompt says "Starting combat, use [INITIATIVE: start]". Since they haven't acted, I'll provide the atmosphere and wait.)
+
+    *   *Let's provide the actual response.*
+
+    *   Step 1【分析】初始場景，無玩家動作。
+    *   Step 2【機制】無
+    *   Step 3【敘事】描述昏暗、潮濕的地下城入口與地精的笑聲，引導玩家決定行動方式。
+    *   Step 4【輸出】
+        火把的光芒在潮濕的石壁上搖曳，空氣中瀰漫著霉味與腐臭。你們正站在通往地底深處的階梯前，前方轉角處隱約傳來幾聲尖銳、粗嘎的地精笑聲，彷彿在嘲笑闖入者。
+
+        這座廢棄的地下城，就是你們尋找鎮長護身符的地點。艾里亞，你感覺到空氣中不安的流動；索爾，你的手正握著武器，準備迎接未知。
+
+        你們打算如何行動？是悄悄潛行靠近，還是直接衝進那片笑聲之中？
+
+    *   *Check word count: ~130 words. Perfect.*
+
+    *   *Wait, I should check if I can use [ROLL: aria Perception] etc. later. For now, it's just setting the scene.*
+
+    *   *One detail: The prompt says "Start combat, use [INITIATIVE: start]". I'll tell the players that if they charge in, we start combat.*
+
+    *   *Actually, I'll just output the thinking process and the response.*
+
+    *   *Final check of the prompt:* "Each response within 150 words... Do not rewrite... First draft is final version."
+
+    *   *Let's finalize the content.*
+
+    Step 1【分析】初始場景，無玩家動作。
+    Step 2【機制】無
+    Step 3【敘事】描述昏暗、潮濕的地下城入口與地精的笑聲，引導玩家決定行動方式。
+    Step 4【輸出】
+    火把的光芒在潮濕的石壁上搖曳，空氣中瀰漫著霉味與腐臭。你們正站在通往地底深處的階梯前，前方轉角處隱約傳來幾聲尖銳、粗嘎的地精笑聲，彷彿在嘲笑闖入者。
+
+    這座廢棄的地下城，就是你們尋找鎮長護身符的地點。艾里亞，你感覺到空氣中不安的流
