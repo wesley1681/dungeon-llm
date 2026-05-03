@@ -18,6 +18,9 @@ llama.cpp-tq3/*.py
 # Downloaded models
 models/
 
+# Docs / planning
+docs/
+
 # IDE
 .vscode/
 .idea/
