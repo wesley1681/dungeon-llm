@@ -12,15 +12,30 @@ from .llm.arbiter import ArbiterAgent
 from .llm.tag_parser import parse_and_resolve
 from .engine.combat import execute_action, format_result
 
-OLLAMA_URL = "http://localhost:11434"
-MODEL = "gemma4-abliterix:latest"
+OLLAMA_URL    = "http://localhost:11434"
+LLAMACPP_URL  = "http://localhost:11435"
+
+# ── 選擇後端 ──────────────────────────────────────────
+# "ollama"   → 使用 Ollama（預設，qwen3:14b / deepseek-r1:14b 等）
+# "llamacpp" → 使用 llama-server（Qwen3.6-27B TQ3_4S，需先執行 start_llamacpp.bat）
+BACKEND = "ollama"
+
+MODEL        = "gemma4:26b"               # ollama 後端用
+LLAMACPP_MODEL = "Qwen3.6-27B-TQ3_4S"    # llamacpp 後端用（任意字串，llama-server 忽略）
+
+def _backend_url():
+    return LLAMACPP_URL if BACKEND == "llamacpp" else OLLAMA_URL
+
+def _active_model():
+    return LLAMACPP_MODEL if BACKEND == "llamacpp" else MODEL
 
 # ── GM 設定 ──────────────────────────────────────────
 GM_THINK         = False
 GM_SHOW_THINKING = False
 GM_OPTIONS = {
-    "temperature": 0.8,
-    "num_predict": 4096,
+    "temperature":    0.8,
+    "num_predict":    4096,
+    "repeat_penalty": 1.15,
 }
 
 # ── 除錯 ─────────────────────────────────────────────
@@ -118,7 +133,7 @@ def run_combat(world_state, gm: GMAgent, thor_agent: PlayerAgent,
                     f"現在是 {char.name}（{cid}）的回合，HP {char.hp}/{char.max_hp}。",
                     f"{char.name} 的武器：{weapons_str}",
                     f"可攻擊目標：{target_list}",
-                    "請選擇一個行動，用自然語言一句話描述，必須使用實際武器名稱，例如「地精甲揮彎刀攻擊艾里亞」。",
+                    "請選擇一個行動，用自然語言一句話描述，必須使用實際武器名稱，例如「地精甲揮彎刀攻擊凱恩」。",
                 ]
                 print()
                 npc_raw = gm.generate(npc_prompt, on_chunk=lambda c, t=False: print(c, end="", flush=True) if not t else None)
@@ -173,7 +188,7 @@ def run_combat(world_state, gm: GMAgent, thor_agent: PlayerAgent,
                     print(f"  （索爾無法行動：{thor_action.get('reason')}）")
 
             elif cid == "aria":
-                # 艾里亞回合：真人輸入
+                # 凱恩回合：真人輸入
                 aria = world_state.characters["aria"]
                 inv = "、".join(aria.inventory) if aria.inventory else "無"
                 status_str = "、".join(aria.status_effects) if aria.status_effects else "無"
@@ -181,7 +196,7 @@ def run_combat(world_state, gm: GMAgent, thor_agent: PlayerAgent,
                 enemy_str = "、".join(f"{n}（{c}）" for c, n in enemies.items())
 
                 print(f"\n  敵人：{enemy_str}")
-                print(f"  【艾里亞｜HP {aria.hp}/{aria.max_hp} AC {aria.ac}｜{inv}｜狀態：{status_str}】", end="")
+                print(f"  【凱恩｜HP {aria.hp}/{aria.max_hp} AC {aria.ac}｜{inv}｜狀態：{status_str}】", end="")
                 human_input = input().strip()
 
                 if not human_input:
@@ -236,25 +251,31 @@ def run_combat(world_state, gm: GMAgent, thor_agent: PlayerAgent,
 
 # ── 主探索循環 ────────────────────────────────────────
 
-def run_game(model: str = MODEL) -> None:
-    check_ollama(model)
+def run_game() -> None:
+    url   = _backend_url()
+    model = _active_model()
+    bk    = BACKEND
+
+    if bk == "ollama":
+        check_ollama(model)
+
     world_state = build_world_state()
 
     gm      = GMAgent(model=model, world_state=world_state,
                       think=GM_THINK, show_thinking=GM_SHOW_THINKING,
-                      options=GM_OPTIONS)
+                      options=GM_OPTIONS, base_url=url, backend=bk)
     thor_agent = PlayerAgent(model=model,
                              character=world_state.characters["thor"],
                              personality=THOR_PERSONALITY,
                              think=THOR_THINK, show_thinking=THOR_SHOW_THINKING,
-                             options=THOR_OPTIONS)
-    arbiter = ArbiterAgent(model=model)
+                             options=THOR_OPTIONS, base_url=url, backend=bk)
+    arbiter = ArbiterAgent(model=model, base_url=url, backend=bk)
 
     print("\n" + "═" * 60)
     print(f"  ⚔  {world_state.scenario_name}")
     print("═" * 60)
     print(OPENING_SCENE)
-    print('\n輸入你（艾里亞）的行動。輸入 "quit" 退出，"status" 查看狀態。')
+    print('\n輸入你（凱恩）的行動。輸入 "quit" 退出，"status" 查看狀態。')
     print("═" * 60 + "\n")
 
     player_actions: list[str] = []
@@ -300,7 +321,7 @@ def run_game(model: str = MODEL) -> None:
         aria = world_state.characters["aria"]
         inv        = "、".join(aria.inventory)       if aria.inventory       else "無"
         status_str = "、".join(aria.status_effects)  if aria.status_effects  else "無"
-        print(f"\n【你（艾里亞）｜HP {aria.hp}/{aria.max_hp} AC {aria.ac}｜道具：{inv}｜狀態：{status_str}】", end="")
+        print(f"\n【你（凱恩）｜HP {aria.hp}/{aria.max_hp} AC {aria.ac}｜道具：{inv}｜狀態：{status_str}】", end="")
         human_input = input().strip()
 
         if not human_input:
@@ -316,8 +337,8 @@ def run_game(model: str = MODEL) -> None:
             player_actions = []
             continue
 
-        world_state.event_log.append(f"艾里亞：{human_input}")
-        player_actions = [f"索爾：{thor_response}", f"艾里亞：{human_input}"]
+        world_state.event_log.append(f"凱恩：{human_input}")
+        player_actions = [f"索爾：{thor_response}", f"凱恩：{human_input}"]
 
 
 if __name__ == "__main__":

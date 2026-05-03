@@ -19,8 +19,8 @@ THOR_PERSONALITY = (
 def build_world_state() -> WorldState:
     # ── 玩家角色 ────────────────────────────────────────────────────────────────
     aria = Character(
-        name="艾里亞", race="人類", class_="盜賊", level=3,
-        stats=Stats(STR=10, DEX=16, CON=12, INT=13, WIS=11, CHA=14),
+        name="凱恩", race="人類", class_="盜賊", level=3,
+        stats=Stats(STR=100, DEX=16, CON=12, INT=13, WIS=11, CHA=14),
         hp=22, max_hp=22, ac=14,
         weapons=[
             WEAPON_DEFS["短劍"],
@@ -29,7 +29,7 @@ def build_world_state() -> WorldState:
         ],
         consumables=[
             Consumable("火把", 3, "light",  ""),
-            Consumable("火瓶", 2, "throw",  "2d6"),   # AOE 投擲，DEX DC13 豁免半傷
+            Consumable("火瓶", 2, "throw",  "2d100"),   # AOE 投擲，DEX DC13 豁免半傷
             Consumable("毒煙彈", 1, "throw", "1d6"),  # AOE 投擲，CON DC12 豁免半傷
         ],
         gear=["盜賊工具", "繩索 15 尺"],

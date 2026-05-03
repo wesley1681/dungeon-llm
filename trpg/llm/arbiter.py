@@ -1,8 +1,8 @@
 import json
 import pathlib
 import re
-import requests
 from .rulebook import COMBAT_RULEBOOK
+from .backend import complete_chat
 
 OLLAMA_URL = "http://localhost:11434"
 _DEBUG_DIR = pathlib.Path(__file__).parent.parent / "debug"
@@ -10,8 +10,10 @@ _DEBUG_DIR.mkdir(exist_ok=True)
 
 
 class ArbiterAgent:
-    def __init__(self, model: str):
+    def __init__(self, model: str, base_url: str = OLLAMA_URL, backend: str = "ollama"):
         self.model = model
+        self.base_url = base_url
+        self.backend = backend
         self.options = {"temperature": 0.1, "num_predict": 512}
 
     def parse(
@@ -68,15 +70,10 @@ class ArbiterAgent:
             json.dumps(messages, ensure_ascii=False, indent=2), encoding="utf-8"
         )
 
-        resp = requests.post(
-            f"{OLLAMA_URL}/api/chat",
-            json={"model": self.model, "messages": messages,
-                  "stream": False, "think": False, "options": self.options},
-            timeout=60,
+        content = complete_chat(
+            self.base_url, self.model, messages, self.options,
+            backend=self.backend, timeout=60,
         )
-        resp.raise_for_status()
-
-        content = resp.json().get("message", {}).get("content", "").strip()
         return self._extract_json(content, player_action)
 
     def _extract_json(self, text: str, original_action: str) -> dict:

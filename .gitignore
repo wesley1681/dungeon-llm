@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environment
+gemma-env/
+
+# Debug / runtime logs
+trpg/debug/
+
+# llama.cpp build artifacts
+llama.cpp-tq3/build/
+llama.cpp-tq3/_*.bat
+llama.cpp-tq3/*.txt
+llama.cpp-tq3/*.py
+
+# Downloaded models
+models/
+
+# IDE
+.vscode/
+.idea/

@@ -1,7 +1,7 @@
 import json
 import pathlib
-import requests
 from ..engine.character import Character
+from .backend import stream_chat
 
 OLLAMA_URL = "http://localhost:11434"
 _DEBUG_DIR = pathlib.Path(__file__).parent.parent / "debug"
@@ -31,13 +31,16 @@ HP：{hp}/{max_hp}  AC：{ac}
 class PlayerAgent:
     def __init__(self, model: str, character: Character, personality: str,
                  think: bool = False, show_thinking: bool = False,
-                 options: dict = None):
+                 options: dict = None,
+                 base_url: str = OLLAMA_URL, backend: str = "ollama"):
         self.model = model
         self.character = character
         self.personality = personality
         self.think = think
         self.show_thinking = show_thinking
         self.options = options or {}
+        self.base_url = base_url
+        self.backend = backend
         self.history: list[dict] = []
 
     def _system_prompt(self) -> str:
@@ -60,50 +63,11 @@ class PlayerAgent:
             json.dumps(messages, ensure_ascii=False, indent=2), encoding="utf-8"
         )
 
-        resp = requests.post(
-            f"{OLLAMA_URL}/api/chat",
-            json={"model": self.model, "messages": messages, "stream": True, "think": self.think, "options": self.options},
-            stream=True,
-            timeout=120,
+        full = stream_chat(
+            self.base_url, self.model, messages, self.options,
+            think=self.think, on_chunk=on_chunk, backend=self.backend, timeout=120,
         )
-        resp.raise_for_status()
-
-        full = ""
-        in_thinking = False
-        for line in resp.iter_lines():
-            if not line:
-                continue
-            data = json.loads(line)
-            msg = data.get("message", {})
-            if msg.get("thinking"):
-                if not in_thinking:
-                    in_thinking = True
-                    if on_chunk:
-                        on_chunk(f"\n[{self.character.name} 思考中]\n", thinking=True)
-                    elif self.show_thinking:
-                        print(f"\n[{self.character.name} 思考中]\n", flush=True)
-                chunk = msg["thinking"]
-                if on_chunk:
-                    on_chunk(chunk, thinking=True)
-                elif self.show_thinking:
-                    print(chunk, end="", flush=True)
-            elif msg.get("content"):
-                if in_thinking:
-                    in_thinking = False
-                    if on_chunk:
-                        on_chunk(f"\n[{self.character.name} 回答]\n", thinking=True)
-                    elif self.show_thinking:
-                        print(f"\n\n[{self.character.name} 回答]\n", flush=True)
-                chunk = msg["content"]
-                full += chunk
-                if on_chunk:
-                    on_chunk(chunk, thinking=False)
-                else:
-                    print(chunk, end="", flush=True)
-            if data.get("done"):
-                break
         if not on_chunk:
             print()
-
         self.history.append({"role": "assistant", "content": full})
         return full

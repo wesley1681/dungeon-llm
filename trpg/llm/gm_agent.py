@@ -1,13 +1,29 @@
 import json
 import pathlib
-import requests
 from ..engine.world_state import WorldState
+from .backend import stream_chat, complete_chat
 
 OLLAMA_URL = "http://localhost:11434"
 _DEBUG_DIR = pathlib.Path(__file__).parent.parent / "debug"
 _DEBUG_DIR.mkdir(exist_ok=True)
 
 _COMBAT_SYSTEM = "你是D&D遊戲主持人（GM）。用繁體中文描述戰鬥事件，直接輸出敘事，不加分析欄位或---分隔線。"
+
+_TURN_REMINDER = """---
+【輪到你了，請以地下城主（GM）身份回應】
+
+核心規則（每次都適用）：
+1. 標籤只在 --- 後的敘事段才會被系統執行，機制行不執行
+2. 玩家移動 → 敘事段必須包含 [TRAVEL: north/south/east/west]
+3. 需要擲骰 → 直接在敘事段嵌入 [ROLL: aria DEX DC14]，不要叫玩家自己擲
+4. 進入有敵人的新房間才使用 [INITIATIVE: start]
+5. 只描述已知出口，不創造新房間
+
+輸出格式（必須完整）：
+分析：（你的判斷與計畫）
+機制：（將使用的標籤名稱，僅備忘）
+---
+（繁體中文敘事，350字以內，在此嵌入執行標籤）"""
 
 _SYSTEM_TEMPLATE = """你是一位專業的D&D 5e地下城主（GM）。請用繁體中文進行沉浸式敘事。
 
@@ -34,34 +50,40 @@ STR：運動  DEX：特技、巧手、潛行  CON：體質豁免
 INT：奧秘、歷史、調查、自然  WIS：洞察、醫療、感知、求生  CHA：欺騙、恐嚇、說服
 
 ## 移動規則
-- 玩家說「往北走」「進入東邊的門」等 → 輸出 [TRAVEL: north]（或 south/east/west）
-- 只能往有出口的方向移動，無效方向告知玩家
-- 進入新房間後描述房間內容，若有物品可提示拾取
+- 玩家說「往北走」「進入東邊的門」等 → 必須在 --- 後的敘事中嵌入 [TRAVEL: north]（或 south/east/west）
+- 格式必須完整：[TRAVEL: north]，不能只寫 [TRAVEL]
+- 【嚴格限制】只能往「當前位置」欄位列出的出口方向移動，禁止描述或創造任何未列出的房間、走廊、岔路
+- 若玩家想往沒有出口的方向走，告知「這個方向沒有出口」
+- 進入新房間後，依照系統提供的房間描述敘述，不要自行添加房間內容
 
 ## 注意事項
-- 每次回應控制在350字以內，敘事豐富但節奏緊湊
+- 每次回應控制在500字以內，敘事豐富但節奏緊湊
 - 標籤要自然融入敘事，不要孤立列出
 - NPC由你扮演，玩家角色只描述他們面臨的情境，不替玩家做決定
 - 死亡的角色（HP=0）從戰鬥中移除
 
 ## 輸出格式（每次回應必須嚴格遵守此格式，不得省略任何欄位）
 
-分析：（三行以內，描述玩家行動與當前情境）
-機制：（一行，列出需要的標籤，或寫「無」）
+分析：（至少十行，先確認當前劇情、玩家意圖、在場人物、應該如何推動劇情）
+機制：（一行，僅列標籤名稱供人閱讀，此行不會被執行）
 ---
-（繁體中文敘事，350字以內，自然嵌入規則標籤）
+（繁體中文敘事，350字以內）
+注意：[TRAVEL:] [INITIATIVE:] 等所有標籤必須寫在此敘事段才會生效。機制行只是備忘，寫在那裡不會有任何效果。
 """
 
 
 class GMAgent:
     def __init__(self, model: str, world_state: WorldState,
                  think: bool = False, show_thinking: bool = False,
-                 options: dict = None):
+                 options: dict = None,
+                 base_url: str = OLLAMA_URL, backend: str = "ollama"):
         self.model = model
         self.world_state = world_state
         self.think = think
         self.show_thinking = show_thinking
         self.options = options or {}
+        self.base_url = base_url
+        self.backend = backend
         self.history: list[dict] = []
 
     def _system_prompt(self) -> str:
@@ -91,10 +113,18 @@ class GMAgent:
             location_section = f"## 當前場景\n{ws.scene}"
 
         # ── Character status ──────────────────────────────────────────────────
+        # When a dungeon map is active, only show NPCs that are in the current room;
+        # enemies in other rooms are unknown to the party and must not appear here.
+        current_room_enemy_ids: set[str] = set()
+        if ws.dungeon_map:
+            current_room_enemy_ids = set(ws.dungeon_map.current_room.enemy_ids)
+
         status_lines = []
         for cid, char in ws.characters.items():
             if not char.is_alive():
                 continue
+            if ws.dungeon_map and char.is_npc and cid not in current_room_enemy_ids:
+                continue  # enemy in a different room — don't reveal to GM
             effects = "、".join(char.status_effects) if char.status_effects else "無"
             status_lines.append(
                 f"  {char.name}（{cid}）：HP {char.hp}/{char.max_hp}，AC {char.ac}，狀態 {effects}"
@@ -107,7 +137,7 @@ class GMAgent:
             char_ids="\n".join(id_lines),
         )
 
-    def generate(self, player_actions: list[str], on_chunk=None, stream: bool = True) -> str:
+    def generate(self, player_actions: list[str], on_chunk=None) -> str:
         """Generate GM narration. on_chunk(chunk, thinking) called per token if provided."""
         if player_actions:
             content = "玩家行動：\n" + "\n".join(f"• {a}" for a in player_actions)
@@ -115,58 +145,35 @@ class GMAgent:
             content = "（開場，請描述初始場景，引導玩家進入冒險）"
 
         self.history.append({"role": "user", "content": content})
-        messages = [{"role": "system", "content": self._system_prompt()}] + self.history
+        # _TURN_REMINDER is appended every call but never stored in history,
+        # so the model sees it fresh each time without it accumulating.
+        messages = (
+            [{"role": "system", "content": self._system_prompt()}]
+            + self.history
+            + [{"role": "user", "content": _TURN_REMINDER}]
+        )
         (_DEBUG_DIR / "gm_context.json").write_text(
             json.dumps(messages, ensure_ascii=False, indent=2), encoding="utf-8"
         )
 
-        resp = requests.post(
-            f"{OLLAMA_URL}/api/chat",
-            json={"model": self.model, "messages": messages, "stream": stream, "think": self.think, "options": self.options},
-            stream=stream,
-            timeout=180,
-        )
-        resp.raise_for_status()
+        def _on_chunk(chunk, thinking=False):
+            if thinking:
+                if self.show_thinking:
+                    print(chunk, end="", flush=True)
+                if on_chunk:
+                    on_chunk(chunk, thinking=True)
+            else:
+                if on_chunk:
+                    on_chunk(chunk, thinking=False)
+                else:
+                    print(chunk, end="", flush=True)
 
-        full = ""
-        in_thinking = False
-        if stream:
-            for line in resp.iter_lines():
-                if not line:
-                    continue
-                data = json.loads(line)
-                msg = data.get("message", {})
-                if msg.get("thinking"):
-                    if not in_thinking:
-                        in_thinking = True
-                        if on_chunk:
-                            on_chunk("\n[思考中]\n", thinking=True)
-                        elif self.show_thinking:
-                            print("\n[GM 思考中]\n", flush=True)
-                    chunk = msg["thinking"]
-                    if on_chunk:
-                        on_chunk(chunk, thinking=True)
-                    elif self.show_thinking:
-                        print(chunk, end="", flush=True)
-                elif msg.get("content"):
-                    if in_thinking:
-                        in_thinking = False
-                        if on_chunk:
-                            on_chunk("\n[回答]\n", thinking=True)
-                        elif self.show_thinking:
-                            print("\n\n[GM 回答]\n", flush=True)
-                    chunk = msg["content"]
-                    full += chunk
-                    if on_chunk:
-                        on_chunk(chunk, thinking=False)
-                    else:
-                        print(chunk, end="", flush=True)
-                if data.get("done"):
-                    break
-            if not on_chunk:
-                print()
-        else:
-            full = resp.json().get("message", {}).get("content", "")
+        full = stream_chat(
+            self.base_url, self.model, messages, self.options,
+            think=self.think, on_chunk=_on_chunk, backend=self.backend, timeout=180,
+        )
+        if not on_chunk:
+            print()
 
         self.history.append({"role": "assistant", "content": full})
         return full
@@ -179,28 +186,10 @@ class GMAgent:
             json.dumps(messages, ensure_ascii=False, indent=2), encoding="utf-8"
         )
 
-        resp = requests.post(
-            f"{OLLAMA_URL}/api/chat",
-            json={"model": self.model, "messages": messages,
-                  "stream": True, "think": False, "options": self.options},
-            stream=True,
-            timeout=120,
+        full = stream_chat(
+            self.base_url, self.model, messages, self.options,
+            think=False, on_chunk=on_chunk, backend=self.backend, timeout=120,
         )
-        resp.raise_for_status()
-
-        full = ""
-        for line in resp.iter_lines():
-            if not line:
-                continue
-            data = json.loads(line)
-            chunk = data.get("message", {}).get("content", "")
-            if chunk:
-                full += chunk
-                if on_chunk:
-                    on_chunk(chunk, thinking=False)
-            if data.get("done"):
-                break
-
         self.history.append({"role": "assistant", "content": full})
         return full
 

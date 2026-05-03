@@ -74,6 +74,14 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
                 return {"type": "ERROR", "message": f"{attacker.name} 沒有 {weapon.ammo} 了"}
             attacker.consume(weapon.ammo)
 
+        # Ability modifier used for both attack and damage (finesse takes higher of STR/DEX)
+        if "精巧" in weapon.properties:
+            dmg_mod = max(attacker.stats.modifier("STR"), attacker.stats.modifier("DEX"))
+        elif weapon.range_type == "遠程":
+            dmg_mod = attacker.stats.modifier("DEX")
+        else:
+            dmg_mod = attacker.stats.modifier("STR")
+
         hit, roll_total = resolve_attack(attacker, target, weapon)
         result = {
             "type":          "ATTACK",
@@ -85,10 +93,13 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
             "hit":           hit,
         }
         if hit:
-            damage = apply_damage(target, weapon.damage_dice)
+            base_dmg = roll(weapon.damage_dice)
+            damage   = max(1, base_dmg + dmg_mod)
+            target.hp = max(0, target.hp - damage)
             result.update({
                 "damage":        damage,
                 "damage_dice":   weapon.damage_dice,
+                "damage_mod":    dmg_mod,
                 "target_hp":     target.hp,
                 "target_max_hp": target.max_hp,
                 "target_alive":  target.is_alive(),
@@ -235,9 +246,12 @@ def format_result(player_description: str, result: dict, actor_name: str = "") -
             f"使用 {result['weapon_name']}，攻擊骰 {result['roll']} vs AC {result['target_ac']}：{hit_str}"
         )
         if result["hit"]:
-            alive = "存活" if result.get("target_alive") else "倒下"
+            alive    = "存活" if result.get("target_alive") else "倒下"
+            dmg_mod  = result.get("damage_mod", 0)
+            mod_str  = f"+{dmg_mod}" if dmg_mod > 0 else (str(dmg_mod) if dmg_mod < 0 else "")
+            dice_str = f"{result['damage_dice']}{mod_str}"
             lines.append(
-                f"造成 {result['damage']} 點傷害（{result['damage_dice']}），"
+                f"造成 {result['damage']} 點傷害（{dice_str}），"
                 f"{result['target_name']} HP {result['target_hp']}/{result['target_max_hp']}（{alive}）"
             )
 

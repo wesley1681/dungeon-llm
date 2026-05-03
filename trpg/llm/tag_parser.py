@@ -2,7 +2,8 @@ import re
 from ..engine import combat
 from ..engine.world_state import WorldState
 
-_TAG = re.compile(r"\[([A-Z]+):\s*([^\]]+)\]")
+_TAG      = re.compile(r"\[([A-Z]+):\s*([^\]]+)\]")
+_BARE_TAG = re.compile(r"\[([A-Z]+)\]")   # tags without arguments e.g. [TRAVEL]
 
 
 def parse_and_resolve(text: str, world_state: WorldState,
@@ -21,34 +22,77 @@ def parse_and_resolve(text: str, world_state: WorldState,
         return f"（{result}）"
 
     cleaned = _TAG.sub(_replace, text)
+
+    # Catch bare tags like [TRAVEL] that are missing arguments
+    def _bare_replace(m: re.Match) -> str:
+        tag = m.group(1)
+        msg = f"標籤格式錯誤：[{tag}] 缺少參數（例如應寫 [{tag}: direction]）"
+        results.append(msg)
+        return f"（{msg}）"
+
+    cleaned = _BARE_TAG.sub(_bare_replace, cleaned)
     return cleaned, results
 
 
-def parse_travel_only(text: str, world_state: WorldState) -> list[str]:
-    """Parse only TRAVEL tags from text (safe to call on the pre-narrative section).
-    Returns list of result strings."""
-    results = []
-    for match in re.finditer(r"\[TRAVEL:\s*([^\]]+)\]", text):
+_COMBAT_TAGS = {"INITIATIVE", "ATTACK", "DAMAGE"}  # never execute these from pre-narrative
+
+
+def parse_pre_narrative(text: str, world_state: WorldState) -> tuple[list[str], set[str]]:
+    """Process non-combat tags from the 機制 section in order.
+    Returns (result_strings, set_of_tag_types_that_fired)."""
+    results: list[str] = []
+    fired:   set[str]  = set()
+    for match in re.finditer(r"\[([A-Z]+):\s*([^\]]+)\]", text):
+        tag = match.group(1)
+        if tag in _COMBAT_TAGS:
+            continue
         try:
-            result = _dispatch("TRAVEL", match.group(1).strip(), world_state)
+            result = _dispatch(tag, match.group(2).strip(), world_state)
         except Exception as e:
-            result = f"TRAVEL 錯誤：{e}"
+            result = f"標籤解析錯誤：[{tag}]（{e}）"
         results.append(result)
+        fired.add(tag)
+    return results, fired
+
+
+def parse_travel_only(text: str, world_state: WorldState) -> list[str]:
+    """Execute only TRAVEL tags found in text. Returns result strings."""
+    results = []
+    for m in re.finditer(r"\[TRAVEL:\s*([^\]]+)\]", text):
+        try:
+            results.append(_dispatch("TRAVEL", m.group(1).strip(), world_state))
+        except Exception as e:
+            results.append(f"TRAVEL 錯誤：{e}")
     return results
+
+
+def _find_char(key: str, ws: WorldState):
+    """Look up a character by ID first, then by name as fallback."""
+    char = ws.characters.get(key)
+    if char is None:
+        char = next((c for c in ws.characters.values() if c.name == key), None)
+    return char
 
 
 def _dispatch(tag: str, args: str, ws: WorldState) -> str:
 
     if tag == "INITIATIVE":
-        # No-op if TRAVEL already started combat in this same turn
+        # No-op if combat already active (e.g. started by TRAVEL this same turn)
         if ws.combat and ws.combat.active:
             return f"先攻順序：{'、'.join(ws.characters[n].name for n in ws.combat.initiative_order if n in ws.characters)}"
-        # Scope to current room characters if dungeon_map is active
+        # Scope to current room when dungeon_map is active
         char_ids = None
         if ws.dungeon_map:
             room = ws.dungeon_map.current_room
             pc_ids = [cid for cid, c in ws.characters.items() if not c.is_npc]
-            char_ids = list(room.enemy_ids) + pc_ids
+            alive_enemy_ids = [
+                eid for eid in room.enemy_ids
+                if eid in ws.characters and ws.characters[eid].is_alive()
+            ]
+            # No enemies in room → don't start combat
+            if not alive_enemy_ids:
+                return "（當前房間無敵人，跳過先攻）"
+            char_ids = alive_enemy_ids + pc_ids
         state = combat.roll_initiative(ws, char_ids)
         ws.combat = state
         order = "、".join(
@@ -80,7 +124,7 @@ def _dispatch(tag: str, args: str, ws: WorldState) -> str:
         if len(parts) != 2:
             return f"無效 PICKUP 格式：{args}"
         char_id, item_name = parts
-        char = ws.characters.get(char_id)
+        char = _find_char(char_id, ws)
         if not char:
             return f"找不到角色：{char_id}"
         if not ws.dungeon_map:
@@ -110,8 +154,8 @@ def _dispatch(tag: str, args: str, ws: WorldState) -> str:
         parts = [p.strip() for p in args.split("->")]
         if len(parts) != 2:
             return f"無效 ATTACK 格式：{args}"
-        attacker = ws.characters.get(parts[0])
-        target   = ws.characters.get(parts[1])
+        attacker = _find_char(parts[0], ws)
+        target   = _find_char(parts[1], ws)
         if not attacker:
             return f"找不到攻擊者：{parts[0]}"
         if not target:
@@ -125,7 +169,7 @@ def _dispatch(tag: str, args: str, ws: WorldState) -> str:
         if not m:
             return f"無效 DAMAGE 格式：{args}"
         dice_str, target_id = m.group(1).strip(), m.group(2).strip()
-        target = ws.characters.get(target_id)
+        target = _find_char(target_id, ws)
         if not target:
             return f"找不到角色：{target_id}"
         damage = combat.apply_damage(target, dice_str)
@@ -136,7 +180,7 @@ def _dispatch(tag: str, args: str, ws: WorldState) -> str:
         if len(parts) != 2:
             return f"無效 HEAL 格式：{args}"
         char_id, dice_str = parts
-        char = ws.characters.get(char_id)
+        char = _find_char(char_id, ws)
         if not char:
             return f"找不到角色：{char_id}"
         healed = combat.apply_heal(char, dice_str)
@@ -147,7 +191,7 @@ def _dispatch(tag: str, args: str, ws: WorldState) -> str:
         if len(parts) != 3:
             return f"無效 ROLL 格式：{args}"
         char_id, stat, dc_str = parts
-        char = ws.characters.get(char_id)
+        char = _find_char(char_id, ws)
         if not char:
             return f"找不到角色：{char_id}"
         try:
@@ -163,7 +207,7 @@ def _dispatch(tag: str, args: str, ws: WorldState) -> str:
         if len(parts) != 2:
             return f"無效 STATUS 格式：{args}"
         char_id, effect = parts
-        char = ws.characters.get(char_id)
+        char = _find_char(char_id, ws)
         if not char:
             return f"找不到角色：{char_id}"
         if effect.startswith("+"):

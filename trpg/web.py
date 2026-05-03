@@ -1,3 +1,4 @@
+import re
 import sys
 import queue
 import threading
@@ -10,7 +11,7 @@ from .scenarios.dungeon import build_world_state, OPENING_SCENE, THOR_PERSONALIT
 from .llm.gm_agent import GMAgent
 from .llm.player_agent import PlayerAgent
 from .llm.arbiter import ArbiterAgent
-from .llm.tag_parser import parse_and_resolve, parse_travel_only
+from .llm.tag_parser import parse_and_resolve
 from .engine.combat import execute_action, format_result
 from .main import (
     check_ollama, MODEL,
@@ -18,6 +19,18 @@ from .main import (
     THOR_THINK, THOR_SHOW_THINKING, THOR_OPTIONS,
     DEBUG_ARBITER,
 )
+
+
+def _extract_narrative(gm_response: str) -> str:
+    """Return only the narrative portion of a GM response (after --- or 機制: line)."""
+    if "---" in gm_response:
+        return gm_response.split("---", 1)[1]
+    # Fallback: skip 機制: line AND any immediately following [TAG] lines
+    m = re.search(r"^機制：[^\n]*(?:\n[ \t]*\[[^\]]*\][^\n]*)*\n?", gm_response, re.MULTILINE)
+    if m:
+        return gm_response[m.end():]
+    return gm_response
+
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -97,14 +110,14 @@ def _stream_gm(gm_msgs: list, state: dict, player_actions: list):
         else:
             gm_response += chunk
 
-            # Only cut off tags that appear AFTER the "---" separator
-            # (the 機制: planning line before --- should be ignored)
-            # Wait until the closing ] arrives so parse_and_resolve sees a full tag.
-            if "---" in gm_response:
-                narrative_part = gm_response.split("---", 1)[1]
+            # Only cut off tags that appear in the narrative section.
+            # Use _extract_narrative to handle both --- and 機制: fallback.
+            narrative_part = _extract_narrative(gm_response)
+            if narrative_part != gm_response:  # a separator was found
+                narrative_offset = len(gm_response) - len(narrative_part)
                 for tag in _CUTOFF_TAGS:
                     if tag in narrative_part:
-                        idx = gm_response.index(tag, gm_response.index("---"))
+                        idx = gm_response.index(tag, narrative_offset)
                         end = gm_response.find("]", idx)
                         if end != -1:
                             gm_response = gm_response[: end + 1]
@@ -320,18 +333,12 @@ def on_load():
     thor_msgs : list = []
     aria_msgs = [{"role": "user", "content": OPENING_SCENE}]
 
+    gm_response = ""
     for gm_msgs, state, gm_response in _stream_gm(gm_msgs, state, []):
         yield gm_msgs, thor_msgs, aria_msgs, state
 
-    _room_before = world_state.dungeon_map.current_room_id if world_state.dungeon_map else None
-    if "---" in gm_response:
-        _pre, _narrative = gm_response.split("---", 1)
-        tag_results = parse_travel_only(_pre, world_state)
-    else:
-        _narrative, tag_results = gm_response, []
-    _skip = {"TRAVEL"} if world_state.dungeon_map and world_state.dungeon_map.current_room_id != _room_before else None
-    gm_text, _extra = parse_and_resolve(_narrative, world_state, skip_tags=_skip)
-    tag_results = tag_results + _extra
+    _narrative = _extract_narrative(gm_response)
+    gm_text, tag_results = parse_and_resolve(_narrative, world_state)
     if tag_results:
         rules = "\n".join(f"- {r}" for r in tag_results)
         gm_msgs[-1]["content"] += f"\n\n**規則結算：**\n{rules}"
@@ -413,7 +420,7 @@ def on_submit(human_input: str,
             "role": "assistant",
             "content": f"`{result_text}`{debug_str}",
         }]
-        world_state.event_log.append(f"艾里亞：{human_input}")
+        world_state.event_log.append(f"凱恩：{human_input}")
         yield gm_msgs, thor_msgs, aria_msgs, state, ""
 
         brief = f"【戰鬥結算】用一句（30字以內）繁體中文敘述此結果，直接輸出敘事，不加格式欄位：\n{result_text}"
@@ -444,13 +451,8 @@ def on_submit(human_input: str,
         for gm_msgs, state, gm_response in _stream_gm(gm_msgs, state, player_actions):
             yield gm_msgs, thor_msgs, aria_msgs, state, ""
 
-        if "---" in gm_response:
-            _pre, _narrative = gm_response.split("---", 1)
-            tag_results = parse_travel_only(_pre, world_state)
-        else:
-            _narrative, tag_results = gm_response, []
-        gm_text, _extra = parse_and_resolve(_narrative, world_state)
-        tag_results = tag_results + _extra
+        _narrative = _extract_narrative(gm_response)
+        gm_text, tag_results = parse_and_resolve(_narrative, world_state)
         if tag_results:
             gm_msgs[-1]["content"] += "\n\n**規則結算：**\n" + "\n".join(f"- {r}" for r in tag_results)
             gm.notify_results(tag_results)
@@ -488,9 +490,9 @@ def on_submit(human_input: str,
     # ── EXPLORATION MODE ──────────────────────────────────────────────────────
     thor_response_prev = state.get("thor_response", "")
     aria_msgs = aria_msgs + [{"role": "user", "content": human_input}]
-    world_state.event_log.append(f"艾里亞：{human_input}")
+    world_state.event_log.append(f"凱恩：{human_input}")
 
-    player_actions  = [f"索爾：{thor_response_prev}", f"艾里亞：{human_input}"]
+    player_actions  = [f"索爾：{thor_response_prev}", f"凱恩：{human_input}"]
     actions_display = "\n".join(f"• {a}" for a in player_actions)
     gm_msgs = gm_msgs + [{"role": "user",      "content": actions_display},
                           {"role": "assistant", "content": ""}]
@@ -499,15 +501,8 @@ def on_submit(human_input: str,
     for gm_msgs, state, gm_response in _stream_gm(gm_msgs, state, player_actions):
         yield gm_msgs, thor_msgs, aria_msgs, state, ""
 
-    _room_before = world_state.dungeon_map.current_room_id if world_state.dungeon_map else None
-    if "---" in gm_response:
-        _pre, _narrative = gm_response.split("---", 1)
-        tag_results = parse_travel_only(_pre, world_state)
-    else:
-        _narrative, tag_results = gm_response, []
-    _skip = {"TRAVEL"} if world_state.dungeon_map and world_state.dungeon_map.current_room_id != _room_before else None
-    gm_text, _extra = parse_and_resolve(_narrative, world_state, skip_tags=_skip)
-    tag_results = tag_results + _extra
+    _narrative = _extract_narrative(gm_response)
+    gm_text, tag_results = parse_and_resolve(_narrative, world_state)
     if tag_results:
         rules = "\n".join(f"- {r}" for r in tag_results)
         gm_msgs[-1]["content"] += f"\n\n**規則結算：**\n{rules}"
@@ -568,12 +563,12 @@ def build_ui() -> gr.Blocks:
                 gr.Markdown("### 🛡️ 索爾（AI 玩家）")
                 thor_chat = gr.Chatbot(height=550, show_label=False)
             with gr.Column():
-                gr.Markdown("### 🗡️ 你（艾里亞）")
+                gr.Markdown("### 🗡️ 你（凱恩）")
                 aria_chat = gr.Chatbot(height=550, show_label=False)
 
         with gr.Row():
             input_box = gr.Textbox(
-                placeholder="輸入你（艾里亞）的行動，按 Enter 確認…",
+                placeholder="輸入你（凱恩）的行動，按 Enter 確認…",
                 show_label=False, scale=5,
             )
             submit_btn = gr.Button("確認", scale=1, variant="primary")
