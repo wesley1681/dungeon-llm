@@ -321,7 +321,7 @@ class NpcAgent:
                       on_chunk=None) -> tuple[str, bool, bool]:
         """Decide one combat sub-action.
 
-        resources: {"action": int, "bonus_action": int, "movement": float}
+        resources: {"action": int, "movement": float}
                    remaining resources for THIS turn (the caller decrements
                    between sub-actions). Used to inform the LLM.
 
@@ -331,13 +331,11 @@ class NpcAgent:
           - ended: True if <END> marker present (caller stops calling this turn)
         """
         if resources is None:
-            resources = {"action": 1, "bonus_action": 1, "movement": 9.0}
+            resources = {"action": 1, "movement": 9.0}
         action_status = "可用" if resources.get("action", 0) > 0 else "已用完"
-        bonus_status  = "可用" if resources.get("bonus_action", 0) > 0 else "已用完"
         move_left     = resources.get("movement", 0.0)
         resources_block = (
             f"- 動作（attack/dodge/use item）：{action_status}\n"
-            f"- 附贈動作：{bonus_status}\n"
             f"- 移動：剩 {move_left:.1f}m（單回合上限 9m）"
         )
 
