@@ -20,7 +20,11 @@ _FLEE_RE = re.compile(r'<\s*FLEE\s*>', re.IGNORECASE)
 # Chain-of-thought block emitted by combat_reasoning NPCs. Stripped before
 # the action text is handed to the arbiter; the raw stream still goes to the
 # UI so the human can watch the NPC reason in real time.
-_THINK_RE = re.compile(r'<\s*think\s*>.*?<\s*/\s*think\s*>',
+# Matches either a closed <think>...</think> block OR an unclosed <think>...
+# that runs to end-of-output (happens when num_predict caps the response
+# mid-thought — without this fallback, the arbiter would parse fragments of
+# the reasoning text as the action and execute hallucinated commits).
+_THINK_RE = re.compile(r'<\s*think\s*>.*?(?:<\s*/\s*think\s*>|\Z)',
                        re.IGNORECASE | re.DOTALL)
 
 
@@ -416,7 +420,15 @@ class LLMNpcController(ActorController):
         # Strip <think>...</think> CoT block first — only the post-think text is
         # an actual action description for the arbiter. The live stream above
         # has already shown the full think+action to the UI for observability.
+        # The regex also catches truncated <think>... blocks that ran past
+        # num_predict (no closing tag), to prevent reasoning fragments from
+        # leaking into the action.
         desc = _THINK_RE.sub("", desc).strip()
+        # If strip leaves nothing, the model either output a bare think block
+        # or got cut off mid-reasoning. Safest fallback: end turn — better
+        # than letting an empty/garbled description hit the arbiter.
+        if not desc:
+            return ActorDecision(ended=True)
         # <FLEE> overrides everything (leave combat); otherwise check <END>.
         desc, fled = _strip_marker(desc, _FLEE_RE)
         if fled:

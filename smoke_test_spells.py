@@ -741,6 +741,54 @@ def test_menu_adapts_to_resources() -> None:
     print("menu adapts to resources: OK")
 
 
+def test_truncated_think_block_ends_turn() -> None:
+    """If num_predict caps the model mid-reasoning (no closing </think>),
+    the whole think block must still get stripped — without this, the
+    reasoning text leaks to the arbiter and gets mis-parsed as the action
+    (a real bug we caught: shaman truncated at '...圓心放在 -' and the
+    arbiter inferred target_position=-4 from the prose, wiping the party).
+    The controller should bail safely: no description → end turn."""
+    from trpg.llm.controllers import LLMNpcController
+    from trpg.engine.combat import CombatContext, MOVE_BUDGET_M
+
+    class _Agent:
+        combat_tactics = ""
+        combat_reasoning = True
+        def generate(self, nudge="", combat=False, on_chunk=None):
+            # Model wrote opening <think> but ran out of tokens before
+            # producing </think> or any action line.
+            return (
+                "<think>\n"
+                "我在 6m，火球半徑 6m。若放 -1m...嗯不對，我想想看 -3m"
+                "也許可以但是地精甲還在 0m，那 -4m 看看，不過如果"
+            )
+
+    class _Char:
+        name = "薩滿"
+        hp = 18
+        max_hp = 18
+        position = 6.0
+
+    ctx = CombatContext(
+        round_num=1, actor_id="x", actor_position=6.0,
+        weapons_str="骨杖", spells_str="火球術（3 環）",
+        allies_str="無", enemies_str="索爾",
+        enemies={"thor": "索爾"},
+        resources={"action": 1, "movement": MOVE_BUDGET_M},
+    )
+
+    ctrl = LLMNpcController(_Agent(), emit_event=lambda e: None)
+    decision = ctrl.take_sub_action(_Char(), ctx)
+
+    # Reasoning fragment must NOT survive as action text — that's how we
+    # previously got bogus target_position inferences.
+    assert decision.description == "", \
+        f"truncated reasoning leaked into action: {decision.description!r}"
+    # Turn should end gracefully so we don't loop on empty sub-actions
+    assert decision.ended is True, "ended flag should fire on empty desc"
+    print("truncated think block safely ends turn: OK")
+
+
 def test_think_block_stripped_from_action() -> None:
     """LLMNpcController removes <think>...</think> before the action goes to
     the arbiter. The block can span multiple lines; <END>/<FLEE> on the
@@ -811,6 +859,7 @@ def main() -> int:
     test_spell_target_position_overrides_target()
     test_combat_reasoning_nudge_toggle()
     test_menu_adapts_to_resources()
+    test_truncated_think_block_ends_turn()
     test_think_block_stripped_from_action()
     test_end_to_end_shaman_fireball()
     print("\n=== ALL SPELL TESTS PASSED ===")

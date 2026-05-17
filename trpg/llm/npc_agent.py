@@ -151,8 +151,10 @@ class NpcAgent:
         self.backend          = backend
         self.world_state      = world_state
         # Reasoning agents need budget for <think>…</think> + action; plain
-        # NPCs stay slim. Explicit `options=` still overrides.
-        default_predict = 500 if combat_reasoning else 150
+        # NPCs stay slim. 500 was tight enough that a single verbose model
+        # would hit the cap mid-think and leak reasoning fragments into the
+        # arbiter — 1024 gives breathing room. Explicit `options=` still overrides.
+        default_predict = 1024 if combat_reasoning else 150
         self.options          = options or {"temperature": 0.85, "num_predict": default_predict}
         self._personality     = personality
         # Routed by mode: _system() (conversation) reads _tactics; combat
