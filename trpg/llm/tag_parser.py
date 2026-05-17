@@ -492,13 +492,14 @@ def _dispatch(tag: str, args: str, ws: WorldState) -> str:
         if not char:
             return f"找不到角色：{char_id}"
         if effect.startswith("+"):
-            char.status_effects.append(effect[1:])
-            return f"{char.name} 獲得狀態：{effect[1:]}"
+            from ..engine.status import StatusEffect
+            name = effect[1:]
+            char.add_status(StatusEffect(name=name))
+            return f"{char.name} 獲得狀態：{name}"
         if effect.startswith("-"):
-            eff = effect[1:]
-            if eff in char.status_effects:
-                char.status_effects.remove(eff)
-            return f"{char.name} 移除狀態：{eff}"
+            name = effect[1:]
+            char.remove_status(name)
+            return f"{char.name} 移除狀態：{name}"
         return f"無效 STATUS 效果：{effect}"
 
     if tag == "TALK":

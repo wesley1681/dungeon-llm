@@ -169,10 +169,6 @@ class GameSession:
 
         # TagAgent still receives raw action strings (it's stateless and doesn't read log).
         self._tag_actions: list[str] = []
-        # Latch set by _run_conversation via ConversationOutcome.skip_next_gm and
-        # consumed exactly once at the top of the next _exploration_turn.
-        # Do not set this elsewhere — flow through ConversationOutcome instead.
-        self._skip_next_gm: bool = False
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -240,11 +236,20 @@ class GameSession:
     # ── Game loop ─────────────────────────────────────────────────────────────
 
     def _run(self) -> None:
+        skip_gm = False
         while not self._stop_flag.is_set():
-            if self._exploration_turn():
+            done, skip_gm = self._exploration_turn(skip_gm=skip_gm)
+            if done:
                 return
 
-    def _exploration_turn(self) -> bool:
+    def _exploration_turn(self, skip_gm: bool = False) -> tuple[bool, bool]:
+        """Run one exploration turn.
+
+        Returns (done, skip_gm_next_turn):
+          done — True if game should end (GameOver / quit)
+          skip_gm_next_turn — True if the next turn should skip GM narration
+                              (e.g. after conversation ended in combat)
+        """
         ws = self.world_state
 
         # ── TagAgent ─────────────────────────────────────────────────────────
@@ -264,15 +269,12 @@ class GameSession:
             ws.pending_conversation = ""
             if npc_id in self.npc_agents:
                 outcome = self._run_conversation(npc_id)
-                if outcome.skip_next_gm:
-                    self._skip_next_gm = True   # legacy flag, consumed next _exploration_turn
                 if outcome.game_over:
-                    return True
-                return False
+                    return True, False
+                return False, outcome.skip_next_gm
 
         # ── GM narrative ─────────────────────────────────────────────────────
-        if self._skip_next_gm:
-            self._skip_next_gm = False
+        if skip_gm:
             gm_text = ""
         else:
             def _gm_chunk(c, thinking=False):
@@ -289,16 +291,16 @@ class GameSession:
         if ws.combat and ws.combat.active:
             combat_log = self._run_combat()
             if self._stop_flag.is_set():
-                return True
+                return True, False
             ws.log_event("system", "戰鬥結束" if combat_log else "（戰鬥結束）")
             self._tag_actions = []
-            return False
+            return False, False
 
         # ── Death check ───────────────────────────────────────────────────────
         for char in ws.characters.values():
             if not char.is_npc and not char.is_alive():
                 self._emit(GameOver(f"{char.name} 倒下了！遊戲結束。"))
-                return True
+                return True, False
 
         # ── Thor ──────────────────────────────────────────────────────────────
         def _thor_chunk(c, thinking=False):
@@ -314,14 +316,14 @@ class GameSession:
 
         if player_input is None or player_input.lower() == "quit":
             self._emit(GameOver("冒險結束。再見！"))
-            return True
+            return True, False
 
         ws.log_event("aria", player_input)
         ws.event_log.append(f"{ws.characters['aria'].name}：{player_input}")
         thor_name = ws.characters["thor"].name
         aria_name = ws.characters["aria"].name
         self._tag_actions = [f"{thor_name}：{thor_text}", f"{aria_name}：{player_input}"]
-        return False
+        return False, False
 
     # ── Combat ────────────────────────────────────────────────────────────────
 
