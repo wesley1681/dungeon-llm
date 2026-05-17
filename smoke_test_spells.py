@@ -366,6 +366,82 @@ def test_rulebook_has_spell_section() -> None:
     print("Rulebook SPELL section: OK")
 
 
+def test_npc_controller_nudge_includes_spells() -> None:
+    """Task 7: LLMNpcController._build_nudge mentions available spells + 施法 option for casters,
+    and stays identical for non-casters."""
+    from trpg.llm.controllers import LLMNpcController
+    from trpg.engine.combat import CombatContext, MOVE_BUDGET_M
+
+    # Caster ctx
+    ctx_caster = CombatContext(
+        round_num=2, actor_id="x", actor_position=10.0,
+        weapons_str="無武器（徒手）",
+        spells_str="火球術（3 環，可用：3 環×1）",
+        allies_str="無", enemies_str="索爾 HP 31/31，位置 0.0m（距你 10.0m）",
+        enemies={"thor": "索爾"},
+        resources={"action": 1, "movement": MOVE_BUDGET_M},
+    )
+
+    class DummyAgent:
+        combat_tactics = ""
+        char_id = "x"
+
+    class DummyChar:
+        name = "薩滿"
+        hp = 18
+        max_hp = 18
+
+    ctrl = LLMNpcController(agent=DummyAgent(), emit_event=lambda e: None)
+    nudge = ctrl._build_nudge(DummyChar(), ctx_caster)
+    assert "可用法術" in nudge, f"caster nudge missing 可用法術:\n{nudge}"
+    assert "火球術" in nudge
+    assert "施法" in nudge, f"caster nudge missing 施法 action option:\n{nudge}"
+
+    # Non-caster ctx
+    ctx_plain = CombatContext(
+        round_num=2, actor_id="g", actor_position=1.5,
+        weapons_str="彎刀（近戰，伸手 1.5m）",
+        spells_str="",
+        allies_str="無", enemies_str="索爾",
+        enemies={"thor": "索爾"},
+        resources={"action": 1, "movement": MOVE_BUDGET_M},
+    )
+    nudge_plain = ctrl._build_nudge(DummyChar(), ctx_plain)
+    assert "可用法術" not in nudge_plain, f"non-caster nudge should not mention 可用法術:\n{nudge_plain}"
+    assert "施法" not in nudge_plain, f"non-caster nudge should not list 施法 option:\n{nudge_plain}"
+    print("LLMNpcController nudge spells: OK")
+
+
+def test_player_controller_nudge_includes_spells() -> None:
+    """Task 7: LLMPlayerController has parallel behavior — spells line + 施法 option."""
+    from trpg.llm.controllers import LLMPlayerController
+    from trpg.engine.combat import CombatContext, MOVE_BUDGET_M
+
+    ctx = CombatContext(
+        round_num=1, actor_id="x", actor_position=0.0,
+        weapons_str="法杖",
+        spells_str="火球術（3 環，可用：3 環×2）",
+        allies_str="無", enemies_str="哥布林",
+        enemies={"g": "哥布林"},
+        resources={"action": 1, "movement": MOVE_BUDGET_M},
+    )
+
+    class DummyAgent:
+        combat_tactics = ""
+
+    class DummyChar:
+        name = "PC法師"
+        hp = 20
+        max_hp = 20
+
+    ctrl = LLMPlayerController(agent=DummyAgent(), emit_event=lambda e: None)
+    nudge = ctrl._build_nudge(DummyChar(), ctx)
+    assert "可用法術" in nudge
+    assert "火球術" in nudge
+    assert "施法" in nudge
+    print("LLMPlayerController nudge spells: OK")
+
+
 def main() -> int:
     test_spell_dataclass_and_catalog()
     test_character_spell_fields()
@@ -378,6 +454,8 @@ def main() -> int:
     test_arbiter_spell_defaults()
     test_arbiter_situation_includes_spells()
     test_rulebook_has_spell_section()
+    test_npc_controller_nudge_includes_spells()
+    test_player_controller_nudge_includes_spells()
     print("\n=== ALL SPELL TESTS PASSED ===")
     return 0
 

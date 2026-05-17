@@ -102,17 +102,20 @@ class HumanController(ActorController):
         self.get_input = get_input
         self.emit_event = emit_event
         self.end_inputs = end_inputs
+        self._last_char = None
+        self._last_ctx: CombatContext | None = None
 
-    def take_sub_action(self, char, ctx: CombatContext) -> ActorDecision:
-        # Import inside method to avoid circular game.py import
+    def _emit_combat_prompt(self, char, ctx: CombatContext) -> None:
         from ..game import CombatPrompt, format_aria_combat_info
-
-        # Emit prompt (caller assembles UI)
-        prompt = CombatPrompt(
+        self.emit_event(CombatPrompt(
             aria=char, enemies=ctx.enemies,
             info_text=format_aria_combat_info(char, ctx),
-        )
-        self.emit_event(prompt)
+        ))
+
+    def take_sub_action(self, char, ctx: CombatContext) -> ActorDecision:
+        self._last_char = char
+        self._last_ctx = ctx
+        self._emit_combat_prompt(char, ctx)
 
         raw = self.get_input()
         if raw is None:
@@ -127,6 +130,11 @@ class HumanController(ActorController):
         return ActorDecision(description=text)
 
     def on_invalid_action(self, reason: str, suggestion: str) -> ActorDecision | None:
+        # Re-emit the combat prompt so the UI knows it's the human's turn
+        # again — without this the game thread blocks on get_input() but the
+        # frontend has no signal that input is wanted.
+        if self._last_char is not None and self._last_ctx is not None:
+            self._emit_combat_prompt(self._last_char, self._last_ctx)
         raw = self.get_input()
         if raw is None:
             return ActorDecision(quit=True)
@@ -202,15 +210,19 @@ class LLMPlayerController(ActorController):
     def _build_nudge(self, char, ctx: CombatContext) -> str:
         combat_tactics = (self.agent.combat_tactics.rstrip() + "\n\n"
                           if self.agent.combat_tactics else "")
+        spells_line = f"可用法術：{ctx.spells_str}\n" if ctx.spells_str else ""
+        spell_option = "- 施法：「我對 [目標] 施展 [法術]」\n" if ctx.spells_str else ""
         return (
             f"{combat_tactics}"
             f"【戰鬥回合 {ctx.round_num}】\n"
             f"HP：{char.hp}/{char.max_hp}\n"
             f"武器：{ctx.weapons_str}\n"
+            f"{spells_line}"
             f"盟友：{ctx.allies_str}\n"
             f"敵人：{ctx.enemies_str}\n"
             f"從下列**選一個** sub-action 輸出（不要組合）：\n"
             f"- 攻擊：「我用 [武器] 攻擊 [敵人]」\n"
+            f"{spell_option}"
             f"- 移動：「我衝上去」「我後退」（單次最多 9m）\n"
             f"- 閃避：「我閃避」「我專注防禦」\n"
             f"- 躲藏：「我躲到 X 後面」\n"
@@ -292,15 +304,19 @@ class LLMNpcController(ActorController):
     def _build_nudge(self, char, ctx: CombatContext) -> str:
         combat_tactics = (self.agent.combat_tactics.rstrip() + "\n\n"
                           if self.agent.combat_tactics else "")
+        spells_line = f"可用法術：{ctx.spells_str}\n" if ctx.spells_str else ""
+        spell_option = "- 施法：「我對 [目標] 施展 [法術]」\n" if ctx.spells_str else ""
         return (
             f"{combat_tactics}"
             f"【戰鬥回合 {ctx.round_num}】\n"
             f"HP：{char.hp}/{char.max_hp}\n"
             f"武器：{ctx.weapons_str}\n"
+            f"{spells_line}"
             f"盟友：{ctx.allies_str}\n"
             f"敵人：{ctx.enemies_str}\n"
             f"從下列**選一個** sub-action 輸出（不要組合）：\n"
             f"- 攻擊：「我用 [武器] 攻擊 [敵人]」\n"
+            f"{spell_option}"
             f"- 移動：「我衝上去」「我後退」（單次最多 9m）\n"
             f"- 閃避：「我閃避」「我專注防禦」\n"
             f"- 躲藏：「我躲到 X 後面」\n"
