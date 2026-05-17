@@ -121,7 +121,10 @@ class LLMPlayerController(ActorController):
         self._retries_left = 0
 
     def _build_nudge(self, char, ctx: CombatContext) -> str:
+        combat_tactics = (self.agent.combat_tactics.rstrip() + "\n\n"
+                          if self.agent.combat_tactics else "")
         return (
+            f"{combat_tactics}"
             f"【戰鬥回合 {ctx.round_num}】\n"
             f"HP：{char.hp}/{char.max_hp}\n"
             f"武器：{ctx.weapons_str}\n"
@@ -166,8 +169,9 @@ class LLMPlayerController(ActorController):
 
 
 class LLMNpcController(ActorController):
-    """Wraps an NpcAgent. Delegates to NpcAgent.combat_action() which already
-    returns (desc, fled, ended); maps to ActorDecision."""
+    """Wraps an NpcAgent in combat mode. Builds the combat nudge here (tactics
+    + situation + action menu) and calls agent.generate(combat=True, nudge=...).
+    Parses <FLEE>/<END> markers off the response. Mirrors LLMPlayerController."""
 
     def __init__(self, agent, emit_event):
         self.agent = agent
@@ -176,17 +180,43 @@ class LLMNpcController(ActorController):
         self._last_ctx: CombatContext | None = None
         self._retries_left = 0
 
+    def _build_nudge(self, char, ctx: CombatContext) -> str:
+        combat_tactics = (self.agent.combat_tactics.rstrip() + "\n\n"
+                          if self.agent.combat_tactics else "")
+        return (
+            f"{combat_tactics}"
+            f"【戰鬥回合 {ctx.round_num}】\n"
+            f"HP：{char.hp}/{char.max_hp}\n"
+            f"武器：{ctx.weapons_str}\n"
+            f"盟友：{ctx.allies_str}\n"
+            f"敵人：{ctx.enemies_str}\n"
+            f"從下列**選一個** sub-action 輸出（不要組合）：\n"
+            f"- 攻擊：「我用 [武器] 攻擊 [敵人]」\n"
+            f"- 移動：「我衝上去」「我後退」（單次最多 9m）\n"
+            f"- 閃避：「我閃避」「我專注防禦」\n"
+            f"- 躲藏：「我躲到 X 後面」\n"
+            f"- 結束本回合：單獨輸出 <END>\n"
+            f"完成本動作想結束回合，訊息結尾加 <END>。\n"
+            f"逃跑：訊息結尾加 <FLEE>，立刻離開戰場。"
+        )
+
     def _generate(self, char, ctx: CombatContext, error_feedback: str) -> ActorDecision:
         from ..game import StreamChunk
+        nudge = self._build_nudge(char, ctx)
+        if error_feedback:
+            nudge += f"\n\n## 系統訊息\n上次行動被拒：{error_feedback}\n請改選不同的 sub-action。"
         actor = char.name
-        desc, fled, ended = self.agent.combat_action(
-            ctx.weapons_str, ctx.allies_str, ctx.enemies_str,
-            resources=ctx.resources,
-            error_feedback=error_feedback,
-            on_chunk=lambda c, thinking=False: self.emit_event(StreamChunk("npc", c, actor=actor)),
+        desc = self.agent.generate(
+            nudge=nudge, combat=True,
+            on_chunk=lambda c, thinking=False: self.emit_event(
+                StreamChunk("npc", c, actor=actor)
+            ),
         )
+        # <FLEE> overrides everything (leave combat); otherwise check <END>.
+        desc, fled = _strip_marker(desc, _FLEE_RE)
         if fled:
             return ActorDecision(fled=True)
+        desc, ended = _strip_marker(desc, _END_RE)
         return ActorDecision(description=desc, ended=ended)
 
     def take_sub_action(self, char, ctx: CombatContext) -> ActorDecision:

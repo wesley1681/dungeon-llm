@@ -12,12 +12,9 @@ _DEBUG_DIR.mkdir(exist_ok=True)
 
 _ATTITUDE_LABELS = ["敵意", "戒備", "中立", "友好", "信任"]
 
-_SYSTEM_TEMPLATE = """你正在扮演 {name}。{personality}
-
-對話規則：
-- 用第一人稱繁體中文回應，控制在 60 字以內
-- 直接輸出對話內容，不加旁白或括號說明
-- 只扮演自己，不描述其他角色的行為或感受
+# Core body is mode-agnostic — identity / personality / tactics-of-the-moment
+# / knowledge boundary. Both conversation and combat builds start from this.
+_CORE_BODY_TEMPLATE = """你正在扮演 {name}。{personality}
 
 {tactics_section}## 知識邊界（鐵則，凌駕一切）
 你**只**知道下列來源的事：
@@ -29,6 +26,15 @@ _SYSTEM_TEMPLATE = """你正在扮演 {name}。{personality}
 誠實回答「我不知道」「沒聽過」「這超出我的見識」。
 **絕對禁止編造**你不該知道的事，即使對方在威脅你也一樣——
 威脅只能讓你說出你**真的知道**的事，威脅變不出你不知道的事。
+"""
+
+# Conversation-only extras: dialogue format rules, volatile state (attitude,
+# pending reveals, recruit, secrets, quests, action threshold), attitude
+# marker grammar. Combat mode skips this entire block.
+_CONVERSATION_EXTRAS_TEMPLATE = """## 對話規則
+- 用第一人稱繁體中文回應，控制在 60 字以內
+- 直接輸出對話內容，不加旁白或括號說明
+- 只扮演自己，不描述其他角色的行為或感受
 
 ## 當前態度：{attitude_label}（{attitude}/4）
 
@@ -129,43 +135,12 @@ _RECRUIT_SECTION = """## 對方邀你加入冒險（重要決定）
 
 """
 
-_COMBAT_PROMPT_TEMPLATE = """你正在扮演 {name}。{personality}
-
-{tactics_section}## 你的戰況
-HP：{hp}/{max_hp}
-位置：{position:.1f}m（戰場 1 軸距離，0 = 我方原點、正向 = 敵方那側）
-武器：{weapons}
-盟友：{allies}
-敵人：{enemies}
-
-## 本回合剩餘資源
-{resources_block}
-
-## 本次行動（從下列**選一個**輸出，不要組合）
-
-- **攻擊**：「我用 [武器] 攻擊 [敵人]」
-- **移動**：「我衝上去」「我後退拉開距離」（單次最多 9m，要再移動可分下個 sub-action）
-- **閃避**：「我閃避」「我專注防禦」
-- **躲藏**：「我躲到 X 後面」
-- **結束本回合**：單獨輸出 <END>
-
-完成本動作就想直接結束回合？訊息結尾加 <END>，例：「我用長劍砍哥布林。<END>」
-想逃跑？訊息結尾加 <FLEE>，立刻離開戰場。
-
-**每次只做一件事**——不要寫「我衝過去然後攻擊」這種複合動作；系統會在每個 sub-action 結算後問你下一個。
-個性決定整回合節奏：兇猛角色多半「移動 → 攻擊 → <END>」三步；膽小角色直接 <END>。
-
-直接輸出你的決定，不要加思考或旁白。現在輪到你行動。"""
-
-_FLEE_RE = re.compile(r'<\s*FLEE\s*>', re.IGNORECASE)
-_END_RE  = re.compile(r'<\s*END\s*>', re.IGNORECASE)
-
-
 class NpcAgent:
     def __init__(self, model: str, char_id: str, character: Character,
                  personality: str,
                  base_url: str, backend: str, world_state, options: dict = None,
                  tactics: str = "",
+                 combat_tactics: str = "",
                  secrets: list[str] = None, reveal_threshold: int = 3,
                  quests: list[Quest] = None):
         self.model            = model
@@ -176,7 +151,12 @@ class NpcAgent:
         self.world_state      = world_state
         self.options          = options or {"temperature": 0.85, "num_predict": 150}
         self._personality     = personality
+        # Routed by mode: _system() (conversation) reads _tactics; combat
+        # callers read .combat_tactics directly (exposed as public attr so
+        # LLMNpcController can compose the combat nudge, mirroring how
+        # LLMPlayerController reads PlayerAgent.combat_tactics).
         self._tactics         = tactics
+        self.combat_tactics   = combat_tactics
         self._secrets         = secrets or []
         self._reveal_threshold = reveal_threshold
         self._quests          = quests or []
@@ -202,6 +182,10 @@ class NpcAgent:
         return "".join(parts)
 
     def _system(self) -> str:
+        """Conversation-mode body: core (identity/personality/general tactics/
+        knowledge boundary) + conversation extras (dialogue rules / attitude
+        / secrets / quests / recruit / attitude marker grammar).
+        """
         if self._secrets:
             formatted = "\n".join(f"- {s}" for s in self._secrets)
             if self.force_reveal in _FORCE_DETAILS:
@@ -226,39 +210,64 @@ class NpcAgent:
         recruit_section = _RECRUIT_SECTION if self.pending_join_decision else ""
         tactics_section = (self._tactics.rstrip() + "\n\n") if self._tactics else ""
 
-        return _SYSTEM_TEMPLATE.format(
+        core = _CORE_BODY_TEMPLATE.format(
             name=self.char.name,
             personality=self._personality,
+            tactics_section=tactics_section,
+        )
+        extras = _CONVERSATION_EXTRAS_TEMPLATE.format(
             attitude_label=_ATTITUDE_LABELS[self.attitude],
             attitude=self.attitude,
-            tactics_section=tactics_section,
             pending_section=pending_section,
             recruit_section=recruit_section,
             secrets_section=secrets_section,
             quest_section=self._quest_section(),
             action_section=action_section,
         )
+        return core.rstrip() + "\n\n" + extras
 
-    def generate(self, on_chunk=None) -> str:
-        """Generate an NPC response from the unified narrative_log.
+    def _combat_body(self) -> str:
+        """Combat-mode body: just the core (identity / personality / combat
+        tactics / knowledge boundary). No conversation state — controllers
+        compose situation + action menu via nudge."""
+        tactics_section = (self.combat_tactics.rstrip() + "\n\n") if self.combat_tactics else ""
+        return _CORE_BODY_TEMPLATE.format(
+            name=self.char.name,
+            personality=self._personality,
+            tactics_section=tactics_section,
+        )
 
-        Caller (game.py) is responsible for pushing the result back to the log.
-        Returns clean text with attitude/action markers stripped.
+    def generate(self, nudge: str = "", combat: bool = False, on_chunk=None) -> str:
+        """Generate an NPC response.
+
+        combat=False (default): conversation mode. Body includes attitude /
+            secrets / quests / recruit / attitude-marker rules. After the LLM
+            replies, JOIN/DECLINE/[+/=/-]/<ATTACK>/<FLEE> markers are parsed
+            out and used to update internal state; cleaned text is returned.
+        combat=True: slim body (identity + personality + combat tactics +
+            knowledge boundary only). No marker parsing — caller
+            (LLMNpcController) is responsible for stripping <FLEE>/<END>.
+
+        nudge: per-call instruction appended after the body. Both callers
+            (game.py conversation, LLMNpcController combat) use this to pass
+            the situation-specific call-to-action.
         """
         history_msgs = render_messages(self.world_state, self.char_id)
-        if not history_msgs:
+        if not history_msgs and not combat:
             history_msgs = [{"role": "user", "content": "（冒險者向你走近，看著你）"}]
 
-        # Identity / personality / secrets / quests / attitude rules all go in a
-        # single user message at the bottom — matches the NPC combat structure
-        # and keeps the LLM's strongest attention on the role it must play.
-        messages = history_msgs + [{"role": "user", "content": self._system()}]
-        (_DEBUG_DIR / f"npc_{self.char.name}_context.json").write_text(
+        body = self._combat_body() if combat else self._system()
+        if nudge:
+            body = body.rstrip() + "\n\n" + nudge
+
+        messages = history_msgs + [{"role": "user", "content": body}]
+        debug_name = (f"npc_{self.char.name}_combat_context.json" if combat
+                      else f"npc_{self.char.name}_context.json")
+        (_DEBUG_DIR / debug_name).write_text(
             json.dumps(messages, ensure_ascii=False, indent=2), encoding="utf-8", errors="replace"
         )
 
         buf: list[str] = []
-
         def _on_chunk(chunk, thinking=False):
             if not thinking:
                 buf.append(chunk)
@@ -269,7 +278,12 @@ class NpcAgent:
             self.base_url, self.model, messages, self.options,
             think=False, on_chunk=_on_chunk, backend=self.backend, timeout=60,
         )
-        # Reset one-shot directives after every response
+
+        if combat:
+            # Combat output is returned raw — controller parses <FLEE>/<END>.
+            return full
+
+        # ── Conversation mode: reset one-shots and parse markers ──────────────
         self.force_reveal   = ""
         self.pending_reveal = []
         self.pending_join_decision = False
@@ -320,80 +334,6 @@ class NpcAgent:
             attitude_label=_ATTITUDE_LABELS[self.attitude],
             conv_log_text=render_script(self.world_state, self.char_id),
         )
-
-    def combat_action(self, weapons: str, allies: str, enemies: str,
-                      resources: dict | None = None,
-                      error_feedback: str = "",
-                      on_chunk=None) -> tuple[str, bool, bool]:
-        """Decide one combat sub-action.
-
-        resources: {"action": int, "movement": float}
-                   remaining resources for THIS turn (the caller decrements
-                   between sub-actions). Used to inform the LLM.
-
-        error_feedback: if non-empty, appended to the prompt as a system note
-                        about why the previous sub-action was rejected — the
-                        agent uses it to pick something else.
-
-        Returns (description, fled, ended):
-          - description: cleaned natural-language action (markers stripped)
-          - fled: True if <FLEE> marker present (caller executes FLEE tag)
-          - ended: True if <END> marker present (caller stops calling this turn)
-        """
-        if resources is None:
-            resources = {"action": 1, "movement": 9.0}
-        action_status = "可用" if resources.get("action", 0) > 0 else "已用完"
-        move_left     = resources.get("movement", 0.0)
-        resources_block = (
-            f"- 動作（attack/dodge/use item）：{action_status}\n"
-            f"- 移動：剩 {move_left:.1f}m（單回合上限 9m）"
-        )
-
-        tactics_section = (self._tactics.rstrip() + "\n\n") if self._tactics else ""
-        prompt = _COMBAT_PROMPT_TEMPLATE.format(
-            name=self.char.name,
-            personality=self._personality,
-            tactics_section=tactics_section,
-            hp=self.char.hp,
-            max_hp=self.char.max_hp,
-            position=self.char.position,
-            weapons=weapons,
-            allies=allies,
-            enemies=enemies,
-            resources_block=resources_block,
-        )
-        if error_feedback:
-            prompt = prompt + (
-                f"\n\n## 系統訊息\n上次行動被拒：{error_feedback}\n"
-                "請改選不同的 sub-action。"
-            )
-        # History first so the NPC reads the narrative in order; identity +
-        # combat state + action menu go last to maximize attention to the
-        # current situation when generating the next sub-action.
-        history_msgs = render_messages(self.world_state, self.char_id)
-        messages = history_msgs + [{"role": "user", "content": prompt}]
-        (_DEBUG_DIR / f"npc_{self.char.name}_combat_context.json").write_text(
-            json.dumps(messages, ensure_ascii=False, indent=2), encoding="utf-8", errors="replace"
-        )
-
-        buf: list[str] = []
-        def _on_chunk(chunk, thinking=False):
-            if not thinking:
-                buf.append(chunk)
-                if on_chunk:
-                    on_chunk(chunk, thinking=False)
-
-        full = stream_chat(
-            self.base_url, self.model, messages,
-            {"temperature": 0.85, "num_predict": 80},
-            think=False, on_chunk=_on_chunk, backend=self.backend, timeout=60,
-        )
-
-        fled  = bool(_FLEE_RE.search(full))
-        ended = bool(_END_RE.search(full))
-        cleaned = _FLEE_RE.sub("", full)
-        cleaned = _END_RE.sub("", cleaned).strip()
-        return cleaned, fled, ended
 
     @property
     def attitude_label(self) -> str:

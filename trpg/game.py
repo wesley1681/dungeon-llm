@@ -304,7 +304,10 @@ class GameSession:
         def _thor_chunk(c, thinking=False):
             self._emit(StreamChunk("thor", c, thinking))
 
-        thor_text = self.thor_agent.generate(on_chunk=_thor_chunk)
+        thor_text = self.thor_agent.generate(
+            nudge="現在請以索爾的身份描述你的下一步——做什麼動作、看什麼、或對隊友說什麼。",
+            on_chunk=_thor_chunk,
+        )
         ws.log_event("thor", thor_text)
         ws.event_log.append(f"{ws.characters['thor'].name}：{thor_text}")
 
@@ -548,6 +551,8 @@ class GameSession:
         # ── NPC opening (skip attitude marker — no real interaction yet) ──────
         npc_agent._skip_marker = True
         npc_text = npc_agent.generate(
+            nudge=f"## 現在請\n以 {npc_char.name} 的身份，根據以上歷史和當前態度，"
+                  "用第一人稱繁體中文簡短回應走近的冒險者（開場第一句）。",
             on_chunk=lambda c, thinking=False: self._emit(
                 StreamChunk("npc_talk", c, actor=npc_char.name)
             ),
@@ -609,6 +614,8 @@ class GameSession:
 
             # ── NPC reads log, responds ───────────────────────────────────────
             npc_text = npc_agent.generate(
+                nudge=f"## 現在請\n以 {npc_char.name} 的身份，根據以上對話歷史和當前態度，"
+                      "用第一人稱繁體中文簡短回應對方剛才說的話。",
                 on_chunk=lambda c, thinking=False: self._emit(
                     StreamChunk("npc_talk", c, actor=npc_char.name)
                 ),
