@@ -543,6 +543,112 @@ def test_end_to_end_shaman_fireball() -> None:
     print("End-to-end shaman fireball: OK")
 
 
+def test_caster_starts_in_back_row() -> None:
+    """setup_combat_positions should treat spellcasters as back-row (≥6m),
+    even when they only carry a melee weapon. Otherwise shaman starts at
+    1.5m next to the party and any AOE catches itself."""
+    from trpg.scenarios.dungeon import build_world_state
+    from trpg.engine import combat
+
+    ws = build_world_state()
+    ws.dungeon_map.current_room_id = "boss_chamber"
+    combat.roll_initiative(ws, ["thor", "aria", "goblin_shaman", "goblin_1", "goblin_3"])
+    shaman = ws.characters["goblin_shaman"]
+    g1 = ws.characters["goblin_1"]   # melee-only (彎刀), no spells
+    g3 = ws.characters["goblin_3"]   # archer, has bow
+    # Shaman carries only a melee staff but is a caster → must be back row.
+    assert shaman.position == 6.0, f"caster shaman not in back row: {shaman.position}"
+    # goblin_1 is melee-only, no spells → front row
+    assert g1.position == 1.5, f"melee-only goblin not in front row: {g1.position}"
+    # Archer has ranged bow → back row
+    assert g3.position == 6.0, f"archer not in back row: {g3.position}"
+    print("Caster back-row placement: OK")
+
+
+def test_spell_handler_target_position() -> None:
+    """SPELL action with target_position uses the coord as AOE center directly,
+    overriding `target`. Lets the caster avoid friendly fire by placing the
+    circle away from allies."""
+    from trpg.scenarios.dungeon import build_world_state
+    from trpg.engine import combat
+    from trpg.engine.character import Character, Stats
+
+    ws = build_world_state()
+    ws.dungeon_map.current_room_id = "guard_room"
+    caster = Character(
+        name="精準法師", race="人類", class_="法師", level=5,
+        stats=Stats(INT=16), hp=20, max_hp=20, ac=12,
+        spells=["火球術"],
+        spell_slots={3: 1},
+        spellcasting_ability="INT",
+        is_npc=True, attitude=0,
+        position=0.0,   # standing with the party
+    )
+    ws.characters["aim_mage"] = caster
+    ws.dungeon_map.current_room.npc_ids.append("aim_mage")
+    # Position the targets: g1 at 10m, g2 at 12m, party (Thor, Aria) at 0m.
+    ws.characters["goblin_1"].position = 10.0
+    ws.characters["goblin_2"].position = 12.0
+    ws.characters["thor"].position = 0.0
+    ws.characters["aria"].position = 0.0
+    ws.characters["thor"].hp = ws.characters["thor"].max_hp
+    ws.characters["aria"].hp = ws.characters["aria"].max_hp
+
+    # Drop AOE at 11m — catches g1 (dist 1m) and g2 (dist 1m), spares party.
+    random.seed(42)
+    result = combat.execute_action({
+        "type": "SPELL",
+        "caster": "aim_mage",
+        "spell_name": "火球術",
+        "target_position": 11.0,
+    }, ws)
+    assert result["type"] == "SPELL", f"got {result}"
+    assert result["center_name"] == "位置 11.0m", f"got {result['center_name']!r}"
+    affected = {tr["target_name"] for tr in result["target_results"]}
+    assert "地精甲" in affected and "地精乙" in affected, f"missing goblins: {affected}"
+    assert "索爾" not in affected, f"thor was caught at distance 11m: {affected}"
+    assert "凱恩" not in affected, f"aria was caught at distance 11m: {affected}"
+    assert "精準法師" not in affected, f"caster self-hit: {affected}"
+    print("SPELL target_position: OK")
+
+
+def test_spell_target_position_overrides_target() -> None:
+    """If both `target` and `target_position` are given, target_position wins."""
+    from trpg.scenarios.dungeon import build_world_state
+    from trpg.engine import combat
+    from trpg.engine.character import Character, Stats
+
+    ws = build_world_state()
+    ws.dungeon_map.current_room_id = "guard_room"
+    caster = Character(
+        name="優先法師", race="人類", class_="法師", level=5,
+        stats=Stats(INT=16), hp=20, max_hp=20, ac=12,
+        spells=["火球術"], spell_slots={3: 1}, spellcasting_ability="INT",
+        is_npc=True, attitude=0, position=0.0,
+    )
+    ws.characters["pri_mage"] = caster
+    ws.dungeon_map.current_room.npc_ids.append("pri_mage")
+    ws.characters["goblin_1"].position = 1.5   # adjacent
+    ws.characters["thor"].position = 0.0
+    ws.characters["aria"].position = 0.0
+
+    # target says goblin_1 (would center at 1.5m, hits party), target_position
+    # says 30.0 (far away, hits nothing). target_position must win.
+    random.seed(0)
+    result = combat.execute_action({
+        "type": "SPELL",
+        "caster": "pri_mage",
+        "spell_name": "火球術",
+        "target": "goblin_1",
+        "target_position": 30.0,
+    }, ws)
+    assert result["type"] == "SPELL"
+    assert result["center_name"] == "位置 30.0m"
+    affected = {tr["target_name"] for tr in result["target_results"]}
+    assert "地精甲" not in affected, f"target_position should override: {affected}"
+    print("SPELL target_position overrides target: OK")
+
+
 def main() -> int:
     test_spell_dataclass_and_catalog()
     test_character_spell_fields()
@@ -558,6 +664,9 @@ def main() -> int:
     test_npc_controller_nudge_includes_spells()
     test_player_controller_nudge_includes_spells()
     test_goblin_shaman_scenario()
+    test_caster_starts_in_back_row()
+    test_spell_handler_target_position()
+    test_spell_target_position_overrides_target()
     test_end_to_end_shaman_fireball()
     print("\n=== ALL SPELL TESTS PASSED ===")
     return 0

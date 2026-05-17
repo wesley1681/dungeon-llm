@@ -13,8 +13,9 @@ def setup_combat_positions(world_state: WorldState, combat: CombatState) -> None
 
     Convention:
       - Party (PCs + follower NPCs): position 0.0
-      - Hostile NPCs with melee-only weapons: position 1.5 (in engagement reach)
-      - Hostile NPCs with ranged weapons: position 6.0 (back row, safer)
+      - Hostile NPCs that fight only in melee: position 1.5 (in engagement reach)
+      - Hostile NPCs that fight at range (ranged weapon OR spellcaster):
+        position 6.0 (back row, safer; out of melee reach but in AOE-aware range)
     """
     for cid in combat.initiative_order:
         char = world_state.characters.get(cid)
@@ -23,9 +24,10 @@ def setup_combat_positions(world_state: WorldState, combat: CombatState) -> None
         if world_state.is_party_ally(cid):
             char.position = 0.0
             continue
-        # Hostile NPC: pick starting position based on weapon mix
+        # Hostile NPC: back row if they have any ranged option (weapon or spells)
         has_ranged = any(w.range_type == "遠程" for w in char.weapons)
-        char.position = 6.0 if has_ranged else 1.5
+        is_caster = bool(char.spells and char.spellcasting_ability)
+        char.position = 6.0 if (has_ranged or is_caster) else 1.5
 
 
 def roll_initiative(world_state: WorldState,
@@ -452,17 +454,25 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
                 return {"type": "ERROR",
                         "message": f"{caster.name} 沒有 {slot_level} 環法術位"}
 
-        # Resolve AOE center position
-        target_key = action.get("target", "")
-        if target_key == "self":
-            center_pos = caster.position
-            center_name = caster.name
+        # Resolve AOE center position. Two ways:
+        #   1. target_position: explicit coordinate (lets the caster place AOE
+        #      between creatures, away from allies, etc.) — takes priority.
+        #   2. target: creature id ("self" = caster), AOE centers on that body.
+        target_pos_arg = action.get("target_position")
+        if target_pos_arg is not None:
+            center_pos = float(target_pos_arg)
+            center_name = f"位置 {center_pos:.1f}m"
         else:
-            target_char = _lookup_char(target_key, world_state)
-            if not target_char:
-                return {"type": "ERROR", "message": f"找不到法術中心目標：{target_key}"}
-            center_pos = target_char.position
-            center_name = target_char.name
+            target_key = action.get("target", "")
+            if target_key == "self":
+                center_pos = caster.position
+                center_name = caster.name
+            else:
+                target_char = _lookup_char(target_key, world_state)
+                if not target_char:
+                    return {"type": "ERROR", "message": f"找不到法術中心目標：{target_key}"}
+                center_pos = target_char.position
+                center_name = target_char.name
 
         # Range gate: caster ↔ center
         dist_to_center = abs(caster.position - center_pos)

@@ -211,7 +211,11 @@ class LLMPlayerController(ActorController):
         combat_tactics = (self.agent.combat_tactics.rstrip() + "\n\n"
                           if self.agent.combat_tactics else "")
         spells_line = f"可用法術：{ctx.spells_str}\n" if ctx.spells_str else ""
-        spell_option = "- 施法：「我對 [目標] 施展 [法術]」\n" if ctx.spells_str else ""
+        spell_option = (
+            "- 施法：「我對 [目標] 施展 [法術]」或「我把 [法術] 扔到 [座標]m 處」\n"
+            "  （AOE 法術記得避開隊友和自己——可指定一個遠離盟友的座標當圓心）\n"
+            if ctx.spells_str else ""
+        )
         return (
             f"{combat_tactics}"
             f"【戰鬥回合 {ctx.round_num}】\n"
@@ -306,7 +310,11 @@ class LLMNpcController(ActorController):
         combat_tactics = (self.agent.combat_tactics.rstrip() + "\n\n"
                           if self.agent.combat_tactics else "")
         spells_line = f"可用法術：{ctx.spells_str}\n" if ctx.spells_str else ""
-        spell_option = "- 施法：「我對 [目標] 施展 [法術]」\n" if ctx.spells_str else ""
+        spell_option = (
+            "- 施法：「我對 [目標] 施展 [法術]」或「我把 [法術] 扔到 [座標]m 處」\n"
+            "  （AOE 法術記得避開隊友和自己——可指定一個遠離盟友的座標當圓心）\n"
+            if ctx.spells_str else ""
+        )
         return (
             f"{combat_tactics}"
             f"【戰鬥回合 {ctx.round_num}】\n"
