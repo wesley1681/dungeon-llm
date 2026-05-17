@@ -8,20 +8,20 @@ OLLAMA_URL = "http://localhost:11434"
 _DEBUG_DIR = pathlib.Path(__file__).parent.parent / "debug"
 _DEBUG_DIR.mkdir(exist_ok=True)
 
-_COMBAT_SYSTEM = (
+_COMBAT_RULES = (
     "你是D&D遊戲主持人（GM），正在描述戰鬥中的單一事件。\n"
     "規則：\n"
     "1. 只用繁體中文輸出，禁止摻入任何其他語言的詞彙。\n"
-    "2. 直接輸出一句話敘事（不超過50字），不可加「分析：」「機制：」欄位，不可寫 ---。\n"
-    "3. 不要嵌入任何方括號標籤（如 [ATTACK]、[STATUS]、[END TURN] 等），結算已完成。\n"
-    "4. 只描述「使用者訊息中明確發生的事件」，不要新增傷害、死亡、追加行動。\n"
-    "5. 不要重複歷史內容，只描述當下這個事件。"
+    "2. 直接輸出一句話敘事（不超過50字）。\n"
+    "3. 只描述「使用者訊息中明確發生的事件」，不要新增傷害、死亡、追加行動。\n"
+    "4. 不要重複歷史內容，只描述當下這個事件。"
 )
 
-# GM persona + rules stay in system message.
-# Per-turn state (room, chars, tag results) is injected at the END of the message list
-# so it stays close to the model's attention window — recent context dominates generation.
-_SYSTEM_BASE = """你是一位專業的D&D 5e地下城主（GM）。請用繁體中文進行沉浸式敘事。
+# All GM context — persona, rules, per-turn state — goes in a single user
+# message at the bottom of the message list. Mirrors PC / NPC structure: the
+# LLM attends strongest to the end, so identity and current situation arrive
+# together where attention is highest.
+_GM_PROMPT_BASE = """你是一位專業的D&D 5e地下城主（GM）。請用繁體中文進行沉浸式敘事。
 
 ## 你的職責
 1. 根據「機制結算」中已發生的事件，撰寫流暢的繁體中文敘事（350字以內）
@@ -36,14 +36,7 @@ _SYSTEM_BASE = """你是一位專業的D&D 5e地下城主（GM）。請用繁體
 - 若「可見敵人：無」，房間就是真的安全，不要暗示有看不見的敵人
 - 死亡角色（HP=0）不再出現在任何描述中
 - 不替玩家做決定、不替玩家行動
-
-直接輸出純繁體中文敘事，禁止輸出任何 [標籤] 或格式欄位。
 """
-
-_GM_REMINDER = (
-    "請以 GM 身份用繁體中文寫一段 350 字內的敘事，嚴守上方「強制規則」。\n"
-    "直接輸出敘事，不要寫 [標籤]、「分析：」「機制：」等欄位。"
-)
 
 
 class GMAgent:
@@ -119,19 +112,19 @@ class GMAgent:
         if not history_msgs:
             history_msgs = [{"role": "user", "content": "（開場，請描述初始場景，引導玩家進入冒險）"}]
 
-        final_parts = [f"## 當前狀態（即時）\n{self._state_block()}"]
+        final_parts = [
+            _GM_PROMPT_BASE.rstrip(),
+            f"## 當前狀態（即時）\n{self._state_block()}",
+        ]
         if tag_results:
             final_parts.append(
                 "## 本回合機制結算（已執行，請在敘事中自然反映後果）\n"
                 + "\n".join(f"- {r}" for r in tag_results)
             )
-        final_parts.append(_GM_REMINDER)
 
-        messages = (
-            [{"role": "system", "content": _SYSTEM_BASE}]
-            + history_msgs
-            + [{"role": "user", "content": "\n\n".join(final_parts)}]
-        )
+        messages = history_msgs + [
+            {"role": "user", "content": "\n\n".join(final_parts)}
+        ]
 
         (_DEBUG_DIR / "gm_context.json").write_text(
             json.dumps(messages, ensure_ascii=False, indent=2), encoding="utf-8", errors="replace"
@@ -158,8 +151,7 @@ class GMAgent:
         return full
 
     _COMBAT_USER_TEMPLATE = (
-        "用一句（30字以內）繁體中文敘述此戰鬥結果，"
-        "直接輸出敘事，不加格式欄位：\n{result_text}"
+        "{rules}\n\n用一句（30字以內）繁體中文敘述此戰鬥結果：\n{result_text}"
     )
 
     def combat_narrate(self, result_text: str, on_chunk=None) -> str:
@@ -169,8 +161,9 @@ class GMAgent:
         this method composes the prompt template internally.
         """
         messages = [
-            {"role": "system", "content": _COMBAT_SYSTEM},
-            {"role": "user",   "content": self._COMBAT_USER_TEMPLATE.format(result_text=result_text)},
+            {"role": "user", "content": self._COMBAT_USER_TEMPLATE.format(
+                rules=_COMBAT_RULES, result_text=result_text,
+            )},
         ]
         (_DEBUG_DIR / "gm_combat_context.json").write_text(
             json.dumps(messages, ensure_ascii=False, indent=2), encoding="utf-8", errors="replace"
