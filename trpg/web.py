@@ -168,9 +168,12 @@ def _consume_until_prompt(state, gm_msgs, thor_msgs, aria_msgs):
                 gm_msgs[-1]["content"] += event.text
                 yield gm_msgs[:], thor_msgs[:], aria_msgs[:], state, ""
 
-            elif src == "thor_combat":
+            elif src == "pc_combat":
+                # All LLM-PC combat streams route to the Thor panel for now.
+                # When a 2nd LLM-controlled PC is added, this needs per-actor panels.
                 if not event.thinking:
-                    _ensure_thor_slot("thor_combat")
+                    slot_key = f"pc_combat_{event.actor}"
+                    _ensure_thor_slot(slot_key)
                     thor_msgs[-1]["content"] += event.text
                     yield gm_msgs[:], thor_msgs[:], aria_msgs[:], state, ""
 
@@ -191,16 +194,17 @@ def _consume_until_prompt(state, gm_msgs, thor_msgs, aria_msgs):
         elif isinstance(event, ActionResult):
             debug_str = f"\n\n`[判定器] {event.debug}`" if DEBUG_ARBITER else ""
             result_line = f"\n\n`{event.summary}`{debug_str}"
-            # Append to whatever the last open slot is (npc/thor_combat message)
+            # Append to whatever the last open slot is (npc / pc_combat message)
             if gm_msgs and last_source and last_source.startswith("npc"):
                 gm_msgs[-1]["content"] += result_line
                 yield gm_msgs[:], thor_msgs[:], aria_msgs[:], state, ""
-            elif last_source == "thor_combat":
+            elif last_source and last_source.startswith("pc_combat_"):
                 if thor_msgs:
                     thor_msgs[-1]["content"] += result_line
-                # Also show in aria panel
+                # Also show in aria panel (uses event.actor — not hardcoded)
+                last_line = thor_msgs[-1]['content'].split('`')[0].strip() if thor_msgs else ''
                 aria_msgs.append({"role": "assistant",
-                                   "content": f"**索爾：**{thor_msgs[-1]['content'].split('`')[0].strip() if thor_msgs else ''}\n\n`{event.summary}`"})
+                                   "content": f"**{event.actor}：**{last_line}\n\n`{event.summary}`"})
                 yield gm_msgs[:], thor_msgs[:], aria_msgs[:], state, ""
             else:
                 # Aria action result

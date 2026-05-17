@@ -163,10 +163,11 @@ def run_game() -> None:
                     print(f"\n  【{event.actor} 的回合】\n  ", end="")
                     _seen[f"npc_{event.actor}"] = True
                 print(event.text, end="", flush=True)
-            elif src == "thor_combat":
-                if not _seen.get("thor_combat"):
-                    print(f"\n  【{world_state.characters['thor'].name} 的回合】\n  ", end="")
-                    _seen["thor_combat"] = True
+            elif src == "pc_combat":
+                slot_key = f"pc_combat_{event.actor}"
+                if not _seen.get(slot_key):
+                    print(f"\n  【{event.actor} 的回合】\n  ", end="")
+                    _seen[slot_key] = True
                 print(event.text, end="", flush=True)
             elif src == "narrate":
                 if not _seen.get("narrate_current"):

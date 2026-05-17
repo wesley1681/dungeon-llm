@@ -129,9 +129,12 @@ class LLMPlayerController(ActorController):
     def take_sub_action(self, char, ctx: CombatContext) -> ActorDecision:
         from ..game import StreamChunk
         nudge = self._build_nudge(char, ctx)
+        actor = char.name
         desc = self.agent.generate(
             nudge=nudge,
-            on_chunk=lambda c, thinking=False: self.emit_event(StreamChunk("thor_combat", c)),
+            on_chunk=lambda c, thinking=False: self.emit_event(
+                StreamChunk("pc_combat", c, actor=actor)
+            ),
         )
         desc, ended = _strip_marker(desc, _END_RE)
         return ActorDecision(description=desc, ended=ended)
