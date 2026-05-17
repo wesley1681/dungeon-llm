@@ -33,6 +33,7 @@ class Character:
     weapons: list = field(default_factory=list)       # list[Weapon]
     consumables: list = field(default_factory=list)   # list[Consumable]
     gear: list = field(default_factory=list)          # list[str] — 非戰鬥道具
+    equipment: list = field(default_factory=list)     # 穿戴中的裝備（Modifier-capable）
     status_effects: list = field(default_factory=list)
     proficiencies: list = field(default_factory=list)
     is_npc: bool = False
@@ -86,6 +87,47 @@ class Character:
             if c.name == name:
                 return c
         return None
+
+    # ── Status effect helpers ──────────────────────────────────────────────────
+
+    def has_status(self, name: str) -> bool:
+        from .status import StatusEffect
+        for fx in self.status_effects:
+            if isinstance(fx, StatusEffect):
+                if fx.name == name:
+                    return True
+            elif fx == name:          # legacy 字串相容（過渡期）
+                return True
+        return False
+
+    def add_status(self, fx) -> None:
+        """Add a StatusEffect (idempotent on name)."""
+        if self.has_status(fx.name):
+            return
+        self.status_effects.append(fx)
+
+    def remove_status(self, name: str) -> None:
+        from .status import StatusEffect
+        self.status_effects = [
+            fx for fx in self.status_effects
+            if not (
+                (isinstance(fx, StatusEffect) and fx.name == name)
+                or fx == name
+            )
+        ]
+
+    def iter_modifiers(self):
+        """Yield all Modifier-implementing objects attached to this character."""
+        from .modifier import Modifier
+        for w in self.weapons:
+            if isinstance(w, Modifier):
+                yield w
+        for eq in getattr(self, "equipment", []):
+            if isinstance(eq, Modifier):
+                yield eq
+        for fx in self.status_effects:
+            if isinstance(fx, Modifier):
+                yield fx
 
 
 @dataclass
