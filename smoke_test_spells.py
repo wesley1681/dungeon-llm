@@ -52,9 +52,190 @@ def test_character_spell_fields() -> None:
     print("Character spell fields: OK")
 
 
+def test_spell_handler_save_type() -> None:
+    """Task 3: execute_action SPELL — fireball centered on a goblin hits
+    everyone within 6m, rolls DEX saves, applies half-on-save, decrements slot."""
+    from trpg.scenarios.dungeon import build_world_state
+    from trpg.engine import combat
+    from trpg.engine.character import Character, Stats
+
+    ws = build_world_state()
+    ws.dungeon_map.current_room_id = "guard_room"
+    # Inject a temporary caster into the room — we don't need the full shaman yet,
+    # we only need a Character object with the right fields. Task 8 places the real shaman.
+    shaman = Character(
+        name="測試薩滿", race="地精", class_="薩滅", level=3,
+        stats=Stats(WIS=16, CON=12, DEX=10),
+        hp=18, max_hp=18, ac=12,
+        spells=["火球術"],
+        spell_slots={3: 1},
+        spellcasting_ability="WIS",
+        is_npc=True, attitude=0,
+        position=10.0,
+    )
+    ws.characters["test_shaman"] = shaman
+    ws.dungeon_map.current_room.npc_ids.append("test_shaman")
+
+    g1 = ws.characters["goblin_1"]
+    g2 = ws.characters["goblin_2"]
+    thor = ws.characters["thor"]
+    aria = ws.characters["aria"]
+    # Set positions: shaman 10m away from party, g1 at 1.5m (in radius of party), g2 at 8m.
+    g1.position = 1.5
+    g2.position = 8.0   # within 6m of shaman at 10m (dist 2m), should be hit
+    thor.position = 0.0
+    aria.position = 0.0
+    # Reset HP so damage assertions are reliable.
+    thor.hp = thor.max_hp
+    aria.hp = aria.max_hp
+    g1.hp = g1.max_hp
+    g2.hp = g2.max_hp
+
+    # Center on goblin_2 → AOE covers anyone within 6m of position 8m: g2 (0m away),
+    # g1 (6.5m away — out), thor/aria (8m — out), shaman (2m — in, friendly fire).
+    random.seed(7)
+    action = {
+        "type": "SPELL",
+        "caster": "test_shaman",
+        "spell_name": "火球術",
+        "target": "goblin_2",
+        # slot_level omitted — engine should default to 3 (spell.level), only slot available
+    }
+    result = combat.execute_action(action, ws)
+
+    assert result["type"] == "SPELL", f"got {result}"
+    assert result["spell_name"] == "火球術"
+    assert result["slot_level"] == 3
+    assert result["save_stat"] == "DEX"
+    # DC = 8 + prof_bonus(3//4*1+2=2) + WIS_mod(+3) = 13
+    assert result["save_dc"] == 13, f"got {result['save_dc']}"
+
+    affected_names = {tr["target_name"] for tr in result["target_results"]}
+    assert "地精乙" in affected_names, f"g2 should be in radius: {affected_names}"
+    assert "測試薩滿" in affected_names, f"shaman self-hit (friendly fire): {affected_names}"
+    assert "地精甲" not in affected_names, f"g1 too far, should be excluded: {affected_names}"
+    assert "索爾" not in affected_names, f"thor too far, should be excluded: {affected_names}"
+
+    # Slot was consumed
+    assert shaman.spell_slots[3] == 0, f"slot not decremented: {shaman.spell_slots}"
+
+    # Damage was applied to g2 (HP went down)
+    g2_after = [tr for tr in result["target_results"] if tr["target_name"] == "地精乙"][0]
+    assert g2_after["damage"] > 0, f"g2 should take damage: {g2_after}"
+
+    print("SPELL handler save-type: OK")
+
+
+def test_spell_handler_no_slot_available() -> None:
+    """Task 3: ERROR when no slot of sufficient level is free."""
+    from trpg.scenarios.dungeon import build_world_state
+    from trpg.engine import combat
+    from trpg.engine.character import Character, Stats
+
+    ws = build_world_state()
+    ws.dungeon_map.current_room_id = "guard_room"
+    # Caster has slots but all below the spell's level
+    weak_caster = Character(
+        name="弱法師", race="人類", class_="法師", level=1,
+        stats=Stats(INT=14), hp=8, max_hp=8, ac=10,
+        spells=["火球術"],
+        spell_slots={1: 2, 2: 1},   # no level-3 slot
+        spellcasting_ability="INT",
+        is_npc=True, attitude=0,
+        position=10.0,
+    )
+    ws.characters["weak_caster"] = weak_caster
+    ws.dungeon_map.current_room.npc_ids.append("weak_caster")
+
+    action = {
+        "type": "SPELL",
+        "caster": "weak_caster",
+        "spell_name": "火球術",
+        "target": "goblin_1",
+    }
+    result = combat.execute_action(action, ws)
+    assert result["type"] == "ERROR", f"expected ERROR, got {result}"
+    assert "法術位" in result["message"], f"message should mention slots: {result}"
+    print("SPELL handler no-slot ERROR: OK")
+
+
+def test_spell_handler_explicit_slot_level() -> None:
+    """Task 3: When caster provides slot_level explicitly, engine uses that slot."""
+    from trpg.scenarios.dungeon import build_world_state
+    from trpg.engine import combat
+    from trpg.engine.character import Character, Stats
+
+    ws = build_world_state()
+    ws.dungeon_map.current_room_id = "guard_room"
+    caster = Character(
+        name="多環法師", race="人類", class_="法師", level=5,
+        stats=Stats(INT=16), hp=20, max_hp=20, ac=12,
+        spells=["火球術"],
+        spell_slots={3: 2, 4: 1, 5: 1},
+        spellcasting_ability="INT",
+        is_npc=True, attitude=0,
+        position=10.0,
+    )
+    ws.characters["multi_caster"] = caster
+    ws.dungeon_map.current_room.npc_ids.append("multi_caster")
+
+    action = {
+        "type": "SPELL",
+        "caster": "multi_caster",
+        "spell_name": "火球術",
+        "target": "goblin_1",
+        "slot_level": 5,
+    }
+    result = combat.execute_action(action, ws)
+    assert result["type"] == "SPELL"
+    assert result["slot_level"] == 5
+    assert caster.spell_slots[5] == 0
+    assert caster.spell_slots[3] == 2   # untouched
+    print("SPELL handler explicit slot_level: OK")
+
+
+def test_spell_handler_out_of_range() -> None:
+    """Task 3: ERROR when caster-to-center distance exceeds spell.range_m."""
+    from trpg.scenarios.dungeon import build_world_state
+    from trpg.engine import combat
+    from trpg.engine.character import Character, Stats
+
+    ws = build_world_state()
+    ws.dungeon_map.current_room_id = "guard_room"
+    far_caster = Character(
+        name="遠法師", race="人類", class_="法師", level=5,
+        stats=Stats(INT=16), hp=20, max_hp=20, ac=12,
+        spells=["火球術"],
+        spell_slots={3: 1},
+        spellcasting_ability="INT",
+        is_npc=True, attitude=0,
+        position=100.0,   # 100m from target at 1.5m → dist 98.5m > 45m range
+    )
+    ws.characters["far_caster"] = far_caster
+    ws.dungeon_map.current_room.npc_ids.append("far_caster")
+    ws.characters["goblin_1"].position = 1.5
+
+    action = {
+        "type": "SPELL",
+        "caster": "far_caster",
+        "spell_name": "火球術",
+        "target": "goblin_1",
+    }
+    result = combat.execute_action(action, ws)
+    assert result["type"] == "ERROR"
+    assert "射程" in result["message"]
+    # Slot must NOT be consumed on failed cast
+    assert far_caster.spell_slots[3] == 1
+    print("SPELL handler out-of-range ERROR: OK")
+
+
 def main() -> int:
     test_spell_dataclass_and_catalog()
     test_character_spell_fields()
+    test_spell_handler_save_type()
+    test_spell_handler_no_slot_available()
+    test_spell_handler_explicit_slot_level()
+    test_spell_handler_out_of_range()
     print("\n=== ALL SPELL TESTS PASSED ===")
     return 0
 

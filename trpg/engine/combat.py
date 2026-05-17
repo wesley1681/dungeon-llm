@@ -416,6 +416,116 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
             "total":   total,
         }
 
+    # ── SPELL ─────────────────────────────────────────────────────────────────
+    if t == "SPELL":
+        from .spells import SPELLS
+
+        caster = _lookup_char(action.get("caster", ""), world_state)
+        if not caster:
+            return {"type": "ERROR", "message": "找不到施法者"}
+        spell_name = action.get("spell_name", "")
+        spell = SPELLS.get(spell_name)
+        if not spell:
+            return {"type": "ERROR", "message": f"未知法術：{spell_name}"}
+        if spell_name not in caster.spells:
+            return {"type": "ERROR", "message": f"{caster.name} 不會「{spell_name}」"}
+        if not caster.spellcasting_ability:
+            return {"type": "ERROR", "message": f"{caster.name} 不是施法者"}
+
+        # Resolve slot_level — explicit arg, or first available level >= spell.level
+        requested = action.get("slot_level")
+        if requested is None:
+            slot_level = None
+            for lvl in sorted(caster.spell_slots):
+                if lvl >= spell.level and caster.spell_slots[lvl] > 0:
+                    slot_level = lvl
+                    break
+            if slot_level is None:
+                return {"type": "ERROR",
+                        "message": f"{caster.name} 沒有可用的法術位施展「{spell_name}」"}
+        else:
+            slot_level = int(requested)
+            if slot_level < spell.level:
+                return {"type": "ERROR",
+                        "message": f"「{spell_name}」需要 {spell.level} 環或以上的法術位"}
+            if caster.spell_slots.get(slot_level, 0) <= 0:
+                return {"type": "ERROR",
+                        "message": f"{caster.name} 沒有 {slot_level} 環法術位"}
+
+        # Resolve AOE center position
+        target_key = action.get("target", "")
+        if target_key == "self":
+            center_pos = caster.position
+            center_name = caster.name
+        else:
+            target_char = _lookup_char(target_key, world_state)
+            if not target_char:
+                return {"type": "ERROR", "message": f"找不到法術中心目標：{target_key}"}
+            center_pos = target_char.position
+            center_name = target_char.name
+
+        # Range gate: caster ↔ center
+        dist_to_center = abs(caster.position - center_pos)
+        if dist_to_center > spell.range_m:
+            return {"type": "ERROR",
+                    "message": f"目標距離 {dist_to_center:.1f}m，超出「{spell_name}」射程 {spell.range_m:.0f}m"}
+
+        # Save DC = 8 + prof_bonus + spellcasting_ability_modifier
+        save_dc = 8 + caster.proficiency_bonus + caster.stats.modifier(caster.spellcasting_ability)
+
+        # Find all alive characters within aoe_radius_m of center, scoped to current room.
+        room = world_state.dungeon_map.current_room if world_state.dungeon_map else None
+        if room is not None:
+            scope_ids = set(room.npc_ids)
+            for cid, c in world_state.characters.items():
+                if world_state.is_party_ally(cid):
+                    scope_ids.add(cid)
+        else:
+            scope_ids = set(world_state.characters.keys())
+
+        affected_ids: list[str] = []
+        for cid in scope_ids:
+            c = world_state.characters.get(cid)
+            if not c or not c.is_alive():
+                continue
+            if abs(c.position - center_pos) <= spell.aoe_radius_m + 1e-6:
+                affected_ids.append(cid)
+
+        # Roll saves, apply damage
+        target_results = []
+        for cid in affected_ids:
+            target = world_state.characters[cid]
+            success, save_roll = make_saving_throw(target, spell.save_ability, save_dc)
+            full_dmg = roll(spell.damage_dice) if spell.damage_dice else 0
+            actual_dmg = full_dmg // 2 if success else full_dmg
+            if actual_dmg > 0:
+                apply_damage(target, actual_dmg, dtype=spell.damage_type, attacker=caster)
+            target_results.append({
+                "target_name":   target.name,
+                "save_roll":     save_roll,
+                "save_success":  success,
+                "damage":        actual_dmg,
+                "target_hp":     target.hp,
+                "target_max_hp": target.max_hp,
+                "target_alive":  target.is_alive(),
+            })
+
+        # Decrement slot after successful cast
+        caster.spell_slots[slot_level] = caster.spell_slots.get(slot_level, 0) - 1
+
+        return {
+            "type":          "SPELL",
+            "caster_name":   caster.name,
+            "spell_name":    spell_name,
+            "slot_level":    slot_level,
+            "center_name":   center_name,
+            "save_stat":     spell.save_ability,
+            "save_dc":       save_dc,
+            "damage_dice":   spell.damage_dice,
+            "damage_type":   spell.damage_type,
+            "target_results": target_results,
+        }
+
     return {"type": "ERROR", "message": f"未知行動類型：{t}"}
 
 
