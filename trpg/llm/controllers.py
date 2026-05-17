@@ -259,8 +259,7 @@ class LLMPlayerController(ActorController):
             f"- 移動：「我衝上去」「我後退」（單次最多 9m）\n"
             f"- 閃避：「我閃避」「我專注防禦」\n"
             f"- 躲藏：「我躲到 X 後面」\n"
-            f"- 結束本回合：單獨輸出 <END>\n"
-            f"完成本動作想直接結束回合，訊息結尾加 <END>（例：「我用長劍砍他。<END>」）。"
+            f"- 結束本回合：單獨輸出 <END>"
         )
 
     def _generate(self, char, ctx: CombatContext, error_feedback: str) -> ActorDecision:
@@ -363,7 +362,6 @@ class LLMNpcController(ActorController):
             f"- 閃避：「我閃避」「我專注防禦」\n"
             f"- 躲藏：「我躲到 X 後面」\n"
             f"- 結束本回合：單獨輸出 <END>\n"
-            f"完成本動作想結束回合，訊息結尾加 <END>。\n"
             f"逃跑：訊息結尾加 <FLEE>，立刻離開戰場。"
             f"{reasoning_section}"
         )
