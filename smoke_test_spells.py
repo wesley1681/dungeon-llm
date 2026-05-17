@@ -442,6 +442,31 @@ def test_player_controller_nudge_includes_spells() -> None:
     print("LLMPlayerController nudge spells: OK")
 
 
+def test_goblin_shaman_scenario() -> None:
+    """Task 8: build_world_state includes goblin_shaman with the expected loadout."""
+    from trpg.scenarios.dungeon import build_world_state, build_npc_agents
+
+    ws = build_world_state()
+    assert "goblin_shaman" in ws.characters, f"missing goblin_shaman: {list(ws.characters)}"
+    shaman = ws.characters["goblin_shaman"]
+    assert shaman.is_npc and shaman.attitude == 0
+    assert "火球術" in shaman.spells
+    assert shaman.spellcasting_ability == "WIS"
+    assert shaman.spell_slots.get(3, 0) >= 1, f"slots: {shaman.spell_slots}"
+    # Save DC = 8 + prof_bonus + WIS_mod. With level 3 (+2) + WIS 16 (+3) = 13.
+    assert shaman.proficiency_bonus == 2
+    assert shaman.stats.modifier("WIS") == 3
+
+    # Placed in boss_chamber
+    assert "goblin_shaman" in ws.dungeon_map.rooms["boss_chamber"].npc_ids, \
+        f"shaman not in boss_chamber.npc_ids: {ws.dungeon_map.rooms['boss_chamber'].npc_ids}"
+
+    # NpcAgent registered
+    agents = build_npc_agents(ws, model="dummy", base_url="http://x", backend="ollama")
+    assert "goblin_shaman" in agents, f"agent registry missing shaman: {list(agents)}"
+    print("Goblin shaman scenario data: OK")
+
+
 def main() -> int:
     test_spell_dataclass_and_catalog()
     test_character_spell_fields()
@@ -456,6 +481,7 @@ def main() -> int:
     test_rulebook_has_spell_section()
     test_npc_controller_nudge_includes_spells()
     test_player_controller_nudge_includes_spells()
+    test_goblin_shaman_scenario()
     print("\n=== ALL SPELL TESTS PASSED ===")
     return 0
 

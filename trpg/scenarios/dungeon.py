@@ -141,6 +141,19 @@ def build_world_state() -> WorldState:
         attitude=0,
     )
 
+    goblin_shaman = Character(
+        name="地精薩滿沃克", race="地精", class_="薩滿", level=3,
+        stats=Stats(STR=8, DEX=12, CON=12, INT=10, WIS=16, CHA=9),
+        hp=18, max_hp=18, ac=12,
+        weapons=[Weapon("骨杖", "1d6", "鈍擊", "近戰", range_normal=1.5)],
+        spells=["火球術"],
+        spell_slots={1: 3, 2: 2, 3: 1},
+        spellcasting_ability="WIS",
+        proficiencies=["WIS", "奧秘"],
+        is_npc=True,
+        attitude=0,
+    )
+
     # ── 地圖 ────────────────────────────────────────────────────────────────────
     dungeon_map = DungeonMap(
         rooms={
@@ -211,7 +224,7 @@ def build_world_state() -> WorldState:
                     "這裡只有南邊一條退路。"
                 ),
                 exits={"south": "storage_room"},
-                npc_ids=["goblin_boss", "goblin_3"],
+                npc_ids=["goblin_boss", "goblin_3", "goblin_shaman"],
                 loot=[
                     Consumable("護符", 1, "quest", ""),
                 ],
@@ -246,13 +259,14 @@ def build_world_state() -> WorldState:
 
     return WorldState(
         characters={
-            "aria":        aria,
-            "thor":        thor,
-            "civilian":    civilian,
-            "goblin_1":    goblin_1,
-            "goblin_2":    goblin_2,
-            "goblin_3":    goblin_3,
-            "goblin_boss": goblin_boss,
+            "aria":          aria,
+            "thor":          thor,
+            "civilian":      civilian,
+            "goblin_1":      goblin_1,
+            "goblin_2":      goblin_2,
+            "goblin_3":      goblin_3,
+            "goblin_boss":   goblin_boss,
+            "goblin_shaman": goblin_shaman,
         },
         scene=OPENING_SCENE,
         dungeon_map=dungeon_map,
@@ -287,6 +301,13 @@ GOBLIN_BOSS_PERSONALITY = (
     "對手下兇狠，對敵人傲慢，被激怒會做出魯莽決定。"
 )
 
+GOBLIN_SHAMAN_PERSONALITY = (
+    "你是地精部落的薩滿沃克，瘦削、駝背，臉上塗著紅泥，眼神陰沉。"
+    "你不擅近身搏鬥，但能召喚火焰、煙霧與恐懼。"
+    "你信奉地精古老的火靈，對敵人投擲烈焰時會用沙啞的咒語助勢。"
+    "面對危險時你優先施法保持距離，HP 過低時準備脫逃。"
+)
+
 
 def build_npc_agents(world_state: WorldState, model: str,
                      base_url: str, backend: str) -> dict:
@@ -314,8 +335,9 @@ def build_npc_agents(world_state: WorldState, model: str,
                               combat_tactics=CIVILIAN_TACTICS_COMBAT,
                               secrets=CIVILIAN_SECRETS, reveal=3,
                               quests=civilian_quests),
-        "goblin_1":    _agent("goblin_1",    GOBLIN_GRUNT_PERSONALITY),
-        "goblin_2":    _agent("goblin_2",    GOBLIN_GRUNT_PERSONALITY),
-        "goblin_3":    _agent("goblin_3",    GOBLIN_ARCHER_PERSONALITY),
-        "goblin_boss": _agent("goblin_boss", GOBLIN_BOSS_PERSONALITY),
+        "goblin_1":      _agent("goblin_1",      GOBLIN_GRUNT_PERSONALITY),
+        "goblin_2":      _agent("goblin_2",      GOBLIN_GRUNT_PERSONALITY),
+        "goblin_3":      _agent("goblin_3",      GOBLIN_ARCHER_PERSONALITY),
+        "goblin_boss":   _agent("goblin_boss",   GOBLIN_BOSS_PERSONALITY),
+        "goblin_shaman": _agent("goblin_shaman", GOBLIN_SHAMAN_PERSONALITY),
     }
