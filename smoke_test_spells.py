@@ -691,6 +691,56 @@ def test_combat_reasoning_nudge_toggle() -> None:
     print("combat_reasoning nudge toggle: OK")
 
 
+def test_menu_adapts_to_resources() -> None:
+    """_build_menu drops exhausted options and swaps headers so the LLM
+    naturally gravitates toward <END> when nothing useful remains."""
+    from trpg.llm.controllers import _build_menu
+    from trpg.engine.combat import CombatContext, MOVE_BUDGET_M
+
+    base_kw = dict(
+        round_num=1, actor_id="x", actor_position=0.0,
+        weapons_str="長劍", spells_str="", allies_str="無", enemies_str="無",
+        enemies={},
+    )
+
+    # Full resources → all 5 sub-actions visible + standard header
+    ctx_full = CombatContext(resources={"action": 1, "movement": MOVE_BUDGET_M}, **base_kw)
+    _, menu_full = _build_menu(ctx_full)
+    assert "選一個" in menu_full
+    for tag in ("攻擊", "閃避", "躲藏", "移動", "<END>"):
+        assert tag in menu_full, f"full menu missing {tag}: {menu_full}"
+
+    # Action spent, movement left → attack/dodge/hide hidden, hint to end
+    ctx_no_action = CombatContext(resources={"action": 0, "movement": 4.5}, **base_kw)
+    _, menu_no_action = _build_menu(ctx_no_action)
+    assert "動作已用完" in menu_no_action
+    assert "攻擊" not in menu_no_action and "閃避" not in menu_no_action \
+        and "躲藏" not in menu_no_action
+    assert "移動" in menu_no_action and "<END>" in menu_no_action
+    assert "4.5m" in menu_no_action   # leftover movement shown
+
+    # Movement spent, action left → move hidden
+    ctx_no_move = CombatContext(resources={"action": 1, "movement": 0.0}, **base_kw)
+    _, menu_no_move = _build_menu(ctx_no_move)
+    assert "移動已用完" in menu_no_move
+    assert "移動" not in menu_no_move.split("移動已用完")[1], \
+        "move option should be hidden when movement=0"
+    assert "攻擊" in menu_no_move
+
+    # Both spent → only <END> left, strong end hint
+    ctx_empty = CombatContext(resources={"action": 0, "movement": 0.0}, **base_kw)
+    _, menu_empty = _build_menu(ctx_empty)
+    assert "資源已用完" in menu_empty
+    assert "<END>" in menu_empty
+    for tag in ("攻擊", "閃避", "躲藏"):
+        assert tag not in menu_empty, f"exhausted menu shouldn't list {tag}"
+    # The leading "移動" word lives in the resources-spent banner, but no
+    # "移動（消耗移動）" menu line should appear.
+    assert "消耗移動" not in menu_empty
+
+    print("menu adapts to resources: OK")
+
+
 def test_think_block_stripped_from_action() -> None:
     """LLMNpcController removes <think>...</think> before the action goes to
     the arbiter. The block can span multiple lines; <END>/<FLEE> on the
@@ -760,6 +810,7 @@ def main() -> int:
     test_spell_handler_target_position()
     test_spell_target_position_overrides_target()
     test_combat_reasoning_nudge_toggle()
+    test_menu_adapts_to_resources()
     test_think_block_stripped_from_action()
     test_end_to_end_shaman_fireball()
     print("\n=== ALL SPELL TESTS PASSED ===")

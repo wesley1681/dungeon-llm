@@ -30,12 +30,65 @@ def _strip_marker(text: str, pat: re.Pattern) -> tuple[str, bool]:
     return cleaned, matched
 
 
+def _build_menu(ctx: CombatContext) -> tuple[str, str]:
+    """Build (resources_line, menu_text) for the combat nudge.
+
+    The menu adapts to remaining resources: exhausted options are dropped so
+    the actor sees fewer choices when there's less to do, and the header
+    flips to a "you should probably end" hint when everything is spent.
+    Without this, LLMs that already used their action loop on 0-distance
+    moves until _MAX_SUB_ACTIONS caps them out.
+    """
+    res = ctx.resources or {}
+    action_left = res.get("action", 0)
+    movement_left = res.get("movement", 0.0)
+    has_movement = movement_left > 1e-6
+
+    action_status = "可用" if action_left > 0 else "已用完"
+    resources_line = (
+        f"剩餘資源：動作 {action_status}、移動 {movement_left:.1f}m"
+        f"（每回合 1 個動作，移動可分次走完）\n"
+    )
+
+    items: list[str] = []
+    if action_left > 0:
+        items.append("- 攻擊（消耗動作）：「我用 [武器] 攻擊 [敵人]」")
+        if ctx.spells_str:
+            items.append(
+                "- 施法（消耗動作）：「我對 [目標] 施展 [法術]」"
+                "或「我把 [法術] 扔到 [座標]m 處」\n"
+                "  （AOE 法術記得避開隊友和自己——可指定一個遠離盟友的座標當圓心）"
+            )
+        items.append("- 閃避（消耗動作）：「我閃避」「我專注防禦」")
+        items.append("- 躲藏（消耗動作）：「我躲到 X 後面」")
+    if has_movement:
+        items.append(
+            "- 移動（消耗移動）：「我朝 [角色] 衝鋒/移動」（自動停在對方位置不過頭）"
+            f"或「我衝上去」「我後退」（剩 {movement_left:.1f}m）"
+        )
+    items.append("- 結束本回合：單獨輸出 <END>")
+
+    if action_left == 0 and not has_movement:
+        header = "**本回合資源已用完**，請直接輸出 <END> 結束回合：\n"
+    elif action_left == 0:
+        header = (
+            "**動作已用完**，本回合只剩移動或結束。"
+            "沒有迫切移動需求就直接 <END>：\n"
+        )
+    elif not has_movement:
+        header = "**移動已用完**，本回合只剩動作或結束：\n"
+    else:
+        header = "從下列**選一個** sub-action 輸出（不要組合）：\n"
+
+    return resources_line, header + "\n".join(items)
+
+
 _REASONING_INSTRUCTION = """
 ## 戰鬥推理（先想、後做）
-輸出動作前，先用 <think>...</think> 包住簡短分析（3-5 行就好），
+輸出動作前，先用 <think>...</think> 包住分析，
 然後另起一行才是實際 sub-action。<END> / <FLEE> 標記放在動作行尾，不要寫在 <think> 裡。
 
-<think> 內容建議涵蓋（不必每點都寫）：
+<think> 需仔細思考以下內容：
 - 自己、關鍵敵人、盟友的座標與距離
 - 想用的招式 vs 射程/AOE 半徑——誰會被打到（含自己人）
 - 至少評估一個替代方案（不同目標、不同位置、或換招）
@@ -239,18 +292,7 @@ class LLMPlayerController(ActorController):
         combat_tactics = (self.agent.combat_tactics.rstrip() + "\n\n"
                           if self.agent.combat_tactics else "")
         spells_line = f"可用法術：{ctx.spells_str}\n" if ctx.spells_str else ""
-        spell_option = (
-            "- 施法（消耗動作）：「我對 [目標] 施展 [法術]」或「我把 [法術] 扔到 [座標]m 處」\n"
-            "  （AOE 法術記得避開隊友和自己——可指定一個遠離盟友的座標當圓心）\n"
-            if ctx.spells_str else ""
-        )
-        res = ctx.resources or {}
-        action_status = "可用" if res.get("action", 0) > 0 else "已用完"
-        movement_left = res.get("movement", 0.0)
-        resources_line = (
-            f"剩餘資源：動作 {action_status}、移動 {movement_left:.1f}m"
-            f"（每回合 1 個動作，移動可分次走完）\n"
-        )
+        resources_line, menu_text = _build_menu(ctx)
         return (
             f"{combat_tactics}"
             f"【戰鬥回合 {ctx.round_num}】\n"
@@ -261,14 +303,7 @@ class LLMPlayerController(ActorController):
             f"{resources_line}"
             f"盟友：{ctx.allies_str}\n"
             f"敵人：{ctx.enemies_str}\n"
-            f"從下列**選一個** sub-action 輸出（不要組合）：\n"
-            f"- 攻擊（消耗動作）：「我用 [武器] 攻擊 [敵人]」\n"
-            f"{spell_option}"
-            f"- 移動（消耗移動）：「我朝 [角色] 衝鋒/移動」（自動停在對方位置不過頭）"
-            f"或「我衝上去」「我後退」（單次最多 9m）\n"
-            f"- 閃避（消耗動作）：「我閃避」「我專注防禦」\n"
-            f"- 躲藏（消耗動作）：「我躲到 X 後面」\n"
-            f"- 結束本回合：單獨輸出 <END>"
+            f"{menu_text}"
         )
 
     def _generate(self, char, ctx: CombatContext, error_feedback: str) -> ActorDecision:
@@ -346,22 +381,11 @@ class LLMNpcController(ActorController):
         combat_tactics = (self.agent.combat_tactics.rstrip() + "\n\n"
                           if self.agent.combat_tactics else "")
         spells_line = f"可用法術：{ctx.spells_str}\n" if ctx.spells_str else ""
-        spell_option = (
-            "- 施法（消耗動作）：「我對 [目標] 施展 [法術]」或「我把 [法術] 扔到 [座標]m 處」\n"
-            "  （AOE 法術記得避開隊友和自己——可指定一個遠離盟友的座標當圓心）\n"
-            if ctx.spells_str else ""
-        )
         reasoning_section = (
             _REASONING_INSTRUCTION
             if getattr(self.agent, "combat_reasoning", False) else ""
         )
-        res = ctx.resources or {}
-        action_status = "可用" if res.get("action", 0) > 0 else "已用完"
-        movement_left = res.get("movement", 0.0)
-        resources_line = (
-            f"剩餘資源：動作 {action_status}、移動 {movement_left:.1f}m"
-            f"（每回合 1 個動作，移動可分次走完）\n"
-        )
+        resources_line, menu_text = _build_menu(ctx)
         return (
             f"{combat_tactics}"
             f"【戰鬥回合 {ctx.round_num}】\n"
@@ -372,14 +396,7 @@ class LLMNpcController(ActorController):
             f"{resources_line}"
             f"盟友：{ctx.allies_str}\n"
             f"敵人：{ctx.enemies_str}\n"
-            f"從下列**選一個** sub-action 輸出（不要組合）：\n"
-            f"- 攻擊（消耗動作）：「我用 [武器] 攻擊 [敵人]」\n"
-            f"{spell_option}"
-            f"- 移動（消耗移動）：「我朝 [角色] 衝鋒/移動」（自動停在對方位置不過頭）"
-            f"或「我衝上去」「我後退」（單次最多 9m）\n"
-            f"- 閃避（消耗動作）：「我閃避」「我專注防禦」\n"
-            f"- 躲藏（消耗動作）：「我躲到 X 後面」\n"
-            f"- 結束本回合：單獨輸出 <END>\n"
+            f"{menu_text}\n"
             f"逃跑：訊息結尾加 <FLEE>，立刻離開戰場。"
             f"{reasoning_section}"
         )
