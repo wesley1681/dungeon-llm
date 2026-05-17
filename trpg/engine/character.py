@@ -122,7 +122,7 @@ class Character:
         for w in self.weapons:
             if isinstance(w, Modifier):
                 yield w
-        for eq in getattr(self, "equipment", []):
+        for eq in self.equipment:
             if isinstance(eq, Modifier):
                 yield eq
         for fx in self.status_effects:

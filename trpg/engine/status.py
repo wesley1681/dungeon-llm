@@ -59,23 +59,35 @@ def tick_status_effects(char, phase: str, round_num: int) -> None:
       self_turn_end   — end of this character's turn
       round_end       — after the initiative table completes a full cycle
       combat_end      — combat has ended
+
+    Rebuilds the list rather than calling list.remove() because StatusEffect is
+    a @dataclass with structural equality — two effects with identical fields
+    would be indistinguishable to .remove(), causing the wrong instance to be
+    dropped if duplicates ever appear.
     """
     from .combat import make_saving_throw  # avoid circular import
 
-    for fx in list(char.status_effects):
-        # Rule 1: direct phase match → remove
-        if fx.expires_on == phase:
-            char.status_effects.remove(fx)
+    remaining = []
+    for fx in char.status_effects:
+        # Skip non-StatusEffect entries (legacy strings) — they're not
+        # subject to lifecycle rules and survive the tick untouched.
+        if not isinstance(fx, StatusEffect):
+            remaining.append(fx)
             continue
-        # Rule 2: countdown at round_end
+
+        # Rule 1: direct phase match → drop
+        if fx.expires_on == phase:
+            continue
+        # Rule 2: countdown at round_end → drop when reaches zero
         if fx.rounds_remaining is not None and phase == "round_end":
             fx.rounds_remaining -= 1
             if fx.rounds_remaining <= 0:
-                char.status_effects.remove(fx)
                 continue
-        # Rule 3: re-save each self_turn_end
+        # Rule 3: re-save each self_turn_end → drop on success
         if fx.save_each and phase == "self_turn_end":
             stat, dc = parse_save(fx.save_each)
             ok, _ = make_saving_throw(char, stat, dc)
             if ok:
-                char.status_effects.remove(fx)
+                continue
+        remaining.append(fx)
+    char.status_effects[:] = remaining

@@ -80,6 +80,21 @@ def main() -> int:
     assert not char.has_status("raging")
     print("combat_end phase: OK")
 
+    # ── 7. End-to-end: Dodging via Character.add_status + iter_modifiers ─────
+    char = make_char()
+    char.add_status(Dodging(applied_round=1))
+    # iter_modifiers should yield the Dodging instance
+    mods = list(char.iter_modifiers())
+    dodging_mods = [m for m in mods if isinstance(m, Dodging)]
+    assert len(dodging_mods) == 1, f"expected 1 Dodging modifier, got {len(dodging_mods)}"
+    # Calling on_incoming_attack on the yielded modifier should give disadvantage
+    mode = dodging_mods[0].on_incoming_attack(defender=char, attacker=None, weapon=None, mode="normal")
+    assert mode == "disadvantage", f"expected disadvantage, got {mode}"
+    # add_status is idempotent — re-adding shouldn't duplicate
+    char.add_status(Dodging(applied_round=2))
+    assert sum(1 for fx in char.status_effects if isinstance(fx, Dodging)) == 1
+    print("End-to-end Dodging via iter_modifiers: OK")
+
     print("\n=== ALL STATUS EFFECT TESTS PASSED ===")
     return 0
 
