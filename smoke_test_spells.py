@@ -467,6 +467,75 @@ def test_goblin_shaman_scenario() -> None:
     print("Goblin shaman scenario data: OK")
 
 
+def test_end_to_end_shaman_fireball() -> None:
+    """Task 9: Full end-to-end — load the scenario as shipped, simulate shaman
+    casting fireball on the party in boss_chamber. No LLM involved; we hand the
+    engine the SPELL action dict directly (as if Arbiter had parsed it)."""
+    from trpg.scenarios.dungeon import build_world_state
+    from trpg.engine import combat
+    from trpg.engine.combat import build_combat_context, MOVE_BUDGET_M
+
+    ws = build_world_state()
+    ws.dungeon_map.current_room_id = "boss_chamber"
+    shaman = ws.characters["goblin_shaman"]
+    thor = ws.characters["thor"]
+    aria = ws.characters["aria"]
+    # Place party + shaman for the cast: party at 0m, shaman at 10m.
+    thor.position = 0.0
+    aria.position = 0.0
+    shaman.position = 10.0
+    # Other room occupants are not the focus; they'll be in their default starting positions.
+    initial_shaman_slot = shaman.spell_slots[3]
+
+    # Build context as the controller would — sanity check the spell is exposed.
+    ctx = build_combat_context(
+        actor_id="goblin_shaman", actor=shaman, world_state=ws,
+        resources={"action": 1, "movement": MOVE_BUDGET_M}, round_num=1,
+    )
+    assert "火球術" in ctx.spells_str
+
+    # Cast fireball centered on Thor; slot_level omitted to test default.
+    random.seed(101)
+    result = combat.execute_action({
+        "type": "SPELL",
+        "caster": "goblin_shaman",
+        "spell_name": "火球術",
+        "target": "thor",
+    }, ws)
+    assert result["type"] == "SPELL"
+    assert result["slot_level"] == 3
+    # Both PCs are within 6m of Thor (position 0); they should both be in the result.
+    affected_names = {tr["target_name"] for tr in result["target_results"]}
+    assert {"索爾", "凱恩"}.issubset(affected_names), \
+        f"both PCs should be in fireball radius: {affected_names}"
+
+    # Slot was decremented exactly once
+    assert shaman.spell_slots[3] == initial_shaman_slot - 1
+
+    # Some party damage occurred (party can't have full HP on both PCs after fireball)
+    assert thor.hp < thor.max_hp or aria.hp < aria.max_hp, \
+        "fireball produced no damage on either PC — check dice roll path"
+
+    # format_result renders without error
+    summary = combat.format_result("我對你們投出火球", result, actor_name="地精薩滿沃克")
+    assert "火球術" in summary
+    assert "DC13" in summary or "DC 13" in summary
+
+    # Cast again with no slot → ERROR; HP and slot dict must not change
+    hp_thor_before = thor.hp
+    hp_aria_before = aria.hp
+    result2 = combat.execute_action({
+        "type": "SPELL",
+        "caster": "goblin_shaman",
+        "spell_name": "火球術",
+        "target": "thor",
+    }, ws)
+    assert result2["type"] == "ERROR"
+    assert thor.hp == hp_thor_before
+    assert aria.hp == hp_aria_before
+    print("End-to-end shaman fireball: OK")
+
+
 def main() -> int:
     test_spell_dataclass_and_catalog()
     test_character_spell_fields()
@@ -482,6 +551,7 @@ def main() -> int:
     test_npc_controller_nudge_includes_spells()
     test_player_controller_nudge_includes_spells()
     test_goblin_shaman_scenario()
+    test_end_to_end_shaman_fireball()
     print("\n=== ALL SPELL TESTS PASSED ===")
     return 0
 
