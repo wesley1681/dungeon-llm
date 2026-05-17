@@ -25,8 +25,36 @@ def test_spell_dataclass_and_catalog() -> None:
     print("Spell dataclass + SPELLS catalog: OK")
 
 
+def test_character_spell_fields() -> None:
+    """Task 2: Character carries spells / spellcasting_ability / spell_slots."""
+    from trpg.engine.character import Character, Stats
+
+    # Default values — non-caster character
+    plain = Character(
+        name="平民", race="人類", class_="—", level=1,
+        stats=Stats(), hp=4, max_hp=4, ac=10,
+    )
+    assert plain.spells == []
+    assert plain.spellcasting_ability == ""
+    assert plain.spell_slots == {}
+
+    # Caster — explicit setup
+    caster = Character(
+        name="法師", race="人類", class_="法師", level=5,
+        stats=Stats(INT=16), hp=20, max_hp=20, ac=12,
+        spells=["火球術"],
+        spell_slots={1: 4, 2: 3, 3: 2},
+        spellcasting_ability="INT",
+    )
+    assert caster.spells == ["火球術"]
+    assert caster.spellcasting_ability == "INT"
+    assert caster.spell_slots[3] == 2
+    print("Character spell fields: OK")
+
+
 def main() -> int:
     test_spell_dataclass_and_catalog()
+    test_character_spell_fields()
     print("\n=== ALL SPELL TESTS PASSED ===")
     return 0
 
