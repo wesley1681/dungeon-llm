@@ -66,7 +66,7 @@ class ArbiterAgent:
             target_char = world_state.characters.get(cid) if world_state else None
             if target_char:
                 d = abs(target_char.position - actor_pos)
-                dodging = "（閃避中）" if "dodging" in target_char.status_effects else ""
+                dodging = "（閃避中）" if target_char.has_status("dodging") else ""
                 target_lines.append(f"{name}（{cid}）：距離 {d:.1f}m，位置 {target_char.position:.1f}m{dodging}")
             else:
                 target_lines.append(f"{name}（{cid}）")

@@ -64,7 +64,7 @@ class PlayerAgent:
             STR=c.stats.STR, DEX=c.stats.DEX, CON=c.stats.CON,
             INT=c.stats.INT, WIS=c.stats.WIS, CHA=c.stats.CHA,
             inventory="、".join(c.inventory) if c.inventory else "無",
-            status="、".join(c.status_effects) if c.status_effects else "無",
+            status="、".join(fx.name for fx in c.status_effects) if c.status_effects else "無",
             personality=self.personality,
             tactics_section=tactics_section,
         )

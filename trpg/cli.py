@@ -202,7 +202,7 @@ def run_game() -> None:
             print()  # newline after GM stream
             aria       = event.aria
             inv        = "、".join(aria.inventory)      if aria.inventory      else "無"
-            status_str = "、".join(aria.status_effects) if aria.status_effects else "無"
+            status_str = "、".join(fx.name for fx in aria.status_effects) if aria.status_effects else "無"
             print(f"\n【凱恩｜HP {aria.hp}/{aria.max_hp} AC {aria.ac}"
                   f"｜道具：{inv}｜狀態：{status_str}】", end="")
             while True:
@@ -220,7 +220,7 @@ def run_game() -> None:
         elif isinstance(event, CombatPrompt):
             aria       = event.aria
             inv        = "、".join(aria.inventory)      if aria.inventory      else "無"
-            status_str = "、".join(aria.status_effects) if aria.status_effects else "無"
+            status_str = "、".join(fx.name for fx in aria.status_effects) if aria.status_effects else "無"
             if event.info_text:
                 print(f"\n{event.info_text}")
             else:

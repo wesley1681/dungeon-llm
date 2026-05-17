@@ -324,8 +324,8 @@ class GameSession:
                     continue
 
                 # Dodge expires at the start of the dodger's next turn (D&D 5e rule)
-                if "dodging" in char.status_effects:
-                    char.status_effects.remove("dodging")
+                if char.has_status("dodging"):
+                    char.remove_status("dodging")
 
                 # Per-turn resource budget. Sub-actions decrement these.
                 resources = {"action": 1, "bonus_action": 1, "movement": 9.0}
@@ -425,7 +425,7 @@ class GameSession:
 
         def _entry(other) -> str:
             d = abs(other.position - char.position)
-            dodging = "（閃避中）" if "dodging" in other.status_effects else ""
+            dodging = "（閃避中）" if other.has_status("dodging") else ""
             return f"{other.name} HP {other.hp}/{other.max_hp}，位置 {other.position:.1f}m（距你 {d:.1f}m）{dodging}"
 
         ally_parts, enemy_parts = [], []
@@ -528,7 +528,7 @@ class GameSession:
         enemies_lines = []
         for c in room_enemies:
             d = abs(c.position - char.position)
-            dodging = "（閃避中）" if "dodging" in c.status_effects else ""
+            dodging = "（閃避中）" if c.has_status("dodging") else ""
             enemies_lines.append(f"{c.name}（HP {c.hp}/{c.max_hp}，距你 {d:.1f}m{dodging}）")
         enemies_str = "、".join(enemies_lines) or "、".join(enemies.values())
 
@@ -616,7 +616,7 @@ class GameSession:
                         if ws.dungeon_map else [])
         for e in room_enemies:
             d = abs(e.position - aria.position)
-            dodging = "（閃避中）" if "dodging" in e.status_effects else ""
+            dodging = "（閃避中）" if e.has_status("dodging") else ""
             enemy_lines.append(
                 f"  - {e.name} HP {e.hp}/{e.max_hp}，位置 {e.position:.1f}m（距你 {d:.1f}m）{dodging}"
             )

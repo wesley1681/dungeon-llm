@@ -218,7 +218,7 @@ class TRPGApp(App):
             )
 
             aria = self.world_state.characters["aria"]
-            status_str = "、".join(aria.status_effects) if aria.status_effects else "無"
+            status_str = "、".join(fx.name for fx in aria.status_effects) if aria.status_effects else "無"
             self.call_from_thread(
                 self.aria_log.write,
                 f"\n[bold green]【艾里亞｜HP {aria.hp}/{aria.max_hp} AC {aria.ac}｜狀態：{status_str}】[/bold green]",

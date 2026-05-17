@@ -98,7 +98,7 @@ class GMAgent:
                 continue
             if ws.dungeon_map and char.is_npc and cid not in current_room_hostile_ids:
                 continue
-            effects = "、".join(char.status_effects) if char.status_effects else "無"
+            effects = "、".join(fx.name for fx in char.status_effects) if char.status_effects else "無"
             status_lines.append(
                 f"  {char.name}（{cid}）：HP {char.hp}/{char.max_hp}，AC {char.ac}，狀態 {effects}"
             )

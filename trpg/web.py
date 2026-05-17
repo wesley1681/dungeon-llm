@@ -36,7 +36,7 @@ from .cli import (
 
 def _aria_status(world_state) -> str:
     aria     = world_state.characters["aria"]
-    status   = "、".join(aria.status_effects) if aria.status_effects else "無"
+    status   = "、".join(fx.name for fx in aria.status_effects) if aria.status_effects else "無"
     weapons  = "、".join(w.name for w in aria.weapons) or "無"
     usable   = [
         f"{c.name}×{c.quantity}" if c.quantity > 1 else c.name
