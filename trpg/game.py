@@ -257,10 +257,8 @@ class GameSession:
             self._tag_actions,
             on_chunk=lambda c, thinking=False: self._emit(StreamChunk("tag", c, thinking)),
         )
-        ok, errors = execute_all_tags(tag_raw, ws)
+        ok, errors = execute_all_tags(tag_raw, ws, log_to_narrative=True)
         self._emit(TagResult(ok, errors))
-        for line in ok:
-            ws.log_event("system", line)
         self._check_quests()
 
         # ── Conversation? (NpcAgent handles the opening; GM is skipped) ──────

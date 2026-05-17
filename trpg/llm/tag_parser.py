@@ -48,12 +48,18 @@ _NARRATIVE_ONLY_TAGS = {"INITIATIVE", "ATTACK", "DAMAGE", "TRAVEL", "PICKUP", "H
 _ERROR_PREFIXES = ("無效", "找不到", "標籤解析錯誤", "未知標籤")
 
 
-def execute_all_tags(text: str, world_state: WorldState) -> tuple[list[str], list[str]]:
+def execute_all_tags(text: str, world_state: WorldState,
+                     log_to_narrative: bool = False) -> tuple[list[str], list[str]]:
     """Execute every tag found in text (used for TagAgent output).
 
     Unlike parse_pre_narrative, does not skip TRAVEL/ATTACK/etc.
     Unlike parse_and_resolve, does not modify the source text.
     Returns (ok_results, error_results).
+
+    log_to_narrative: if True, each ok result is pushed to narrative_log
+        immediately after the tag executes. This preserves the per-tag
+        snapshot of current_room/present — critical for tags like TRAVEL
+        that mutate the visible scene mid-batch.
     """
     ok:     list[str] = []
     errors: list[str] = []
@@ -70,6 +76,8 @@ def execute_all_tags(text: str, world_state: WorldState) -> tuple[list[str], lis
             errors.append(result)
         else:
             ok.append(result)
+            if log_to_narrative:
+                world_state.log_event("system", result)
             if tag in {"TRAVEL", "INITIATIVE", "TALK", "ATTACK_NPC", "FLEE", "QUEST_ACCEPT", "QUEST_TURNIN", "RECRUIT"}:
                 seen_once.add(tag)
     return ok, errors
@@ -270,6 +278,10 @@ def _dispatch(tag: str, args: str, ws: WorldState) -> str:
                 old_room.npc_ids.remove(npc_id)
             if npc_id not in room.npc_ids:
                 room.npc_ids.append(npc_id)
+        # A pending TALK from earlier in the same tag batch is stale once we've
+        # left the room — the target NPC isn't here anymore.
+        if ws.pending_conversation and ws.pending_conversation not in room.npc_ids:
+            ws.pending_conversation = ""
         # Dispatch hostile NPCs by their reaction (attack vs flee)
         summary = _resolve_room_entry(room, ws) if not room.cleared else ""
         if summary:
