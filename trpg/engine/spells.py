@@ -32,7 +32,7 @@ SPELLS: dict[str, Spell] = {
         attack_type="save",
         save_ability="DEX",
         damage_dice="8d6",
-        damage_type="fire",
+        damage_type="火",
         description="向 45m 內一點扔出火球，半徑 6m 內目標 DEX 豁免，成功半傷。",
     ),
 }

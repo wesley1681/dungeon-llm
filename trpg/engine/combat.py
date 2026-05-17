@@ -677,9 +677,22 @@ def _spells_str(char) -> str:
                      if lvl >= spell.level and char.spell_slots[lvl] > 0]
         if available:
             slots_str = "、".join(f"{lvl} 環×{char.spell_slots[lvl]}" for lvl in available)
-            parts.append(f"{spell.name}（{spell.level} 環，可用：{slots_str}）")
+            slot_part = f"可用：{slots_str}"
         else:
-            parts.append(f"{spell.name}（{spell.level} 環，無可用法術位）")
+            slot_part = "無可用法術位"
+
+        effect_parts = [f"射程 {spell.range_m:.0f}m"]
+        if spell.aoe_radius_m > 0:
+            effect_parts.append(
+                f"AOE 半徑 {spell.aoe_radius_m:.0f}m [敵我不分，含自己]"
+            )
+        if spell.damage_dice:
+            effect_parts.append(
+                f"{spell.save_ability} 豁免 {spell.damage_dice} {spell.damage_type}傷（半傷）"
+            )
+        effect_str = "，".join(effect_parts)
+
+        parts.append(f"{spell.name}（{spell.level} 環，{effect_str}，{slot_part}）")
     return "、".join(parts)
 
 

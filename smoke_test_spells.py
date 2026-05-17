@@ -21,7 +21,7 @@ def test_spell_dataclass_and_catalog() -> None:
     assert fireball.attack_type == "save"
     assert fireball.save_ability == "DEX"
     assert fireball.damage_dice == "8d6"
-    assert fireball.damage_type == "fire"
+    assert fireball.damage_type == "火"
     print("Spell dataclass + SPELLS catalog: OK")
 
 
@@ -289,6 +289,13 @@ def test_combat_context_spells_str() -> None:
     assert hasattr(ctx, "spells_str"), "CombatContext missing spells_str field"
     assert "火球術" in ctx.spells_str, f"got {ctx.spells_str!r}"
     assert "3 環" in ctx.spells_str or "3環" in ctx.spells_str, f"got {ctx.spells_str!r}"
+    # Geometry + friendly-fire warning must reach the caster
+    assert "射程 45m" in ctx.spells_str, f"missing range: {ctx.spells_str!r}"
+    assert "半徑 6m" in ctx.spells_str, f"missing AOE radius: {ctx.spells_str!r}"
+    assert "敵我不分" in ctx.spells_str, f"missing friendly-fire warning: {ctx.spells_str!r}"
+    assert "含自己" in ctx.spells_str, f"missing self-hit warning: {ctx.spells_str!r}"
+    assert "DEX 豁免" in ctx.spells_str, f"missing save info: {ctx.spells_str!r}"
+    assert "8d6" in ctx.spells_str, f"missing damage dice: {ctx.spells_str!r}"
     print(f"caster spells_str: {ctx.spells_str}")
 
     # Non-caster (Thor) — empty spells_str
