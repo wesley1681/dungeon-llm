@@ -445,10 +445,8 @@ class GameSession:
 
             if result_text:
                 log.append(result_text)
-                brief = ("用一句（30字以內）繁體中文敘述此戰鬥結果，"
-                         "直接輸出敘事，不加格式欄位：\n" + result_text)
                 self.gm.combat_narrate(
-                    brief,
+                    result_text,
                     on_chunk=lambda c, thinking=False: self._emit(StreamChunk("narrate", c)),
                 )
 

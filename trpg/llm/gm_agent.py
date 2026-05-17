@@ -157,11 +157,20 @@ class GMAgent:
             print()
         return full
 
-    def combat_narrate(self, prompt: str, on_chunk=None) -> str:
-        """Stateless short narration for a single combat event (≤50 chars)."""
+    _COMBAT_USER_TEMPLATE = (
+        "用一句（30字以內）繁體中文敘述此戰鬥結果，"
+        "直接輸出敘事，不加格式欄位：\n{result_text}"
+    )
+
+    def combat_narrate(self, result_text: str, on_chunk=None) -> str:
+        """Stateless short narration for a single combat event (≤50 chars).
+
+        Caller passes the raw mechanical result_text (e.g. format_result output);
+        this method composes the prompt template internally.
+        """
         messages = [
             {"role": "system", "content": _COMBAT_SYSTEM},
-            {"role": "user", "content": prompt},
+            {"role": "user",   "content": self._COMBAT_USER_TEMPLATE.format(result_text=result_text)},
         ]
         (_DEBUG_DIR / "gm_combat_context.json").write_text(
             json.dumps(messages, ensure_ascii=False, indent=2), encoding="utf-8", errors="replace"
