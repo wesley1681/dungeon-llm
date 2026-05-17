@@ -1,75 +1,49 @@
 import json
 import pathlib
 from ..engine.world_state import WorldState
-from .backend import stream_chat, complete_chat
+from .backend import stream_chat
+from .log_render import render_messages
 
 OLLAMA_URL = "http://localhost:11434"
 _DEBUG_DIR = pathlib.Path(__file__).parent.parent / "debug"
 _DEBUG_DIR.mkdir(exist_ok=True)
 
-_COMBAT_SYSTEM = "你是D&D遊戲主持人（GM）。用繁體中文描述戰鬥事件，直接輸出敘事，不加分析欄位或---分隔線。"
+_COMBAT_SYSTEM = (
+    "你是D&D遊戲主持人（GM），正在描述戰鬥中的單一事件。\n"
+    "規則：\n"
+    "1. 只用繁體中文輸出，禁止摻入任何其他語言的詞彙。\n"
+    "2. 直接輸出一句話敘事（不超過50字），不可加「分析：」「機制：」欄位，不可寫 ---。\n"
+    "3. 不要嵌入任何方括號標籤（如 [ATTACK]、[STATUS]、[END TURN] 等），結算已完成。\n"
+    "4. 只描述「使用者訊息中明確發生的事件」，不要新增傷害、死亡、追加行動。\n"
+    "5. 不要重複歷史內容，只描述當下這個事件。"
+)
 
-_TURN_REMINDER = """---
-【輪到你了，請以地下城主（GM）身份回應】
+# GM persona + rules stay in system message.
+# Per-turn state (room, chars, tag results) is injected at the END of the message list
+# so it stays close to the model's attention window — recent context dominates generation.
+_SYSTEM_BASE = """你是一位專業的D&D 5e地下城主（GM）。請用繁體中文進行沉浸式敘事。
 
-核心規則（每次都適用）：
-1. 標籤只在 --- 後的敘事段才會被系統執行，機制行不執行
-2. 玩家移動 → 敘事段必須包含 [TRAVEL: north/south/east/west]
-3. 需要擲骰 → 直接在敘事段嵌入 [ROLL: aria DEX DC14]，不要叫玩家自己擲
-4. 進入有敵人的新房間才使用 [INITIATIVE: start]
-5. 只描述已知出口，不創造新房間
+## 你的職責
+1. 根據「機制結算」中已發生的事件，撰寫流暢的繁體中文敘事（350字以內）
+2. 自然地描述骰點成功/失敗的後果、移動後的場景氛圍、物品拾取的情境
+3. 不替玩家做決定，只描述玩家面臨的情境與 NPC 的反應
+4. NPC 的對話、表情和行為由你自由決定，豐富場景互動
+5. 若無「機制結算」，則根據玩家行動推進劇情
 
-輸出格式（必須完整）：
-分析：（你的判斷與計畫）
-機制：（將使用的標籤名稱，僅備忘）
----
-（繁體中文敘事，350字以內，在此嵌入執行標籤）"""
+## 強制規則（違反就是錯誤輸出）
+- 「明顯可拾取物品」清單中**每一項都必須在敘事中被自然提及**（任務物品尤其重要，不可遺漏）
+- 嚴禁編造任何未在「可見敵人」「可拾取物品」「NPC」「出口」清單中的角色、生物、暗影、聲音、視線、威脅或預兆
+- 若「可見敵人：無」，房間就是真的安全，不要暗示有看不見的敵人
+- 死亡角色（HP=0）不再出現在任何描述中
+- 不替玩家做決定、不替玩家行動
 
-_SYSTEM_TEMPLATE = """你是一位專業的D&D 5e地下城主（GM）。請用繁體中文進行沉浸式敘事。
-
-{location_section}
-
-## 角色狀態
-{char_status}
-
-## 角色ID對照（標籤中使用ID，不用中文名）
-{char_ids}
-
-## 規則標籤（當需要觸發遊戲機制時，將標籤自然嵌入敘事中）
-[INITIATIVE: start]                    ← 開始戰鬥，擲先攻（僅在進入有敵人的房間或敵人突然出現時使用）
-[TRAVEL: <方向>]                       ← 玩家移動到相鄰房間，方向如 north/south/east/west
-[PICKUP: <角色ID> <物品名稱>]           ← 角色從當前房間拾取物品
-[ATTACK: <攻擊者ID> -> <目標ID>]        ← 攻擊判定
-[DAMAGE: <骰子式> to <目標ID>]          ← 造成傷害
-[HEAL: <角色ID> <骰子式>]              ← 治療
-[ROLL: <角色ID> <屬性> DC<數字>]        ← 技能或豁免檢定
-[STATUS: <角色ID> +/-<效果>]           ← 增加或移除狀態效果
-
-## 技能→屬性對照（ROLL 標籤只能用縮寫）
-STR：運動  DEX：特技、巧手、潛行  CON：體質豁免
-INT：奧秘、歷史、調查、自然  WIS：洞察、醫療、感知、求生  CHA：欺騙、恐嚇、說服
-
-## 移動規則
-- 玩家說「往北走」「進入東邊的門」等 → 必須在 --- 後的敘事中嵌入 [TRAVEL: north]（或 south/east/west）
-- 格式必須完整：[TRAVEL: north]，不能只寫 [TRAVEL]
-- 【嚴格限制】只能往「當前位置」欄位列出的出口方向移動，禁止描述或創造任何未列出的房間、走廊、岔路
-- 若玩家想往沒有出口的方向走，告知「這個方向沒有出口」
-- 進入新房間後，依照系統提供的房間描述敘述，不要自行添加房間內容
-
-## 注意事項
-- 每次回應控制在500字以內，敘事豐富但節奏緊湊
-- 標籤要自然融入敘事，不要孤立列出
-- NPC由你扮演，玩家角色只描述他們面臨的情境，不替玩家做決定
-- 死亡的角色（HP=0）從戰鬥中移除
-
-## 輸出格式（每次回應必須嚴格遵守此格式，不得省略任何欄位）
-
-分析：（至少十行，先確認當前劇情、玩家意圖、在場人物、應該如何推動劇情）
-機制：（一行，僅列標籤名稱供人閱讀，此行不會被執行）
----
-（繁體中文敘事，350字以內）
-注意：[TRAVEL:] [INITIATIVE:] 等所有標籤必須寫在此敘事段才會生效。機制行只是備忘，寫在那裡不會有任何效果。
+直接輸出純繁體中文敘事，禁止輸出任何 [標籤] 或格式欄位。
 """
+
+_GM_REMINDER = (
+    "請以 GM 身份用繁體中文寫一段 350 字內的敘事，嚴守上方「強制規則」。\n"
+    "直接輸出敘事，不要寫 [標籤]、「分析：」「機制：」等欄位。"
+)
 
 
 class GMAgent:
@@ -84,12 +58,11 @@ class GMAgent:
         self.options = options or {}
         self.base_url = base_url
         self.backend = backend
-        self.history: list[dict] = []
 
-    def _system_prompt(self) -> str:
+    def _state_block(self) -> str:
+        """Per-turn snapshot of room + visible chars. Injected at end of message list."""
         ws = self.world_state
 
-        # ── Location section ──────────────────────────────────────────────────
         if ws.dungeon_map:
             room = ws.dungeon_map.current_room
             exits_str = "、".join(
@@ -100,60 +73,68 @@ class GMAgent:
             enemies_str = "、".join(
                 f"{c.name} HP {c.hp}/{c.max_hp}" for c in room_enemies.values()
             ) or "無"
-            loot_str = "、".join(room.loot_names()) or "無"
+            loot_str = room.loot_state()
             location_section = (
                 f"## 當前位置\n"
                 f"房間：{room.name}\n"
                 f"描述：{room.description}\n"
                 f"出口：{exits_str}\n"
                 f"可見敵人：{enemies_str}\n"
-                f"可拾取物品：{loot_str}"
+                f"明顯可拾取物品：\n{loot_str}"
             )
         else:
             location_section = f"## 當前場景\n{ws.scene}"
 
-        # ── Character status ──────────────────────────────────────────────────
-        # When a dungeon map is active, only show NPCs that are in the current room;
-        # enemies in other rooms are unknown to the party and must not appear here.
-        current_room_enemy_ids: set[str] = set()
+        current_room_hostile_ids: set[str] = set()
         if ws.dungeon_map:
-            current_room_enemy_ids = set(ws.dungeon_map.current_room.enemy_ids)
+            current_room_hostile_ids = {
+                nid for nid in ws.dungeon_map.current_room.npc_ids
+                if nid in ws.characters and ws.characters[nid].attitude == 0
+            }
 
         status_lines = []
         for cid, char in ws.characters.items():
             if not char.is_alive():
                 continue
-            if ws.dungeon_map and char.is_npc and cid not in current_room_enemy_ids:
-                continue  # enemy in a different room — don't reveal to GM
+            if ws.dungeon_map and char.is_npc and cid not in current_room_hostile_ids:
+                continue
             effects = "、".join(char.status_effects) if char.status_effects else "無"
             status_lines.append(
                 f"  {char.name}（{cid}）：HP {char.hp}/{char.max_hp}，AC {char.ac}，狀態 {effects}"
             )
-        id_lines = [f"  {cid} = {char.name}" for cid, char in ws.characters.items()]
 
-        return _SYSTEM_TEMPLATE.format(
-            location_section=location_section,
-            char_status="\n".join(status_lines),
-            char_ids="\n".join(id_lines),
-        )
+        return location_section + "\n\n## 角色狀態\n" + "\n".join(status_lines)
 
-    def generate(self, player_actions: list[str], on_chunk=None) -> str:
-        """Generate GM narration. on_chunk(chunk, thinking) called per token if provided."""
-        if player_actions:
-            content = "玩家行動：\n" + "\n".join(f"• {a}" for a in player_actions)
-        else:
-            content = "（開場，請描述初始場景，引導玩家進入冒險）"
+    def generate(self, tag_results: list[str] | None = None,
+                 on_chunk=None) -> str:
+        """Generate GM narration from the unified narrative_log.
 
-        self.history.append({"role": "user", "content": content})
-        # _TURN_REMINDER is appended every call but never stored in history,
-        # so the model sees it fresh each time without it accumulating.
+        tag_results highlights "this turn's" mechanical outcomes in the final
+        user message (even though they're already in the log) so the model
+        knows which events it needs to narrate now vs. recap.
+        """
+        ws = self.world_state
+
+        history_msgs = render_messages(ws, "gm")
+        if not history_msgs:
+            history_msgs = [{"role": "user", "content": "（開場，請描述初始場景，引導玩家進入冒險）"}]
+
+        final_parts = [f"## 當前狀態（即時）\n{self._state_block()}"]
+        if tag_results:
+            final_parts.append(
+                "## 本回合機制結算（已執行，請在敘事中自然反映後果）\n"
+                + "\n".join(f"- {r}" for r in tag_results)
+            )
+        final_parts.append(_GM_REMINDER)
+
         messages = (
-            [{"role": "system", "content": self._system_prompt()}]
-            + self.history
-            + [{"role": "user", "content": _TURN_REMINDER}]
+            [{"role": "system", "content": _SYSTEM_BASE}]
+            + history_msgs
+            + [{"role": "user", "content": "\n\n".join(final_parts)}]
         )
+
         (_DEBUG_DIR / "gm_context.json").write_text(
-            json.dumps(messages, ensure_ascii=False, indent=2), encoding="utf-8"
+            json.dumps(messages, ensure_ascii=False, indent=2), encoding="utf-8", errors="replace"
         )
 
         def _on_chunk(chunk, thinking=False):
@@ -174,26 +155,19 @@ class GMAgent:
         )
         if not on_chunk:
             print()
-
-        self.history.append({"role": "assistant", "content": full})
         return full
 
     def combat_narrate(self, prompt: str, on_chunk=None) -> str:
-        """Lightweight GM call for in-combat narration. No format enforced."""
-        self.history.append({"role": "user", "content": prompt})
-        messages = [{"role": "system", "content": _COMBAT_SYSTEM}] + self.history
-        (_DEBUG_DIR / "gm_context.json").write_text(
-            json.dumps(messages, ensure_ascii=False, indent=2), encoding="utf-8"
+        """Stateless short narration for a single combat event (≤50 chars)."""
+        messages = [
+            {"role": "system", "content": _COMBAT_SYSTEM},
+            {"role": "user", "content": prompt},
+        ]
+        (_DEBUG_DIR / "gm_combat_context.json").write_text(
+            json.dumps(messages, ensure_ascii=False, indent=2), encoding="utf-8", errors="replace"
         )
-
-        full = stream_chat(
-            self.base_url, self.model, messages, self.options,
-            think=False, on_chunk=on_chunk, backend=self.backend, timeout=120,
+        opts = {**self.options, "num_predict": 200}
+        return stream_chat(
+            self.base_url, self.model, messages, opts,
+            think=False, on_chunk=on_chunk, backend=self.backend, timeout=60,
         )
-        self.history.append({"role": "assistant", "content": full})
-        return full
-
-    def notify_results(self, tag_results: list[str]) -> None:
-        """Inject mechanical resolution results back into GM history so it knows what happened."""
-        summary = "【規則結算結果】\n" + "\n".join(f"- {r}" for r in tag_results)
-        self.history.append({"role": "user", "content": summary})

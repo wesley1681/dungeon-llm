@@ -1,82 +1,41 @@
-import re
+"""Gradio web entry point — event consumer only, no game logic."""
 import sys
-import queue
+import queue as _queue
 import threading
 
 sys.stdout.reconfigure(encoding="utf-8")
 
 import gradio as gr
 
-from .scenarios.dungeon import build_world_state, OPENING_SCENE, THOR_PERSONALITY
+from .scenarios.dungeon import (
+    build_world_state, build_npc_agents, OPENING_SCENE,
+    THOR_PERSONALITY, THOR_TACTICS,
+)
 from .llm.gm_agent import GMAgent
+from .llm.tag_agent import TagAgent
 from .llm.player_agent import PlayerAgent
 from .llm.arbiter import ArbiterAgent
-from .llm.tag_parser import parse_and_resolve
-from .engine.combat import execute_action, format_result
-from .main import (
+from .game import (
+    GameSession,
+    TagResult, StreamChunk, ActionResult,
+    RoundStart, CombatStart, CombatEnd,
+    ExplorationPrompt, CombatPrompt,
+    ConversationPrompt, StatusMessage, GameOver, QuestComplete,
+)
+from .engine.quests import objective_progress_str
+from .cli import (
     check_ollama, MODEL,
     GM_THINK, GM_SHOW_THINKING, GM_OPTIONS,
+    TAG_OPTIONS,
     THOR_THINK, THOR_SHOW_THINKING, THOR_OPTIONS,
     DEBUG_ARBITER,
 )
 
 
-def _extract_narrative(gm_response: str) -> str:
-    """Return only the narrative portion of a GM response (after --- or 機制: line)."""
-    if "---" in gm_response:
-        return gm_response.split("---", 1)[1]
-    # Fallback: skip 機制: line AND any immediately following [TAG] lines
-    m = re.search(r"^機制：[^\n]*(?:\n[ \t]*\[[^\]]*\][^\n]*)*\n?", gm_response, re.MULTILINE)
-    if m:
-        return gm_response[m.end():]
-    return gm_response
-
-
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _stream_agent(agent_fn, *args, **kwargs):
-    q: queue.Queue = queue.Queue()
-
-    def on_chunk(chunk: str, thinking: bool = False) -> None:
-        q.put((chunk, thinking))
-
-    def run() -> None:
-        try:
-            agent_fn(*args, on_chunk=on_chunk, **kwargs)
-        finally:
-            q.put(None)
-
-    threading.Thread(target=run, daemon=True).start()
-    while True:
-        item = q.get()
-        if item is None:
-            break
-        yield item
-
-
-def _alive_enemies(world_state) -> dict[str, str]:
-    if world_state.dungeon_map:
-        room_ids = set(world_state.dungeon_map.current_room.enemy_ids)
-        return {cid: c.name for cid, c in world_state.characters.items()
-                if c.is_npc and c.is_alive() and cid in room_ids}
-    return {cid: c.name for cid, c in world_state.characters.items()
-            if c.is_npc and c.is_alive()}
-
-
-def _alive_pcs(world_state) -> dict[str, str]:
-    return {cid: c.name for cid, c in world_state.characters.items()
-            if not c.is_npc and c.is_alive()}
-
-
-def _fmt_gm(thinking: str, response: str) -> str:
-    if thinking and GM_SHOW_THINKING:
-        return f"*[思考]*\n{thinking}\n\n---\n\n{response}"
-    return response
-
-
 def _aria_status(world_state) -> str:
-    aria = world_state.characters["aria"]
+    aria     = world_state.characters["aria"]
     status   = "、".join(aria.status_effects) if aria.status_effects else "無"
     weapons  = "、".join(w.name for w in aria.weapons) or "無"
     usable   = [
@@ -84,295 +43,265 @@ def _aria_status(world_state) -> str:
         for c in aria.consumables if c.effect_type != "ammo" and c.quantity > 0
     ]
     items = "、".join(usable) or "無"
+    quest_parts = []
+    for q in world_state.quests.values():
+        if q.status == "active":
+            prog = objective_progress_str(q, world_state)
+            quest_parts.append(f"📋 {q.title}（{prog}）" if prog else f"📋 {q.title}")
+        elif q.status == "completed":
+            giver = world_state.characters.get(q.giver_id)
+            gname = giver.name if giver else q.giver_id
+            quest_parts.append(f"✅ {q.title}（回去找 {gname}）")
+    quest_line = ("\n" + "　".join(quest_parts)) if quest_parts else ""
     return (
         f"*HP {aria.hp}/{aria.max_hp}  AC {aria.ac}  狀態：{status}*\n"
         f"⚔ 武器：{weapons}\n"
         f"🎒 道具：{items}"
+        f"{quest_line}"
     )
-
-
-_CUTOFF_TAGS = {"[INITIATIVE:"}
-
-
-def _stream_gm(gm_msgs: list, state: dict, player_actions: list):
-    """
-    Stream GM output, yield (gm_msgs, state) after each chunk.
-    Cuts off immediately when a combat-triggering tag is detected.
-    Returns the final gm_response string.
-    """
-    gm = state["gm"]
-    gm_response = gm_thinking = ""
-    cut = False
-
-    for chunk, thinking in _stream_agent(gm.generate, player_actions):
-        if thinking:
-            gm_thinking += chunk
-        else:
-            gm_response += chunk
-
-            # Only cut off tags that appear in the narrative section.
-            # Use _extract_narrative to handle both --- and 機制: fallback.
-            narrative_part = _extract_narrative(gm_response)
-            if narrative_part != gm_response:  # a separator was found
-                narrative_offset = len(gm_response) - len(narrative_part)
-                for tag in _CUTOFF_TAGS:
-                    if tag in narrative_part:
-                        idx = gm_response.index(tag, narrative_offset)
-                        end = gm_response.find("]", idx)
-                        if end != -1:
-                            gm_response = gm_response[: end + 1]
-                            cut = True
-                        break
-
-        gm_msgs[-1]["content"] = _fmt_gm(gm_thinking, gm_response)
-        yield gm_msgs, state, gm_response
-
-        if cut:
-            break
-
-    return  # caller uses the last yielded gm_response
 
 
 def _init_game() -> dict:
     world_state = build_world_state()
-    return {
-        "world_state": world_state,
-        "gm": GMAgent(
-            model=MODEL, world_state=world_state,
-            think=GM_THINK, show_thinking=GM_SHOW_THINKING,
-            options=GM_OPTIONS,
-        ),
-        "thor_agent": PlayerAgent(
-            model=MODEL,
-            character=world_state.characters["thor"],
-            personality=THOR_PERSONALITY,
-            think=THOR_THINK, show_thinking=THOR_SHOW_THINKING,
-            options=THOR_OPTIONS,
-        ),
-        "arbiter": ArbiterAgent(model=MODEL),
-        "thor_response": "",
-    }
+    session = GameSession(
+        world_state = world_state,
+        gm          = GMAgent(model=MODEL, world_state=world_state,
+                              think=GM_THINK, show_thinking=GM_SHOW_THINKING,
+                              options=GM_OPTIONS),
+        tag_agent   = TagAgent(model=MODEL, world_state=world_state,
+                               base_url="http://localhost:11434", backend="ollama",
+                               options=TAG_OPTIONS),
+        thor_agent  = PlayerAgent(model=MODEL,
+                                  char_id="thor",
+                                  character=world_state.characters["thor"],
+                                  personality=THOR_PERSONALITY,
+                                  tactics=THOR_TACTICS,
+                                  world_state=world_state,
+                                  think=THOR_THINK, show_thinking=THOR_SHOW_THINKING,
+                                  options=THOR_OPTIONS),
+        arbiter     = ArbiterAgent(model=MODEL),
+        npc_agents  = build_npc_agents(world_state, MODEL,
+                                       "http://localhost:11434", "ollama"),
+    )
+    session.start()
+    return {"session": session, "world_state": world_state}
 
 
-# ── Combat turn processor ─────────────────────────────────────────────────────
+# ── Event → Gradio renderer ───────────────────────────────────────────────────
 
-def _combat_turns(gm_msgs, thor_msgs, aria_msgs, state):
+def _consume_until_prompt(state, gm_msgs, thor_msgs, aria_msgs):
+    """Consume GameSession events, yield Gradio updates, stop at player prompt.
+
+    Yields (gm_msgs, thor_msgs, aria_msgs, state, "").
     """
-    Auto-process NPC and Thor turns in order.
-    Yields (gm_msgs, thor_msgs, aria_msgs, state) after each action.
-    Returns (stops yielding) when it's Aria's turn or combat ends.
-    """
+    session     = state["session"]
     world_state = state["world_state"]
-    gm          = state["gm"]
-    thor_agent  = state["thor_agent"]
-    arbiter     = state["arbiter"]
-    combat      = world_state.combat
-    order_len   = len(combat.initiative_order)
 
-    while combat.active:
-        enemies = _alive_enemies(world_state)
-        pcs     = _alive_pcs(world_state)
+    # Per-turn tracking
+    tag_lines:   list[str] = []
+    gm_text      = ""
+    thor_text    = ""
+    last_source  = None  # for opening new message slots
 
-        if not enemies:
-            combat.active = False
-            # Mark room cleared and show loot
+    def _ensure_gm_slot(src):
+        nonlocal last_source
+        if last_source != src:
+            gm_msgs.append({"role": "assistant", "content": ""})
+            last_source = src
+
+    def _ensure_thor_slot(src):
+        nonlocal last_source
+        if last_source != src:
+            thor_msgs.append({"role": "assistant", "content": ""})
+            last_source = src
+
+    while True:
+        event = session.next_event(timeout=120)
+        if event is None:
+            break
+
+        # ── TagResult ─────────────────────────────────────────────────────────
+        if isinstance(event, TagResult):
+            tag_lines = [f"- {r}" for r in event.ok] + [f"- ⚠ {e}" for e in event.errors]
+            if tag_lines:
+                gm_msgs.append({"role": "assistant",
+                                "content": "**【機制結算】**\n" + "\n".join(tag_lines)})
+                last_source = "tag"
+                yield gm_msgs[:], thor_msgs[:], aria_msgs[:], state, ""
+
+        # ── StreamChunk ───────────────────────────────────────────────────────
+        elif isinstance(event, StreamChunk):
+            src = event.source
+
+            if src == "gm":
+                if not event.thinking or GM_SHOW_THINKING:
+                    if last_source not in ("gm", "tag_then_gm"):
+                        if last_source == "tag":
+                            # Tag block already rendered — append separator into same slot
+                            gm_msgs[-1]["content"] += "\n\n---\n\n"
+                            last_source = "tag_then_gm"
+                        elif tag_lines:
+                            tag_block = "**【機制結算】**\n" + "\n".join(tag_lines)
+                            gm_msgs.append({"role": "assistant",
+                                            "content": tag_block + "\n\n---\n\n"})
+                            last_source = "tag_then_gm"
+                        else:
+                            gm_msgs.append({"role": "assistant", "content": ""})
+                            last_source = "gm"
+                    gm_msgs[-1]["content"] += event.text
+                    gm_text += event.text
+                    yield gm_msgs[:], thor_msgs[:], aria_msgs[:], state, ""
+
+            elif src == "thor":
+                if not event.thinking:
+                    _ensure_thor_slot("thor")
+                    thor_msgs[-1]["content"] += event.text
+                    thor_text += event.text
+                    yield gm_msgs[:], thor_msgs[:], aria_msgs[:], state, ""
+
+            elif src == "npc":
+                actor_key = f"npc_{event.actor}"
+                if last_source != actor_key:
+                    gm_msgs.append({"role": "user",      "content": f"（{event.actor} 的回合）"})
+                    gm_msgs.append({"role": "assistant", "content": ""})
+                    last_source = actor_key
+                gm_msgs[-1]["content"] += event.text
+                yield gm_msgs[:], thor_msgs[:], aria_msgs[:], state, ""
+
+            elif src == "thor_combat":
+                if not event.thinking:
+                    _ensure_thor_slot("thor_combat")
+                    thor_msgs[-1]["content"] += event.text
+                    yield gm_msgs[:], thor_msgs[:], aria_msgs[:], state, ""
+
+            elif src == "narrate":
+                _ensure_gm_slot("narrate")
+                gm_msgs[-1]["content"] += event.text
+                yield gm_msgs[:], thor_msgs[:], aria_msgs[:], state, ""
+
+            elif src == "npc_talk":
+                if last_source != "npc_talk":
+                    gm_msgs.append({"role": "user",      "content": f"（{event.actor}）"})
+                    gm_msgs.append({"role": "assistant", "content": ""})
+                    last_source = "npc_talk"
+                gm_msgs[-1]["content"] += event.text
+                yield gm_msgs[:], thor_msgs[:], aria_msgs[:], state, ""
+
+        # ── ActionResult ──────────────────────────────────────────────────────
+        elif isinstance(event, ActionResult):
+            debug_str = f"\n\n`[判定器] {event.debug}`" if DEBUG_ARBITER else ""
+            result_line = f"\n\n`{event.summary}`{debug_str}"
+            # Append to whatever the last open slot is (npc/thor_combat message)
+            if gm_msgs and last_source and last_source.startswith("npc"):
+                gm_msgs[-1]["content"] += result_line
+                yield gm_msgs[:], thor_msgs[:], aria_msgs[:], state, ""
+            elif last_source == "thor_combat":
+                if thor_msgs:
+                    thor_msgs[-1]["content"] += result_line
+                # Also show in aria panel
+                aria_msgs.append({"role": "assistant",
+                                   "content": f"**索爾：**{thor_msgs[-1]['content'].split('`')[0].strip() if thor_msgs else ''}\n\n`{event.summary}`"})
+                yield gm_msgs[:], thor_msgs[:], aria_msgs[:], state, ""
+            else:
+                # Aria action result
+                aria_msgs.append({"role": "assistant", "content": f"`{event.summary}`{debug_str}"})
+                yield gm_msgs[:], thor_msgs[:], aria_msgs[:], state, ""
+            last_source = "result"
+
+        # ── CombatStart ───────────────────────────────────────────────────────
+        elif isinstance(event, CombatStart):
+            order_str = "→".join(event.order)
+            gm_msgs.append({"role": "assistant",
+                             "content": f"⚔ **先攻順序：{order_str}**"})
+            last_source = "combat_start"
+            yield gm_msgs[:], thor_msgs[:], aria_msgs[:], state, ""
+
+        # ── RoundStart ────────────────────────────────────────────────────────
+        elif isinstance(event, RoundStart):
+            gm_msgs.append({"role": "assistant",
+                             "content": f"---\n**第 {event.number} 回合**"})
+            last_source = "round"
+            yield gm_msgs[:], thor_msgs[:], aria_msgs[:], state, ""
+
+        # ── CombatEnd ─────────────────────────────────────────────────────────
+        elif isinstance(event, CombatEnd):
             msg = "✨ **所有敵人已倒下！戰鬥結束。**"
-            if world_state.dungeon_map:
-                room = world_state.dungeon_map.current_room
-                room.cleared = True
-                loot = room.loot_names()
-                if loot:
-                    msg += f"\n\n💰 **可拾取物品：{'、'.join(loot)}**\n（告訴GM你想拿什麼）"
-            gm_msgs = gm_msgs + [{"role": "assistant", "content": msg}]
-            yield gm_msgs, thor_msgs, aria_msgs, state
-            return
+            if event.loot:
+                msg += f"\n\n💰 **可拾取：{'、'.join(event.loot)}**\n（告訴GM你想拿什麼）"
+            gm_msgs.append({"role": "assistant", "content": msg})
+            last_source = "combat_end"
+            yield gm_msgs[:], thor_msgs[:], aria_msgs[:], state, ""
 
-        if not pcs:
-            gm_msgs = gm_msgs + [{"role": "assistant",
-                                   "content": "💀 **全員倒下！遊戲結束。**"}]
-            yield gm_msgs, thor_msgs, aria_msgs, state
-            return
+        # ── ExplorationPrompt ─────────────────────────────────────────────────
+        elif isinstance(event, ExplorationPrompt):
+            # Thor panel: ensure final content is set
+            if thor_msgs and thor_text:
+                thor_msgs[-1]["content"] = thor_text
 
-        cid  = combat.initiative_order[combat.current_turn_index % order_len]
-        char = world_state.characters.get(cid)
+            # Aria panel: combined summary
+            aria_msgs.append({"role": "assistant",
+                               "content": (f"**GM：** {event.gm_text}\n\n"
+                                           f"**索爾：** {event.thor_text}\n\n"
+                                           f"{_aria_status(world_state)}")})
+            yield gm_msgs[:], thor_msgs[:], aria_msgs[:], state, ""
+            return  # stop — wait for player submit
 
-        if not char or not char.is_alive():
-            combat.current_turn_index += 1
-            continue
-
-        # ── Aria's turn: stop and wait for player input ───────────────────────
-        if cid == "aria":
-            aria_msgs = aria_msgs + [{
-                "role": "assistant",
-                "content": (
-                    f"**⚔ 輪到你了！**\n\n"
-                    f"敵人：{'、'.join(f'{n}（{c}）' for c, n in enemies.items())}\n\n"
-                    f"{_aria_status(world_state)}"
-                ),
-            }]
-            yield gm_msgs, thor_msgs, aria_msgs, state
-            return  # pause — resume when player submits
-
-        # ── NPC turn ──────────────────────────────────────────────────────────
-        if char.is_npc:
-            if not pcs:
-                break
-            pc_str      = "、".join(f"{n}（{c}）" for c, n in pcs.items())
-            weapons_str = "、".join(w.name for w in char.weapons) or "無武器"
-            npc_prompt  = (
-                f"現在是 {char.name}（{cid}）的回合，HP {char.hp}/{char.max_hp}。\n"
-                f"{char.name} 的武器：{weapons_str}\n"
-                f"可攻擊目標：{pc_str}\n"
-                f"用一句話描述 {char.name} 選擇的行動（30字以內），必須使用實際武器名稱，不要描述玩家角色的反應。"
-            )
-
-            gm_msgs = gm_msgs + [
-                {"role": "user",      "content": f"（{char.name} 的回合）"},
-                {"role": "assistant", "content": ""},
-            ]
-            npc_desc = ""
-            for chunk, thinking in _stream_agent(gm.combat_narrate, npc_prompt):
-                if not thinking:
-                    npc_desc += chunk
-                    gm_msgs[-1]["content"] = npc_desc
-                    yield gm_msgs, thor_msgs, aria_msgs, state
-
-            npc_action = arbiter.parse(
-                player_action=npc_desc,
-                actor_id=cid, actor_name=char.name,
-                available_targets=pcs,
-                resources={"action": True, "bonus_action": True, "movement": 9},
-                actor_char=char,
-            )
-            debug_str = f"\n\n`[判定器] {npc_action}`" if DEBUG_ARBITER else ""
-
-            if npc_action.get("valid"):
-                result      = execute_action(npc_action, world_state)
-                result_text = format_result(npc_desc, result, char.name)
-                gm_msgs[-1]["content"] += f"{debug_str}\n\n`{result_text}`"
-                yield gm_msgs, thor_msgs, aria_msgs, state
-                brief = f"【戰鬥結算】用一句（30字以內）繁體中文敘述此結果，直接輸出敘事，不加格式欄位：\n{result_text}"
-                gm_msgs = gm_msgs + [{"role": "assistant", "content": ""}]
-                for chunk, thinking in _stream_agent(gm.combat_narrate, brief):
-                    if not thinking:
-                        gm_msgs[-1]["content"] += chunk
-                        yield gm_msgs, thor_msgs, aria_msgs, state
+        # ── CombatPrompt ──────────────────────────────────────────────────────
+        elif isinstance(event, CombatPrompt):
+            if event.info_text:
+                info_block = event.info_text
             else:
-                gm_msgs[-1]["content"] += f"{debug_str}\n\n*無效行動：{npc_action.get('reason')}*"
-                yield gm_msgs, thor_msgs, aria_msgs, state
+                enemies_str = "、".join(f"{n}（{c}）" for c, n in event.enemies.items())
+                info_block = f"敵人：{enemies_str}"
+            aria_msgs.append({"role": "assistant",
+                               "content": (f"**⚔ 輪到你了！**\n\n"
+                                           f"```\n{info_block}\n```\n\n"
+                                           f"{_aria_status(world_state)}")})
+            yield gm_msgs[:], thor_msgs[:], aria_msgs[:], state, ""
+            return  # stop — wait for player submit
 
-        # ── Thor's turn ───────────────────────────────────────────────────────
-        elif cid == "thor":
-            thor_char = world_state.characters["thor"]
-            context   = (
-                f"現在是你（索爾）的回合。\n"
-                f"存活的敵人：{'、'.join(f'{n}（{c}）' for c, n in enemies.items())}\n"
-                f"你的 HP：{thor_char.hp}/{thor_char.max_hp}"
-            )
+        # ── ConversationPrompt ────────────────────────────────────────────────
+        elif isinstance(event, ConversationPrompt):
+            aria_msgs.append({"role": "assistant",
+                               "content": (f"**【與 {event.npc_name} 對話中｜態度：{event.attitude_label}】**\n\n"
+                                           f"{_aria_status(world_state)}\n\n"
+                                           f"*輸入「離開」結束對話*")})
+            yield gm_msgs[:], thor_msgs[:], aria_msgs[:], state, ""
+            return  # wait for player input
 
-            thor_msgs = thor_msgs + [
-                {"role": "user",      "content": context},
-                {"role": "assistant", "content": ""},
-            ]
-            thor_desc = ""
-            for chunk, thinking in _stream_agent(thor_agent.generate, context):
-                if not thinking:
-                    thor_desc += chunk
-                    thor_msgs[-1]["content"] = thor_desc
-                    yield gm_msgs, thor_msgs, aria_msgs, state
+        # ── StatusMessage ─────────────────────────────────────────────────────
+        elif isinstance(event, StatusMessage):
+            aria_msgs.append({"role": "assistant", "content": event.text})
+            yield gm_msgs[:], thor_msgs[:], aria_msgs[:], state, ""
 
-            thor_action = arbiter.parse(
-                player_action=thor_desc,
-                actor_id="thor", actor_name=thor_char.name,
-                available_targets=enemies,
-                resources={"action": True, "bonus_action": True, "movement": 9},
-                actor_char=thor_char,
-            )
-            debug_str = f"\n\n`[判定器] {thor_action}`" if DEBUG_ARBITER else ""
+        # ── QuestComplete ─────────────────────────────────────────────────────
+        elif isinstance(event, QuestComplete):
+            msg = f"✅ **任務達成：{event.title}**（可回去找 {event.giver_name} 回報）"
+            gm_msgs.append({"role": "assistant", "content": msg})
+            aria_msgs.append({"role": "assistant", "content": msg})
+            last_source = "quest"
+            yield gm_msgs[:], thor_msgs[:], aria_msgs[:], state, ""
 
-            if thor_action.get("valid"):
-                result      = execute_action(thor_action, world_state)
-                result_text = format_result(thor_desc, result, thor_char.name)
-                thor_msgs[-1]["content"] += f"{debug_str}\n\n`{result_text}`"
-                aria_msgs = aria_msgs + [{
-                    "role": "assistant",
-                    "content": f"**索爾：** {thor_desc}\n\n`{result_text}`",
-                }]
-                yield gm_msgs, thor_msgs, aria_msgs, state
-                brief = f"【戰鬥結算】用一句（30字以內）繁體中文敘述此結果，直接輸出敘事，不加格式欄位：\n{result_text}"
-                gm_msgs = gm_msgs + [{"role": "assistant", "content": ""}]
-                for chunk, thinking in _stream_agent(gm.combat_narrate, brief):
-                    if not thinking:
-                        gm_msgs[-1]["content"] += chunk
-                        yield gm_msgs, thor_msgs, aria_msgs, state
-            else:
-                thor_msgs[-1]["content"] += f"{debug_str}\n\n*無效行動：{thor_action.get('reason')}*"
-                yield gm_msgs, thor_msgs, aria_msgs, state
-
-        combat.current_turn_index += 1
-
-        # New round
-        if combat.current_turn_index % order_len == 0:
-            combat.round_number += 1
-            gm_msgs = gm_msgs + [{
-                "role": "assistant",
-                "content": f"---\n**第 {combat.round_number} 回合**",
-            }]
-            yield gm_msgs, thor_msgs, aria_msgs, state
+        # ── GameOver ──────────────────────────────────────────────────────────
+        elif isinstance(event, GameOver):
+            gm_msgs.append({"role": "assistant",
+                             "content": f"💀 **{event.reason}**"})
+            yield gm_msgs[:], thor_msgs[:], aria_msgs[:], state, ""
+            return
 
 
 # ── Opening (page load) ───────────────────────────────────────────────────────
 
 def on_load():
-    state       = _init_game()
-    world_state = state["world_state"]
-    gm          = state["gm"]
+    state = _init_game()
 
-    gm_msgs   = [{"role": "user", "content": "（開場）"},
-                 {"role": "assistant", "content": ""}]
+    gm_msgs   = [{"role": "user", "content": "（開場）"}]
     thor_msgs : list = []
     aria_msgs = [{"role": "user", "content": OPENING_SCENE}]
 
-    gm_response = ""
-    for gm_msgs, state, gm_response in _stream_gm(gm_msgs, state, []):
+    for gm_msgs, thor_msgs, aria_msgs, state, _ in _consume_until_prompt(
+            state, gm_msgs, thor_msgs, aria_msgs):
         yield gm_msgs, thor_msgs, aria_msgs, state
-
-    _narrative = _extract_narrative(gm_response)
-    gm_text, tag_results = parse_and_resolve(_narrative, world_state)
-    if tag_results:
-        rules = "\n".join(f"- {r}" for r in tag_results)
-        gm_msgs[-1]["content"] += f"\n\n**規則結算：**\n{rules}"
-        gm.notify_results(tag_results)
-    world_state.event_log.append(f"GM: {gm_text}")
-
-    # Combat started during opening?
-    if world_state.combat and world_state.combat.active:
-        world_state.combat.current_turn_index = 0
-        for gm_msgs, thor_msgs, aria_msgs, state in _combat_turns(
-                gm_msgs, thor_msgs, aria_msgs, state):
-            yield gm_msgs, thor_msgs, aria_msgs, state
-        return
-
-    # Normal exploration: Thor responds, Aria sees
-    thor_msgs = [{"role": "user", "content": gm_text},
-                 {"role": "assistant", "content": ""}]
-    thor_response = ""
-    for chunk, thinking in _stream_agent(state["thor_agent"].generate, gm_text):
-        if not thinking:
-            thor_response += chunk
-            thor_msgs[-1]["content"] = thor_response
-            yield gm_msgs, thor_msgs, aria_msgs, state
-
-    world_state.event_log.append(f"索爾：{thor_response}")
-    state["thor_response"] = thor_response
-
-    aria_msgs.append({
-        "role": "assistant",
-        "content": (f"**GM：** {gm_text}\n\n"
-                    f"**索爾：** {thor_response}\n\n"
-                    f"{_aria_status(world_state)}"),
-    })
-    yield gm_msgs, thor_msgs, aria_msgs, state
 
 
 # ── Submit (player action) ────────────────────────────────────────────────────
@@ -384,167 +313,14 @@ def on_submit(human_input: str,
         yield gm_msgs, thor_msgs, aria_msgs, state, ""
         return
 
-    world_state = state["world_state"]
-    gm          = state["gm"]
-    thor_agent  = state["thor_agent"]
-    arbiter     = state["arbiter"]
-
-    # ── COMBAT MODE ───────────────────────────────────────────────────────────
-    if world_state.combat and world_state.combat.active:
-        aria    = world_state.characters["aria"]
-        enemies = _alive_enemies(world_state)
-
-        aria_msgs = aria_msgs + [{"role": "user", "content": human_input}]
-
-        aria_action = arbiter.parse(
-            player_action=human_input,
-            actor_id="aria", actor_name=aria.name,
-            available_targets=enemies,
-            resources={"action": True, "bonus_action": True, "movement": 9},
-            actor_char=aria,
-        )
-        debug_str = f"\n\n`[判定器] {aria_action}`" if DEBUG_ARBITER else ""
-
-        if not aria_action.get("valid"):
-            aria_msgs = aria_msgs + [{
-                "role": "assistant",
-                "content": (f"❌ **{aria_action.get('reason')}**\n\n"
-                            f"💡 {aria_action.get('suggestion')}{debug_str}"),
-            }]
-            yield gm_msgs, thor_msgs, aria_msgs, state, ""
-            return
-
-        result      = execute_action(aria_action, world_state)
-        result_text = format_result(human_input, result, aria.name)
-        aria_msgs = aria_msgs + [{
-            "role": "assistant",
-            "content": f"`{result_text}`{debug_str}",
-        }]
-        world_state.event_log.append(f"凱恩：{human_input}")
-        yield gm_msgs, thor_msgs, aria_msgs, state, ""
-
-        brief = f"【戰鬥結算】用一句（30字以內）繁體中文敘述此結果，直接輸出敘事，不加格式欄位：\n{result_text}"
-        gm_msgs = gm_msgs + [{"role": "assistant", "content": ""}]
-        for chunk, thinking in _stream_agent(gm.combat_narrate, brief):
-            if not thinking:
-                gm_msgs[-1]["content"] += chunk
-                yield gm_msgs, thor_msgs, aria_msgs, state, ""
-
-        world_state.combat.current_turn_index += 1
-
-        # Auto-process until next Aria turn or combat end
-        for gm_msgs, thor_msgs, aria_msgs, state in _combat_turns(
-                gm_msgs, thor_msgs, aria_msgs, state):
-            yield gm_msgs, thor_msgs, aria_msgs, state, ""
-
-        # Still in combat (paused for Aria's next turn) — wait for next submit
-        if world_state.combat and world_state.combat.active:
-            return
-
-        # ── Combat ended — transition back to exploration ──────────────────────
-        world_state.combat = None
-        player_actions = ["（戰鬥結束，所有敵人已被擊敗）"]
-        gm_msgs = gm_msgs + [{"role": "user",      "content": "（戰鬥結束）"},
-                              {"role": "assistant", "content": ""}]
-        yield gm_msgs, thor_msgs, aria_msgs, state, ""
-
-        for gm_msgs, state, gm_response in _stream_gm(gm_msgs, state, player_actions):
-            yield gm_msgs, thor_msgs, aria_msgs, state, ""
-
-        _narrative = _extract_narrative(gm_response)
-        gm_text, tag_results = parse_and_resolve(_narrative, world_state)
-        if tag_results:
-            gm_msgs[-1]["content"] += "\n\n**規則結算：**\n" + "\n".join(f"- {r}" for r in tag_results)
-            gm.notify_results(tag_results)
-        world_state.event_log.append(f"GM: {gm_text}")
-        yield gm_msgs, thor_msgs, aria_msgs, state, ""
-
-        # New combat triggered in aftermath narration
-        if world_state.combat and world_state.combat.active:
-            world_state.combat.current_turn_index = 0
-            for gm_msgs, thor_msgs, aria_msgs, state in _combat_turns(
-                    gm_msgs, thor_msgs, aria_msgs, state):
-                yield gm_msgs, thor_msgs, aria_msgs, state, ""
-            return
-
-        thor_msgs = thor_msgs + [{"role": "user",      "content": gm_text},
-                                  {"role": "assistant", "content": ""}]
-        thor_response = ""
-        for chunk, thinking in _stream_agent(thor_agent.generate, gm_text):
-            if not thinking:
-                thor_response += chunk
-                thor_msgs[-1]["content"] = thor_response
-                yield gm_msgs, thor_msgs, aria_msgs, state, ""
-
-        world_state.event_log.append(f"索爾：{thor_response}")
-        state["thor_response"] = thor_response
-        aria_msgs = aria_msgs + [{
-            "role": "assistant",
-            "content": (f"**GM：** {gm_text}\n\n"
-                        f"**索爾：** {thor_response}\n\n"
-                        f"{_aria_status(world_state)}"),
-        }]
-        yield gm_msgs, thor_msgs, aria_msgs, state, ""
-        return
-
-    # ── EXPLORATION MODE ──────────────────────────────────────────────────────
-    thor_response_prev = state.get("thor_response", "")
+    session = state["session"]
+    session.submit_player_input(human_input)
     aria_msgs = aria_msgs + [{"role": "user", "content": human_input}]
-    world_state.event_log.append(f"凱恩：{human_input}")
-
-    player_actions  = [f"索爾：{thor_response_prev}", f"凱恩：{human_input}"]
-    actions_display = "\n".join(f"• {a}" for a in player_actions)
-    gm_msgs = gm_msgs + [{"role": "user",      "content": actions_display},
-                          {"role": "assistant", "content": ""}]
     yield gm_msgs, thor_msgs, aria_msgs, state, ""
 
-    for gm_msgs, state, gm_response in _stream_gm(gm_msgs, state, player_actions):
+    for gm_msgs, thor_msgs, aria_msgs, state, _ in _consume_until_prompt(
+            state, gm_msgs[:], thor_msgs[:], aria_msgs[:]):
         yield gm_msgs, thor_msgs, aria_msgs, state, ""
-
-    _narrative = _extract_narrative(gm_response)
-    gm_text, tag_results = parse_and_resolve(_narrative, world_state)
-    if tag_results:
-        rules = "\n".join(f"- {r}" for r in tag_results)
-        gm_msgs[-1]["content"] += f"\n\n**規則結算：**\n{rules}"
-        gm.notify_results(tag_results)
-    world_state.event_log.append(f"GM: {gm_text}")
-    yield gm_msgs, thor_msgs, aria_msgs, state, ""
-
-    # Death check
-    for cid, char in world_state.characters.items():
-        if not char.is_npc and not char.is_alive():
-            gm_msgs[-1]["content"] += f"\n\n💀 **{char.name} 倒下了！遊戲結束。**"
-            yield gm_msgs, thor_msgs, aria_msgs, state, ""
-            return
-
-    # Combat started?
-    if world_state.combat and world_state.combat.active:
-        world_state.combat.current_turn_index = 0
-        for gm_msgs, thor_msgs, aria_msgs, state in _combat_turns(
-                gm_msgs, thor_msgs, aria_msgs, state):
-            yield gm_msgs, thor_msgs, aria_msgs, state, ""
-        return
-
-    # Normal exploration: Thor responds
-    thor_msgs = thor_msgs + [{"role": "user",      "content": gm_text},
-                              {"role": "assistant", "content": ""}]
-    thor_response = ""
-    for chunk, thinking in _stream_agent(thor_agent.generate, gm_text):
-        if not thinking:
-            thor_response += chunk
-            thor_msgs[-1]["content"] = thor_response
-            yield gm_msgs, thor_msgs, aria_msgs, state, ""
-
-    world_state.event_log.append(f"索爾：{thor_response}")
-    state["thor_response"] = thor_response
-
-    aria_msgs = aria_msgs + [{
-        "role": "assistant",
-        "content": (f"**GM：** {gm_text}\n\n"
-                    f"**索爾：** {thor_response}\n\n"
-                    f"{_aria_status(world_state)}"),
-    }]
-    yield gm_msgs, thor_msgs, aria_msgs, state, ""
 
 
 # ── UI ────────────────────────────────────────────────────────────────────────

@@ -12,7 +12,7 @@ from .scenarios.dungeon import build_world_state, OPENING_SCENE, THOR_PERSONALIT
 from .llm.gm_agent import GMAgent
 from .llm.player_agent import PlayerAgent
 from .llm.tag_parser import parse_and_resolve
-from .main import (
+from .cli import (
     check_ollama, MODEL,
     GM_THINK, GM_SHOW_THINKING, GM_OPTIONS,
     THOR_THINK, THOR_SHOW_THINKING, THOR_OPTIONS,
@@ -106,8 +106,10 @@ class TRPGApp(App):
         )
         self.thor_agent = PlayerAgent(
             model=MODEL,
+            char_id="thor",
             character=self.world_state.characters["thor"],
             personality=THOR_PERSONALITY,
+            world_state=self.world_state,
             think=THOR_THINK, show_thinking=THOR_SHOW_THINKING,
             options=THOR_OPTIONS,
         )

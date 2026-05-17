@@ -2,9 +2,22 @@ COMBAT_RULEBOOK = """
 # 戰鬥行動規則
 
 ## 每回合資源
-- 1 動作（action）：攻擊、使用道具、技能檢定、躲藏等
+- 1 動作（action）：攻擊、閃避、使用道具、技能檢定、躲藏等
 - 1 移動（movement）：最多 9 公尺，可在行動前後分割
 - 1 附贈動作（bonus_action）：特定技能才有
+
+## 戰場位置（1 軸距離）
+每位戰鬥角色有 position（公尺）。0 = 我方原點，正向 = 敵方那側。
+距離 = |attacker.position − target.position|（系統計算，你不需要做減法）。
+
+## 武器射程
+- 近戰武器：range_normal 是伸手範圍（典型 1.5m）
+- 遠程武器：range_normal 是正常射程，range_long 是最大射程
+- 攻擊距離規則由引擎強制執行：
+  - 近戰武器 + 目標超出伸手範圍 → 系統會拒絕並回報 "太遠"
+  - 遠程武器 + 目標在 1.5m 內（近身）→ 自動劣勢
+  - 遠程武器 + 目標超過 range_normal → 自動劣勢
+  - 遠程武器 + 目標超過 range_long → 系統拒絕
 
 ## 武器傷害
 傷害骰由角色裝備決定，只需填 "weapon" 欄位的武器名稱，引擎自動查詢。
@@ -77,15 +90,47 @@ DC 預設 12，若描述有明確難度可調整
 }
 ```
 
-### 移動（不消耗 action）
-玩家描述包含移動位置，但沒有攻擊/技能行動時才單獨輸出
+### 移動（消耗：movement，最多 9 公尺/回合）
+玩家描述「衝向、靠近、後退、拉開距離、追上去、退到後排」等位置變化。
+
+**用語意方向，不要算座標**——`direction` 取 "advance" 或 "retreat"，引擎自己依角色陣營判斷符號：
+- `direction: "advance"` → 朝對立陣營靠近（不論你是 PC 還是 NPC）
+- `direction: "retreat"` → 遠離對立陣營
+- `distance` 預設 9（單回合上限），可以更小（小步靠近）
+
 ```json
 {
   "valid": true,
   "type": "MOVE",
   "character": "<角色ID>",
-  "description": "<移動方向或目標位置>",
+  "direction": "advance",
+  "distance": 9,
+  "description": "<簡短描述>",
   "consumes": ["movement"]
+}
+```
+
+**進階：絕對位置**（罕用，例如「我退到牆角」這種有固定座標的場景）
+```json
+{
+  "valid": true,
+  "type": "MOVE",
+  "character": "<角色ID>",
+  "target_position": <絕對公尺>,
+  "description": "<簡短描述>",
+  "consumes": ["movement"]
+}
+```
+
+### 閃避（消耗：action）
+玩家描述「我閃避」「我專注防禦」「我躲避攻擊」「舉盾防禦」等
+效果：下次自己回合開始前，任何攻擊本角色的攻擊者擲劣勢
+```json
+{
+  "valid": true,
+  "type": "DODGE",
+  "character": "<角色ID>",
+  "consumes": ["action"]
 }
 ```
 

@@ -7,6 +7,11 @@ import json
 import requests
 
 
+def _strip_surrogates(s: str) -> str:
+    """Remove unpaired Unicode surrogates that can't be encoded to UTF-8."""
+    return s.encode("utf-8", errors="replace").decode("utf-8")
+
+
 def stream_chat(base_url: str, model: str, messages: list, options: dict,
                 think: bool = False, on_chunk=None, backend: str = "ollama",
                 timeout: int = 180) -> str:
@@ -63,7 +68,7 @@ def _stream_ollama(base_url, model, messages, options, think, on_chunk, timeout)
                 in_thinking = False
                 if on_chunk:
                     on_chunk("\n[回答]\n", thinking=True)
-            chunk = msg["content"]
+            chunk = _strip_surrogates(msg["content"])
             full += chunk
             if on_chunk:
                 on_chunk(chunk, thinking=False)
@@ -95,6 +100,7 @@ def _stream_openai(base_url, model, messages, options, on_chunk, timeout):
         delta = data.get("choices", [{}])[0].get("delta", {})
         chunk = delta.get("content", "")
         if chunk:
+            chunk = _strip_surrogates(chunk)
             full += chunk
             if on_chunk:
                 on_chunk(chunk, thinking=False)

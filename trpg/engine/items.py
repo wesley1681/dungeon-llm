@@ -7,8 +7,8 @@ class Weapon:
     damage_dice: str
     damage_type: str        # 斬擊 / 穿刺 / 鈍擊
     range_type: str         # 近戰 / 遠程
-    range_normal: int = 1   # 公尺
-    range_long: int = 0     # 遠程武器長射程
+    range_normal: float = 1.5  # 公尺：近戰=伸手距離 / 遠程=正常射程
+    range_long: float = 0.0    # 遠程武器最大射程（normal 內無 disadvantage、normal~long 有 disadvantage、long 外不可達）
     properties: list = field(default_factory=list)  # 輕巧 / 精巧 / 投擲
     ammo: str = ""          # 需要消耗的彈藥消耗品名稱 (e.g. "箭")
 
@@ -17,18 +17,44 @@ class Weapon:
 class Consumable:
     name: str
     quantity: int
-    effect_type: str   # heal / light / ammo / utility
+    effect_type: str   # heal / light / ammo / utility / quest
     effect_value: str  # heal 用骰子式 e.g."1d4+2"；其餘為 ""
+
+
+@dataclass
+class Chest:
+    name: str
+    loot: list         # list[Weapon | Consumable | str]
+    lock_dc: int = 0   # 0 = 未上鎖；正整數 = 需要 DEX 撬鎖
+    opened: bool = False
+
+    def visible_name(self) -> str:
+        if self.opened:
+            return f"{self.name}（已開啟）"
+        if self.lock_dc > 0:
+            return f"{self.name}（上鎖 DC{self.lock_dc}）"
+        return self.name
+
+
+@dataclass
+class Hideout:
+    """A concealed spot in a room. Items placed inside are not visible until SEARCH
+    succeeds (roll >= find_dc). Once discovered, the spot is revealed permanently
+    and its contents become pickupable, kept under the hideout for narrative context."""
+    description: str           # 「牆角堆疊的木箱深處」「王座後的陰影」
+    contents: list             # list[Weapon | Consumable | str]
+    find_dc: int = 13
+    discovered: bool = False
 
 
 # ── 標準武器庫 ─────────────────────────────────────────────────────────────────
 WEAPON_DEFS: dict[str, Weapon] = {
-    "短劍":   Weapon("短劍",   "1d6", "穿刺", "近戰", properties=["輕巧", "精巧"]),
-    "長劍":   Weapon("長劍",   "1d8", "斬擊", "近戰"),
-    "手斧":   Weapon("手斧",   "1d6", "斬擊", "近戰", properties=["投擲"]),
-    "匕首":   Weapon("匕首",   "1d4", "穿刺", "近戰", properties=["輕巧", "精巧", "投擲"]),
-    "彎刀":   Weapon("彎刀",   "1d6", "斬擊", "近戰", properties=["輕巧"]),
+    "短劍":   Weapon("短劍",   "1d6", "穿刺", "近戰", range_normal=1.5, properties=["輕巧", "精巧"]),
+    "長劍":   Weapon("長劍",   "1d8", "斬擊", "近戰", range_normal=1.5),
+    "手斧":   Weapon("手斧",   "1d6", "斬擊", "近戰", range_normal=1.5, properties=["投擲"]),
+    "匕首":   Weapon("匕首",   "1d4", "穿刺", "近戰", range_normal=1.5, properties=["輕巧", "精巧", "投擲"]),
+    "彎刀":   Weapon("彎刀",   "1d6", "斬擊", "近戰", range_normal=1.5, properties=["輕巧"]),
     "短弓":   Weapon("短弓",   "1d6", "穿刺", "遠程",
                     range_normal=24, range_long=96, ammo="箭"),
-    "無武器": Weapon("無武器", "1d4", "鈍擊", "近戰"),
+    "無武器": Weapon("無武器", "1d4", "鈍擊", "近戰", range_normal=1.5),
 }

@@ -1,11 +1,37 @@
-from .dice import roll
+from .dice import roll, roll_d20, combine_advantage
 from .character import Character, CombatState
 from .world_state import WorldState
+
+# Movement budget per turn (D&D 5e default speed for medium humanoid = 30 ft ≈ 9 m).
+MOVE_BUDGET_M = 9.0
+
+
+def setup_combat_positions(world_state: WorldState, combat: CombatState) -> None:
+    """Place combatants on the 1-axis battlefield at combat start.
+
+    Convention:
+      - Party (PCs + follower NPCs): position 0.0
+      - Hostile NPCs with melee-only weapons: position 1.5 (in engagement reach)
+      - Hostile NPCs with ranged weapons: position 6.0 (back row, safer)
+    """
+    for cid in combat.initiative_order:
+        char = world_state.characters.get(cid)
+        if not char:
+            continue
+        if world_state.is_party_ally(cid):
+            char.position = 0.0
+            continue
+        # Hostile NPC: pick starting position based on weapon mix
+        has_ranged = any(w.range_type == "遠程" for w in char.weapons)
+        char.position = 6.0 if has_ranged else 1.5
 
 
 def roll_initiative(world_state: WorldState,
                     character_ids: list[str] | None = None) -> CombatState:
-    """Roll initiative. If character_ids given, only include those characters."""
+    """Roll initiative. If character_ids given, only include those characters.
+
+    Also resets combatant positions to the standard battlefield layout.
+    """
     chars = world_state.characters
     if character_ids is not None:
         chars = {k: v for k, v in chars.items() if k in character_ids}
@@ -15,19 +41,60 @@ def roll_initiative(world_state: WorldState,
         if char.is_alive()
     }
     order = sorted(results, key=lambda n: results[n], reverse=True)
-    return CombatState(initiative_order=order)
+    state = CombatState(initiative_order=order)
+    setup_combat_positions(world_state, state)
+    return state
+
+
+def distance_m(a: Character, b: Character) -> float:
+    """Absolute 1-axis distance between two combatants, in metres."""
+    return abs(a.position - b.position)
+
+
+def attack_range_check(attacker: Character, target: Character, weapon) -> tuple[bool, str, str]:
+    """Decide whether `attacker` can hit `target` with `weapon` right now.
+
+    Returns (in_range, reason, advantage_mode):
+      - in_range: False means caller should reject the attack
+      - reason: human-readable explanation when not in range
+      - advantage_mode: "normal" / "disadvantage" — disadvantage applies for:
+          ranged attack while in melee (target within 1.5m of attacker)
+          long-range ranged shot (between range_normal and range_long)
+    """
+    if weapon is None:
+        return False, "未指定武器", "normal"
+    d = distance_m(attacker, target)
+    if weapon.range_type == "近戰":
+        reach = weapon.range_normal or 1.5
+        if d > reach:
+            return False, f"目標距離 {d:.1f}m，超出 {weapon.name} 伸手範圍 {reach:.1f}m", "normal"
+        return True, "", "normal"
+    # Ranged
+    normal_r = weapon.range_normal or 0.0
+    long_r   = weapon.range_long   or normal_r
+    if d > long_r:
+        return False, f"目標距離 {d:.1f}m，超出 {weapon.name} 最大射程 {long_r:.0f}m", "normal"
+    # In-melee penalty: any enemy within 1.5m of attacker forces disadvantage on ranged
+    if d <= 1.5:
+        return True, "", "disadvantage"
+    # Long-range disadvantage zone
+    if d > normal_r:
+        return True, "", "disadvantage"
+    return True, "", "normal"
 
 
 def resolve_attack(attacker: Character, target: Character,
-                   weapon=None) -> tuple[bool, int]:
-    """Returns (hit, total_roll). Uses STR, or DEX if weapon has 精巧 and DEX is higher."""
+                   weapon=None, mode: str = "normal") -> tuple[bool, int]:
+    """Returns (hit, total_roll). mode: 'normal' / 'advantage' / 'disadvantage'."""
     if weapon is None:
         weapon = attacker.get_weapon()
     if "精巧" in (weapon.properties if weapon else []):
         stat_mod = max(attacker.stats.modifier("STR"), attacker.stats.modifier("DEX"))
+    elif weapon and weapon.range_type == "遠程":
+        stat_mod = attacker.stats.modifier("DEX")
     else:
         stat_mod = attacker.stats.modifier("STR")
-    attack_roll = roll("1d20")
+    attack_roll = roll_d20(mode)
     total = attack_roll + stat_mod + attacker.proficiency_bonus
     return total >= target.ac, total
 
@@ -53,20 +120,33 @@ def make_saving_throw(character: Character, stat: str, dc: int) -> tuple[bool, i
     return total >= dc, total
 
 
+def _lookup_char(key: str, world_state: WorldState):
+    """Look up character by ID first, then by display name (arbiter may return either)."""
+    char = world_state.characters.get(key)
+    if char is None:
+        char = next((c for c in world_state.characters.values() if c.name == key), None)
+    return char
+
+
 def execute_action(action: dict, world_state: WorldState) -> dict:
     """Execute a parsed action JSON from the arbiter. Returns a result summary dict."""
     t = action.get("type")
 
     # ── ATTACK ────────────────────────────────────────────────────────────────
     if t == "ATTACK":
-        attacker = world_state.characters.get(action.get("attacker", ""))
-        target   = world_state.characters.get(action.get("target",   ""))
+        attacker = _lookup_char(action.get("attacker", ""), world_state)
+        target   = _lookup_char(action.get("target",   ""), world_state)
         if not attacker or not target:
             return {"type": "ERROR", "message": "找不到攻擊者或目標"}
         if not target.is_alive():
             return {"type": "ERROR", "message": f"{target.name} 已倒下，無法攻擊"}
 
         weapon = attacker.get_weapon(action.get("weapon", ""))
+
+        # Distance / range gate
+        in_range, reason, range_mode = attack_range_check(attacker, target, weapon)
+        if not in_range:
+            return {"type": "ERROR", "message": reason}
 
         # Consume ammo for ranged weapons
         if weapon.ammo:
@@ -82,7 +162,11 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
         else:
             dmg_mod = attacker.stats.modifier("STR")
 
-        hit, roll_total = resolve_attack(attacker, target, weapon)
+        # Advantage / disadvantage compose: target dodging → disadvantage; range_mode also contributes
+        target_dodging = "dodging" in target.status_effects
+        mode = combine_advantage(range_mode, "disadvantage" if target_dodging else "normal")
+
+        hit, roll_total = resolve_attack(attacker, target, weapon, mode=mode)
         result = {
             "type":          "ATTACK",
             "attacker_name": attacker.name,
@@ -91,6 +175,7 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
             "roll":          roll_total,
             "target_ac":     target.ac,
             "hit":           hit,
+            "advantage_mode": mode,
         }
         if hit:
             base_dmg = roll(weapon.damage_dice)
@@ -108,7 +193,7 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
 
     # ── AOE ───────────────────────────────────────────────────────────────────
     if t == "AOE":
-        attacker   = world_state.characters.get(action.get("attacker", ""))
+        attacker   = _lookup_char(action.get("attacker", ""), world_state)
         target_ids = action.get("targets", [])
         item_name  = action.get("item", "")
         damage_dice = action.get("damage_dice", "1d6")
@@ -122,7 +207,7 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
 
         target_results = []
         for tid in target_ids:
-            target = world_state.characters.get(tid)
+            target = _lookup_char(tid, world_state)
             if not target or not target.is_alive():
                 continue
             success, save_roll = make_saving_throw(target, save_stat, save_dc)
@@ -157,7 +242,7 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
 
     # ── USE_ITEM ──────────────────────────────────────────────────────────────
     if t == "USE_ITEM":
-        char = world_state.characters.get(action.get("character", ""))
+        char = _lookup_char(action.get("character", ""), world_state)
         if not char:
             return {"type": "ERROR", "message": "找不到角色"}
         item_name = action.get("item", "")
@@ -169,7 +254,7 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
 
         if c.effect_type == "heal":
             target_id = action.get("target", action.get("character", ""))
-            target = world_state.characters.get(target_id, char)
+            target = _lookup_char(target_id, world_state) or char
             healed = apply_heal(target, c.effect_value)
             c.quantity -= 1
             return {
@@ -193,7 +278,7 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
 
     # ── ROLL ──────────────────────────────────────────────────────────────────
     if t == "ROLL":
-        char = world_state.characters.get(action.get("character", ""))
+        char = _lookup_char(action.get("character", ""), world_state)
         if not char:
             return {"type": "ERROR", "message": "找不到角色"}
         stat = action.get("stat", "DEX").upper()
@@ -211,15 +296,85 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
 
     # ── MOVE ──────────────────────────────────────────────────────────────────
     if t == "MOVE":
+        char = _lookup_char(action.get("character", ""), world_state)
+        if not char:
+            return {"type": "ERROR", "message": "找不到角色"}
+        # Reverse-lookup the canonical char_id so we can determine the actor's side
+        char_id = next((cid for cid, c in world_state.characters.items() if c is char), None)
+        old_pos = char.position
+
+        # Resolve destination from one of three formats, in priority order:
+        #   1. direction ("advance"/"retreat") — preferred, side-aware
+        #   2. target_position (absolute)
+        #   3. delta_m (raw axis delta, legacy)
+        new_pos = None
+        if "direction" in action:
+            direction = str(action["direction"]).lower()
+            distance = abs(float(action.get("distance", MOVE_BUDGET_M)))
+            distance = min(distance, MOVE_BUDGET_M)
+            # Determine which way is "toward the enemy" for THIS actor
+            actor_in_party = (char_id is not None and world_state.is_party_ally(char_id))
+            opponents = []
+            for oid, other in world_state.characters.items():
+                if not other.is_alive():
+                    continue
+                other_in_party = world_state.is_party_ally(oid)
+                if actor_in_party:
+                    if other.is_npc and other.attitude == 0:
+                        opponents.append(other)
+                else:
+                    if other_in_party:
+                        opponents.append(other)
+            if opponents:
+                avg_opp = sum(o.position for o in opponents) / len(opponents)
+                toward_sign = 1 if avg_opp > old_pos else (-1 if avg_opp < old_pos else 1)
+            else:
+                toward_sign = 1   # no opponents → default forward = +
+            if direction == "advance":
+                sign = toward_sign
+            elif direction == "retreat":
+                sign = -toward_sign
+            else:
+                return {"type": "ERROR", "message": f"未知 MOVE direction：{direction}"}
+            new_pos = old_pos + sign * distance
+        elif "target_position" in action:
+            new_pos = float(action["target_position"])
+        elif "delta_m" in action:
+            new_pos = old_pos + float(action["delta_m"])
+        else:
+            return {"type": "ERROR", "message": "MOVE 需要 direction、target_position 或 delta_m"}
+
+        # Enforce movement budget (clamp in the requested direction)
+        dist = abs(new_pos - old_pos)
+        if dist > MOVE_BUDGET_M + 1e-6:
+            direction_sign = 1 if new_pos > old_pos else -1
+            new_pos = old_pos + direction_sign * MOVE_BUDGET_M
+            dist = MOVE_BUDGET_M
+        char.position = new_pos
         return {
             "type":        "MOVE",
-            "character":   action.get("character", ""),
+            "character":   char.name,
+            "from_pos":    old_pos,
+            "to_pos":      new_pos,
+            "distance":    dist,
             "description": action.get("description", "移動"),
+        }
+
+    # ── DODGE ─────────────────────────────────────────────────────────────────
+    if t == "DODGE":
+        char = _lookup_char(action.get("character", ""), world_state)
+        if not char:
+            return {"type": "ERROR", "message": "找不到角色"}
+        if "dodging" not in char.status_effects:
+            char.status_effects.append("dodging")
+        return {
+            "type":      "DODGE",
+            "character": char.name,
         }
 
     # ── HIDE ──────────────────────────────────────────────────────────────────
     if t == "HIDE":
-        char = world_state.characters.get(action.get("character", ""))
+        char = _lookup_char(action.get("character", ""), world_state)
         if not char:
             return {"type": "ERROR", "message": "找不到角色"}
         success, total = make_saving_throw(char, "DEX", 12)
@@ -242,8 +397,14 @@ def format_result(player_description: str, result: dict, actor_name: str = "") -
 
     if t == "ATTACK":
         hit_str = "命中" if result["hit"] else "未命中"
+        mode = result.get("advantage_mode", "normal")
+        mode_str = ""
+        if mode == "advantage":
+            mode_str = "（優勢）"
+        elif mode == "disadvantage":
+            mode_str = "（劣勢）"
         lines.append(
-            f"使用 {result['weapon_name']}，攻擊骰 {result['roll']} vs AC {result['target_ac']}：{hit_str}"
+            f"使用 {result['weapon_name']}{mode_str}，攻擊骰 {result['roll']} vs AC {result['target_ac']}：{hit_str}"
         )
         if result["hit"]:
             alive    = "存活" if result.get("target_alive") else "倒下"
@@ -288,7 +449,16 @@ def format_result(player_description: str, result: dict, actor_name: str = "") -
         )
 
     elif t == "MOVE":
-        lines.append(f"移動：{result['description']}")
+        if "from_pos" in result and "to_pos" in result:
+            lines.append(
+                f"移動：{result['description']} "
+                f"({result['from_pos']:.1f}m → {result['to_pos']:.1f}m, 走了 {result['distance']:.1f}m)"
+            )
+        else:
+            lines.append(f"移動：{result['description']}")
+
+    elif t == "DODGE":
+        lines.append(f"{result['character']} 採取閃避姿態（下次被攻擊前，攻擊者擲劣勢）")
 
     elif t == "HIDE":
         outcome = "成功隱身" if result["success"] else "躲藏失敗"

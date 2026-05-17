@@ -36,6 +36,9 @@ class Character:
     status_effects: list = field(default_factory=list)
     proficiencies: list = field(default_factory=list)
     is_npc: bool = False
+    attitude: int = 2   # 0=敵意 1=戒備 2=中立 3=友好 4=信任（僅 NPC 使用）
+    hostile_reaction: str = "attack"   # 敵意時的反應："attack" 開戰 / "flee" 逃跑
+    position: float = 0.0   # 戰鬥中的位置（公尺）：0 = 我方原點、正向 = 敵方那側。戰鬥開始時 reset。
 
     @property
     def proficiency_bonus(self) -> int:
