@@ -107,6 +107,43 @@ def _strip_end_marker(text: str) -> tuple[str, bool]:
     return cleaned, ended
 
 
+def format_aria_combat_info(aria, ctx) -> str:
+    """Pre-format the combat status block shown to the human player.
+
+    Reads everything from a CombatContext (built by engine.combat) so the
+    function has no GameSession dependency.
+    """
+    from .engine.combat import CombatContext, MOVE_BUDGET_M
+    resources = ctx.resources if isinstance(ctx, CombatContext) else {"action": 1, "movement": MOVE_BUDGET_M}
+    action_status = "可用" if resources.get("action", 0) > 0 else "已用完"
+    move_left = resources.get("movement", 0.0)
+
+    weapon_parts = []
+    for w in aria.weapons:
+        if w.range_type == "近戰":
+            weapon_parts.append(f"{w.name}（近戰 {w.range_normal:.1f}m）")
+        else:
+            weapon_parts.append(
+                f"{w.name}（遠程 {w.range_normal:.0f}m / 最大 {w.range_long:.0f}m）"
+            )
+    weapons_line = "、".join(weapon_parts) or "無武器"
+
+    # enemies_str pre-formatted in ctx already includes positions & dodging
+    enemies_block = ctx.enemies_str if ctx.enemies_str != "無" else "  - 無"
+    if enemies_block != "  - 無":
+        # Convert "A、B" → bullet list
+        items = enemies_block.split("、")
+        enemies_block = "\n".join(f"  - {it}" for it in items)
+
+    return (
+        f"你的位置：{aria.position:.1f}m\n"
+        f"剩餘資源：動作 {action_status}、移動 {move_left:.1f}m\n"
+        f"你的武器：{weapons_line}\n"
+        f"敵人：\n{enemies_block}\n"
+        f"可選：攻擊、移動、閃避、用道具；輸入「結束」或「end」結束本回合"
+    )
+
+
 # ── GameSession ───────────────────────────────────────────────────────────────
 
 class GameSession:
@@ -564,54 +601,15 @@ class GameSession:
         consume_resources(resources, action, result)
         return (summary, ended)
 
-    def _aria_combat_info(self, aria, resources: dict | None = None) -> str:
-        """Pre-format the combat status block shown to the human player.
-
-        Includes Aria's own position, remaining resources, weapon ranges,
-        and each visible enemy's position + distance + dodge status.
-        """
-        ws = self.world_state
-        if resources is None:
-            resources = {"action": 1, "movement": MOVE_BUDGET_M}
-        action_status = "可用" if resources.get("action", 0) > 0 else "已用完"
-        move_left = resources.get("movement", 0.0)
-
-        weapon_parts = []
-        for w in aria.weapons:
-            if w.range_type == "近戰":
-                weapon_parts.append(f"{w.name}（近戰 {w.range_normal:.1f}m）")
-            else:
-                weapon_parts.append(
-                    f"{w.name}（遠程 {w.range_normal:.0f}m / 最大 {w.range_long:.0f}m）"
-                )
-        weapons_line = "、".join(weapon_parts) or "無武器"
-
-        enemy_lines = []
-        room_enemies = (ws.dungeon_map.current_room.alive_enemies(ws.characters).values()
-                        if ws.dungeon_map else [])
-        for e in room_enemies:
-            d = abs(e.position - aria.position)
-            dodging = "（閃避中）" if e.has_status("dodging") else ""
-            enemy_lines.append(
-                f"  - {e.name} HP {e.hp}/{e.max_hp}，位置 {e.position:.1f}m（距你 {d:.1f}m）{dodging}"
-            )
-        enemies_block = "\n".join(enemy_lines) or "  - 無"
-
-        return (
-            f"你的位置：{aria.position:.1f}m\n"
-            f"剩餘資源：動作 {action_status}、移動 {move_left:.1f}m\n"
-            f"你的武器：{weapons_line}\n"
-            f"敵人：\n{enemies_block}\n"
-            f"可選：攻擊、移動、閃避、用道具；輸入「結束」或「end」結束本回合"
-        )
-
     def _aria_sub_action(self, char, resources: dict):
         """One Aria sub-action. Returns (result_text, ended) tuple, or "quit"."""
         ws   = self.world_state
         aria = ws.characters["aria"]
         while not self._stop_flag.is_set():
             enemies = self._alive_enemies()
-            self._emit(CombatPrompt(aria, enemies, info_text=self._aria_combat_info(aria, resources)))
+            from .engine.combat import build_combat_context
+            ctx = build_combat_context("aria", aria, ws, resources, ws.combat.round_number if ws.combat else 0)
+            self._emit(CombatPrompt(aria, enemies, info_text=format_aria_combat_info(aria, ctx)))
             human_input = self._get_input()
 
             if human_input is None:
