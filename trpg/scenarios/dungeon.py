@@ -17,13 +17,14 @@ THOR_PERSONALITY = (
     "說話簡短有力，行動優先於思考，面對危險時第一個衝上去。"
 )
 
-THOR_TACTICS = """## 平常行為原則（探索、對話時適用）
+THOR_TACTICS_GENERAL = """## 平常行為原則（探索、對話時適用）
 - 環視場景：若房裡有比你現用武器更合適的兵器（對遠程敵人時撿弓、敵人多時撿火瓶），戰鬥結束後撿起、適時換裝
 - 對 NPC 不老實或藏匿情報：你體格高大、聲音渾厚，**主動嘗試威嚇**（「不說我就讓你說」）——不要只當沉默後援讓凱恩單打獨鬥
 - 探索中若有明確下一步，主動建議：「往北」「先回去找老柯」「檢查那個寶箱」
 - 隊友（凱恩）已經在發起社交時，你選擇 [SILENT]，不搶話；但隊友被攻擊或威脅時，第一個衝出去護衛
+"""
 
-## 戰鬥行為原則（戰鬥中 sub-action 決策時適用）
+THOR_TACTICS_COMBAT = """## 戰鬥行為原則（戰鬥中 sub-action 決策時適用）
 - 戰鬥中分階段：
   - HP > 50%：衝鋒主攻——這個 sub-action 先靠近，下個 sub-action 再揮砍
   - HP 30~50%：考慮閃避（「我專注防禦」→ 對方擲劣勢）或拋擲手斧拉節奏
@@ -41,13 +42,14 @@ CIVILIAN_PERSONALITY = (
     "如果對方粗魯或恐嚇你，你會更加恐懼，閉口不言。"
 )
 
-CIVILIAN_TACTICS = """## 平常行為原則（探索、對話時適用）
+CIVILIAN_TACTICS_GENERAL = """## 平常行為原則（探索、對話時適用）
 - 採藥人本能：房間裡若提到藥草、植物、菌類，主動補一句「這個我認得 / 這個有毒」
 - 對話中對方友善時：可以主動補充你聽到的線索（顫抖地、不確定地），不必硬等對方問
 - 對方粗魯時：縮起來、不回應、結巴；不要編造資訊討好他們
 - 若加入隊伍跟著走，每進一個新房間可以表達緊張（「這裡好暗⋯⋯」），但不要每次都講
+"""
 
-## 戰鬥行為原則（戰鬥中 sub-action 決策時適用）
+CIVILIAN_TACTICS_COMBAT = """## 戰鬥行為原則（戰鬥中 sub-action 決策時適用）
 - 你不會打架、沒武器：**主動退到後排**（「我躲到索爾後面」），讓位置變遠離敵人
 - 被近戰敵人追上時：用閃避動作（「我抱頭蹲下」「我躲開」）撐到隊友幫忙
 - HP < 50% 直接 <FLEE>
@@ -289,13 +291,15 @@ GOBLIN_BOSS_PERSONALITY = (
 def build_npc_agents(world_state: WorldState, model: str,
                      base_url: str, backend: str) -> dict:
     """Build all NPC agents for this scenario. Add new NPCs here only."""
-    def _agent(cid, personality, tactics="", secrets=None, reveal=3, quests=None):
+    def _agent(cid, personality, tactics="", combat_tactics="",
+               secrets=None, reveal=3, quests=None):
         return NpcAgent(
             model=model,
             char_id=cid,
             character=world_state.characters[cid],
             personality=personality,
             tactics=tactics,
+            combat_tactics=combat_tactics,
             secrets=secrets,
             reveal_threshold=reveal,
             quests=quests,
@@ -306,7 +310,8 @@ def build_npc_agents(world_state: WorldState, model: str,
     civilian_quests = [q for q in world_state.quests.values() if q.giver_id == CIVILIAN_ID]
     return {
         CIVILIAN_ID:   _agent(CIVILIAN_ID, CIVILIAN_PERSONALITY,
-                              tactics=CIVILIAN_TACTICS,
+                              tactics=CIVILIAN_TACTICS_GENERAL,
+                              combat_tactics=CIVILIAN_TACTICS_COMBAT,
                               secrets=CIVILIAN_SECRETS, reveal=3,
                               quests=civilian_quests),
         "goblin_1":    _agent("goblin_1",    GOBLIN_GRUNT_PERSONALITY),

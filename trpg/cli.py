@@ -13,7 +13,7 @@ os.environ.setdefault("GGML_FLASH_ATTENTION", "0")
 import requests
 from .scenarios.dungeon import (
     build_world_state, build_npc_agents, OPENING_SCENE,
-    THOR_PERSONALITY, THOR_TACTICS,
+    THOR_PERSONALITY, THOR_TACTICS_GENERAL, THOR_TACTICS_COMBAT,
 )
 from .llm.gm_agent import GMAgent
 from .llm.tag_agent import TagAgent
@@ -108,7 +108,8 @@ def run_game() -> None:
                                   char_id="thor",
                                   character=world_state.characters["thor"],
                                   personality=THOR_PERSONALITY,
-                                  tactics=THOR_TACTICS,
+                                  tactics=THOR_TACTICS_GENERAL,
+                                  combat_tactics=THOR_TACTICS_COMBAT,
                                   world_state=world_state,
                                   think=THOR_THINK, show_thinking=THOR_SHOW_THINKING,
                                   options=THOR_OPTIONS, base_url=url, backend=bk),

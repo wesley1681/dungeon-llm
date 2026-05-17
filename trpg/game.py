@@ -60,7 +60,9 @@ class CombatEnd:
 class ExplorationPrompt:
     aria: Any
     gm_text: str
-    thor_text: str
+    # Other PCs' remarks this turn, keyed by display name. Empty when no
+    # other PCs spoke before the human's slot (eg. solo party).
+    prior_remarks: dict[str, str] = field(default_factory=dict)
 
 @dataclass
 class CombatPrompt:
@@ -70,7 +72,6 @@ class CombatPrompt:
 
 @dataclass
 class ConversationPrompt:
-    npc_id: str
     npc_name: str
     aria: Any
     attitude_label: str = ""
@@ -300,30 +301,31 @@ class GameSession:
                 self._emit(GameOver(f"{char.name} 倒下了！遊戲結束。"))
                 return True, False
 
-        # ── Thor ──────────────────────────────────────────────────────────────
-        def _thor_chunk(c, thinking=False):
-            self._emit(StreamChunk("thor", c, thinking))
-
-        thor_text = self.thor_agent.generate(
-            nudge="現在請以索爾的身份描述你的下一步——做什麼動作、看什麼、或對隊友說什麼。",
-            on_chunk=_thor_chunk,
-        )
-        ws.log_event("thor", thor_text)
-        ws.event_log.append(f"{ws.characters['thor'].name}：{thor_text}")
-
-        # ── Player prompt ─────────────────────────────────────────────────────
-        self._emit(ExplorationPrompt(ws.characters["aria"], gm_text, thor_text))
-        player_input = self._get_input()
-
-        if player_input is None or player_input.lower() == "quit":
-            self._emit(GameOver("冒險結束。再見！"))
-            return True, False
-
-        ws.log_event("aria", player_input)
-        ws.event_log.append(f"{ws.characters['aria'].name}：{player_input}")
-        thor_name = ws.characters["thor"].name
-        aria_name = ws.characters["aria"].name
-        self._tag_actions = [f"{thor_name}：{thor_text}", f"{aria_name}：{player_input}"]
+        # ── PC turns ──────────────────────────────────────────────────────────
+        # Iterate ws.pc_ids in order. Each controller decides how to fill the
+        # slot (LLM PC streams generated text, HumanController emits
+        # ExplorationPrompt and blocks for input). Followers — recruited NPCs
+        # in party_ids but NOT in pc_ids — are silent automatically.
+        prior_remarks: dict[str, str] = {}
+        tag_actions: list[str] = []
+        for cid in ws.pc_ids:
+            char = ws.characters.get(cid)
+            ctrl = self.controllers.get(cid)
+            if char is None or ctrl is None or not char.is_alive():
+                continue
+            output = ctrl.take_exploration_turn(
+                char, gm_text=gm_text, prior_remarks=prior_remarks,
+            )
+            if output.quit:
+                self._emit(GameOver("冒險結束。再見！"))
+                return True, False
+            if not output.text:
+                continue
+            ws.log_event(cid, output.text)
+            ws.event_log.append(f"{char.name}：{output.text}")
+            prior_remarks[char.name] = output.text
+            tag_actions.append(f"{char.name}：{output.text}")
+        self._tag_actions = tag_actions
         return False, False
 
     # ── Combat ────────────────────────────────────────────────────────────────
@@ -531,15 +533,16 @@ class GameSession:
     def _run_conversation(self, npc_id: str) -> ConversationOutcome:
         """Multi-turn NPC conversation. Returns ConversationOutcome flags for the main loop.
 
-        Conversation lines are pushed to the unified narrative_log; the NPC,
-        Thor, and Aria all read their filtered view of it.
+        Conversation lines are pushed to the unified narrative_log. NPC speech
+        flows through LLMNpcController.take_npc_opening/take_npc_response; PC
+        speech flows through each pc_ids controller's take_conversation_turn
+        (LLM PCs may choose [SILENT]; humans block for input).
         """
         outcome   = ConversationOutcome()
         ws        = self.world_state
         npc_agent = self.npc_agents[npc_id]
+        npc_ctrl  = self.controllers[npc_id]
         npc_char  = ws.characters[npc_id]
-        aria_name = ws.characters["aria"].name
-        thor_name = ws.characters["thor"].name
 
         # Approach cue: re-entry uses a different opening prompt
         prior = [e for e in ws.narrative_log if e["speaker"] == npc_id]
@@ -548,59 +551,47 @@ class GameSession:
         else:
             ws.log_event("system", f"（冒險者向 {npc_char.name} 走近，看著他）")
 
-        # ── NPC opening (skip attitude marker — no real interaction yet) ──────
-        npc_agent._skip_marker = True
-        npc_text = npc_agent.generate(
-            nudge=f"## 現在請\n以 {npc_char.name} 的身份，根據以上歷史和當前態度，"
-                  "用第一人稱繁體中文簡短回應走近的冒險者（開場第一句）。",
-            on_chunk=lambda c, thinking=False: self._emit(
-                StreamChunk("npc_talk", c, actor=npc_char.name)
-            ),
-        )
+        # ── NPC opening ───────────────────────────────────────────────────────
+        npc_text = npc_ctrl.take_npc_opening(npc_char)
         ws.log_event(npc_id, npc_text)
 
         while not self._stop_flag.is_set():
-            # ── Thor sees the conversation so far, decides whether to speak ───
-            def _thor_chunk(c, thinking=False):
-                self._emit(StreamChunk("thor", c, thinking))
+            # ── Each PC takes a conversation turn (LLM may go silent, human
+            #     blocks until input or "離開") ───────────────────────────────
+            pc_lines: list[str] = []
+            for cid in ws.pc_ids:
+                char = ws.characters.get(cid)
+                ctrl = self.controllers.get(cid)
+                if char is None or ctrl is None or not char.is_alive():
+                    continue
+                output = ctrl.take_conversation_turn(
+                    char, npc_char, npc_agent.attitude_label,
+                )
+                if output.quit:
+                    outcome.game_over = True
+                    return outcome
+                if output.leave:
+                    self._emit(StatusMessage(f"你結束了與 {npc_char.name} 的對話。"))
+                    ws.log_event("system", f"（{char.name} 離開了）")
+                    return outcome
+                if output.silent or not output.text:
+                    continue
+                ws.log_event(cid, output.text)
+                pc_lines.append(f"{char.name}：{output.text}")
 
-            nudge = (
-                f"現在輪到你（{thor_name}）。"
-                "如果你有話要說，直接說出來；如果選擇保持沉默，輸出 [SILENT]。"
-            )
-            thor_text = self.thor_agent.generate(nudge=nudge, on_chunk=_thor_chunk)
-            spoke = "[SILENT]" not in thor_text.upper() and thor_text.strip() != ""
-            if spoke:
-                ws.log_event("thor", thor_text.strip())
+            if not pc_lines:
+                # All PCs silent (rare — only happens when no human PC is
+                # present and every LLM PC emitted [SILENT]). Loop back so
+                # the NPC isn't asked to respond to silence.
+                continue
 
-            # ── Player input ──────────────────────────────────────────────────
-            self._emit(ConversationPrompt(
-                npc_id, npc_char.name, ws.characters["aria"],
-                attitude_label=npc_agent.attitude_label,
-            ))
-            player_input = self._get_input()
-
-            if player_input is None:
-                outcome.game_over = True
-                return outcome
-            if player_input.lower() in ("離開", "結束", "quit"):
-                self._emit(StatusMessage(f"你結束了與 {npc_char.name} 的對話。"))
-                ws.log_event("system", f"（{aria_name} 離開了）")
-                break
-
-            ws.log_event("aria", player_input)
-
-            # ── Social skill check (after both Thor + Aria have spoken) ───────
-            combined = (
-                f"{thor_name}：{thor_text.strip()}\n{aria_name}：{player_input}"
-                if spoke
-                else f"{aria_name}：{player_input}"
-            )
+            # ── Social skill check on combined PC speech this round ───────────
+            combined = "\n".join(pc_lines)
             check = self._run_social_check(combined, npc_agent, npc_id)
             if check and check[0] == "attack":
-                ws.log_event("system", f"（{aria_name} 對 {npc_char.name} 發動攻擊）")
+                ws.log_event("system", f"（冒險者 對 {npc_char.name} 發動攻擊）")
                 self._emit(StreamChunk("npc_talk",
-                    f"\n（{aria_name} 對 {npc_char.name} 發動攻擊）\n", actor="系統"))
+                    f"\n（冒險者 對 {npc_char.name} 發動攻擊）\n", actor="系統"))
                 ok, errors = execute_all_tags(f"[ATTACK_NPC: {npc_id}]", ws)
                 self._emit(TagResult(ok, errors))
                 self._check_quests()
@@ -612,14 +603,8 @@ class GameSession:
                 ws.log_event("system", social_note)
                 self._emit(StreamChunk("npc_talk", f"\n{social_note}\n", actor="系統"))
 
-            # ── NPC reads log, responds ───────────────────────────────────────
-            npc_text = npc_agent.generate(
-                nudge=f"## 現在請\n以 {npc_char.name} 的身份，根據以上對話歷史和當前態度，"
-                      "用第一人稱繁體中文簡短回應對方剛才說的話。",
-                on_chunk=lambda c, thinking=False: self._emit(
-                    StreamChunk("npc_talk", c, actor=npc_char.name)
-                ),
-            )
+            # ── NPC response ──────────────────────────────────────────────────
+            npc_text = npc_ctrl.take_npc_response(npc_char)
             ws.log_event(npc_id, npc_text)
 
             # ── Recruit decision — handle JOIN / DECLINE ──────────────────────

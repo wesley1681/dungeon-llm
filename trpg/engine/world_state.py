@@ -38,8 +38,14 @@ class WorldState:
     pending_conversation: str = ""  # npc_id to enter conversation with after GM narration
     quests: dict = field(default_factory=dict)   # str → Quest
     party_ids: list = field(default_factory=lambda: ["aria", "thor"])
-    # Characters currently following the party. PCs are always in this list;
-    # NPCs join via [RECRUIT] and leave on death / attack.
+    # Characters currently moving with the party (spatial). Includes the
+    # active PCs AND any silent followers (e.g. RECRUIT'd civilians).
+    pc_ids: list = field(default_factory=lambda: ["thor", "aria"])
+    # Subset of party that actively takes turns — exploration / conversation /
+    # combat initiative. Order is iteration order (Thor first, Aria last so the
+    # human reacts to Thor's remark). Recruited NPCs are in party_ids but
+    # NOT here — they walk along silently. A future "promote" mechanism would
+    # add a follower to this list.
     narrative_log: list = field(default_factory=list)
     # Each entry: {"speaker": str, "text": str, "room_id": str|None, "present": list[str]}
     # speaker is a char_id, or "gm", or "system".

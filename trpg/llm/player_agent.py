@@ -33,6 +33,7 @@ class PlayerAgent:
     def __init__(self, model: str, char_id: str, character: Character,
                  personality: str, world_state: WorldState,
                  tactics: str = "",
+                 combat_tactics: str = "",
                  think: bool = False, show_thinking: bool = False,
                  options: dict = None,
                  base_url: str = OLLAMA_URL, backend: str = "ollama"):
@@ -40,7 +41,13 @@ class PlayerAgent:
         self.char_id = char_id
         self.character = character
         self.personality = personality
+        # `tactics` is the always-on guidance (exploration / conversation).
+        # `combat_tactics` is added only when the combat controller calls
+        # generate() — never appears in non-combat prompts. The agent itself
+        # has no notion of mode; LLMPlayerController reads combat_tactics
+        # off self and injects it into the nudge.
         self.tactics = tactics
+        self.combat_tactics = combat_tactics
         self.world_state = world_state
         self.think = think
         self.show_thinking = show_thinking

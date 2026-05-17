@@ -9,7 +9,7 @@ import gradio as gr
 
 from .scenarios.dungeon import (
     build_world_state, build_npc_agents, OPENING_SCENE,
-    THOR_PERSONALITY, THOR_TACTICS,
+    THOR_PERSONALITY, THOR_TACTICS_GENERAL, THOR_TACTICS_COMBAT,
 )
 from .llm.gm_agent import GMAgent
 from .llm.tag_agent import TagAgent
@@ -75,7 +75,8 @@ def _init_game() -> dict:
                                   char_id="thor",
                                   character=world_state.characters["thor"],
                                   personality=THOR_PERSONALITY,
-                                  tactics=THOR_TACTICS,
+                                  tactics=THOR_TACTICS_GENERAL,
+                                  combat_tactics=THOR_TACTICS_COMBAT,
                                   world_state=world_state,
                                   think=THOR_THINK, show_thinking=THOR_SHOW_THINKING,
                                   options=THOR_OPTIONS),
@@ -242,11 +243,14 @@ def _consume_until_prompt(state, gm_msgs, thor_msgs, aria_msgs):
             if thor_msgs and thor_text:
                 thor_msgs[-1]["content"] = thor_text
 
-            # Aria panel: combined summary
-            aria_msgs.append({"role": "assistant",
-                               "content": (f"**GM：** {event.gm_text}\n\n"
-                                           f"**索爾：** {event.thor_text}\n\n"
-                                           f"{_aria_status(world_state)}")})
+            # Aria panel: combined summary — GM + each prior PC remark + status
+            remark_lines = "\n\n".join(f"**{name}：** {text}"
+                                       for name, text in event.prior_remarks.items())
+            summary = f"**GM：** {event.gm_text}"
+            if remark_lines:
+                summary += "\n\n" + remark_lines
+            summary += f"\n\n{_aria_status(world_state)}"
+            aria_msgs.append({"role": "assistant", "content": summary})
             yield gm_msgs[:], thor_msgs[:], aria_msgs[:], state, ""
             return  # stop — wait for player submit
 

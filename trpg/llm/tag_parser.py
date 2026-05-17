@@ -144,6 +144,24 @@ def _find_npc(key: str, ws: WorldState) -> tuple[str | None, object]:
     return None, None
 
 
+def _active_pcs_in_room(ws: WorldState, room) -> list[str]:
+    """ws.pc_ids filtered to alive members actually present in `room`.
+
+    Original PCs (is_npc=False) move with the party implicitly — always present
+    if alive. NPCs in pc_ids (only after a future promote-to-pc mechanism)
+    must also appear in room.npc_ids. Recruited followers (in party_ids but
+    NOT in pc_ids) are excluded — they don't roll initiative."""
+    result: list[str] = []
+    for cid in ws.pc_ids:
+        c = ws.characters.get(cid)
+        if not c or not c.is_alive():
+            continue
+        if c.is_npc and cid not in room.npc_ids:
+            continue
+        result.append(cid)
+    return result
+
+
 def _resolve_room_entry(room, ws: WorldState) -> str:
     """Dispatch hostile NPCs on room entry by their hostile_reaction.
 
@@ -169,10 +187,8 @@ def _resolve_room_entry(room, ws: WorldState) -> str:
         parts.append(f"{'、'.join(flee_names)} 見到你們便慌忙逃走")
 
     if attackers:
-        pc_ids = [cid for cid, c in ws.characters.items() if not c.is_npc]
-        party_npc_ids = [nid for nid in room.npc_ids
-                         if nid in ws.party_ids and ws.characters[nid].is_alive()]
-        ws.combat = combat.roll_initiative(ws, attackers + pc_ids + party_npc_ids)
+        active_pcs = _active_pcs_in_room(ws, room)
+        ws.combat = combat.roll_initiative(ws, attackers + active_pcs)
         attacker_names = "、".join(ws.characters[n].name for n in attackers)
         order = "、".join(
             ws.characters[n].name for n in ws.combat.initiative_order if n in ws.characters
@@ -192,7 +208,6 @@ def _dispatch(tag: str, args: str, ws: WorldState) -> str:
         char_ids = None
         if ws.dungeon_map:
             room = ws.dungeon_map.current_room
-            pc_ids = [cid for cid, c in ws.characters.items() if not c.is_npc]
             alive_enemy_ids = [
                 nid for nid in room.npc_ids
                 if nid in ws.characters
@@ -202,9 +217,7 @@ def _dispatch(tag: str, args: str, ws: WorldState) -> str:
             # No hostile NPCs in room → don't start combat
             if not alive_enemy_ids:
                 return "（當前房間無敵人，跳過先攻）"
-            party_npc_ids = [nid for nid in room.npc_ids
-                             if nid in ws.party_ids and ws.characters[nid].is_alive()]
-            char_ids = alive_enemy_ids + pc_ids + party_npc_ids
+            char_ids = alive_enemy_ids + _active_pcs_in_room(ws, room)
         state = combat.roll_initiative(ws, char_ids)
         ws.combat = state
         order = "、".join(
@@ -550,10 +563,7 @@ def _dispatch(tag: str, args: str, ws: WorldState) -> str:
             agent = _npc_agent_registry.get(npc_id) if _npc_agent_registry else None
             if agent is not None:
                 agent.in_party = False
-        pc_ids = [cid for cid, c in ws.characters.items() if not c.is_npc]
-        party_npc_ids = [nid for nid in room.npc_ids
-                         if nid in ws.party_ids and ws.characters[nid].is_alive()]
-        ws.combat = combat.roll_initiative(ws, [npc_id] + pc_ids + party_npc_ids)
+        ws.combat = combat.roll_initiative(ws, [npc_id] + _active_pcs_in_room(ws, room))
         order = "、".join(ws.characters[n].name for n in ws.combat.initiative_order if n in ws.characters)
         return f"{char.name} 變為敵人！先攻順序：{order}"
 

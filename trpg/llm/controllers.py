@@ -33,10 +33,26 @@ class ActorDecision:
     quit: bool = False      # quit the game (Human only)
 
 
-class ActorController:
-    """Base class. All controllers implement take_sub_action; on_invalid_action
-    is optional and defaults to None (give up the sub-action)."""
+@dataclass
+class ExplorationOutput:
+    text: str = ""        # actor's narration / action — caller logs and uses in tag_actions
+    quit: bool = False    # quit the game
 
+
+@dataclass
+class ConversationOutput:
+    text: str = ""        # what the actor said (empty if silent)
+    silent: bool = False  # actor explicitly chose silence — caller skips this slot
+    leave: bool = False   # end conversation
+    quit: bool = False    # quit the game
+
+
+class ActorController:
+    """Base class. All controllers implement take_sub_action; the non-combat
+    methods default to "this actor doesn't participate in that slot" so a
+    follower-style controller can omit them and stay silent automatically."""
+
+    # ── Combat (always implemented by participating actors) ─────────────────
     def take_sub_action(self, char, ctx: CombatContext) -> ActorDecision:
         raise NotImplementedError
 
@@ -44,6 +60,30 @@ class ActorController:
         """Called when arbiter rejects the controller's description.
         Return a fresh ActorDecision to retry, or None to drop this sub-action."""
         return None
+
+    # ── Exploration / conversation (overridden by PC-style controllers) ─────
+    def take_exploration_turn(self, char, *, gm_text: str = "",
+                              prior_remarks: dict[str, str] | None = None
+                              ) -> ExplorationOutput:
+        """Returns an ExplorationOutput. Default is a no-op (silent) — used by
+        non-PC controllers (followers, enemy NPCs)."""
+        return ExplorationOutput()
+
+    def take_conversation_turn(self, char, npc_char, attitude_label: str
+                               ) -> ConversationOutput:
+        """Returns a ConversationOutput. Default is silent — used by non-PC
+        controllers."""
+        return ConversationOutput(silent=True)
+
+    # ── NPC-side conversation methods (only LLMNpcController implements) ────
+    def take_npc_opening(self, char) -> str:
+        """Generate the NPC's opening line when a conversation starts. Default
+        empty string — only LLMNpcController implements this."""
+        return ""
+
+    def take_npc_response(self, char) -> str:
+        """Generate the NPC's reply after the PCs spoke. Default empty."""
+        return ""
 
 
 # ── Human ────────────────────────────────────────────────────────────────────
@@ -98,6 +138,45 @@ class HumanController(ActorController):
         if text.lower() == "quit":
             return ActorDecision(quit=True)
         return ActorDecision(description=text)
+
+    # ── Non-combat (UI-driven) ──────────────────────────────────────────────
+    def take_exploration_turn(self, char, *, gm_text: str = "",
+                              prior_remarks: dict[str, str] | None = None
+                              ) -> ExplorationOutput:
+        from ..game import ExplorationPrompt
+        self.emit_event(ExplorationPrompt(
+            aria=char, gm_text=gm_text,
+            prior_remarks=dict(prior_remarks or {}),
+        ))
+        while True:
+            raw = self.get_input()
+            if raw is None:
+                return ExplorationOutput(quit=True)
+            text = raw.strip()
+            if text.lower() == "quit":
+                return ExplorationOutput(quit=True)
+            if text:
+                return ExplorationOutput(text=text)
+            # empty input — re-prompt by looping (caller's UI typically
+            # handles the re-prompt itself, but block here defensively)
+
+    def take_conversation_turn(self, char, npc_char, attitude_label: str
+                               ) -> ConversationOutput:
+        from ..game import ConversationPrompt
+        self.emit_event(ConversationPrompt(
+            npc_name=npc_char.name, aria=char,
+            attitude_label=attitude_label,
+        ))
+        while True:
+            raw = self.get_input()
+            if raw is None:
+                return ConversationOutput(quit=True)
+            text = raw.strip()
+            if not text:
+                continue
+            if text.lower() in ("離開", "結束", "quit"):
+                return ConversationOutput(leave=True)
+            return ConversationOutput(text=text)
 
 
 # ── LLM-driven controllers ───────────────────────────────────────────────────
@@ -167,6 +246,36 @@ class LLMPlayerController(ActorController):
         feedback = reason + (f"（{suggestion}）" if suggestion else "")
         return self._generate(self._last_char, self._last_ctx, error_feedback=feedback)
 
+    # ── Non-combat ──────────────────────────────────────────────────────────
+    def take_exploration_turn(self, char, *, gm_text: str = "",
+                              prior_remarks: dict[str, str] | None = None
+                              ) -> ExplorationOutput:
+        from ..game import StreamChunk
+        nudge = (f"## 現在請\n以 {char.name} 的身份描述你的下一步——"
+                 "做什麼動作、看什麼、或對隊友說什麼。")
+        text = self.agent.generate(
+            nudge=nudge,
+            on_chunk=lambda c, thinking=False: self.emit_event(
+                StreamChunk(self.agent.char_id, c, thinking)
+            ),
+        )
+        return ExplorationOutput(text=text)
+
+    def take_conversation_turn(self, char, npc_char, attitude_label: str
+                               ) -> ConversationOutput:
+        from ..game import StreamChunk
+        nudge = (f"現在輪到你（{char.name}），對方是 {npc_char.name}（態度：{attitude_label}）。"
+                 "如果有話要說直接說出來；如果選擇保持沉默，輸出 [SILENT]。")
+        text = self.agent.generate(
+            nudge=nudge,
+            on_chunk=lambda c, thinking=False: self.emit_event(
+                StreamChunk(self.agent.char_id, c, thinking)
+            ),
+        )
+        if "[SILENT]" in text.upper() or not text.strip():
+            return ConversationOutput(silent=True)
+        return ConversationOutput(text=text.strip())
+
 
 class LLMNpcController(ActorController):
     """Wraps an NpcAgent in combat mode. Builds the combat nudge here (tactics
@@ -231,3 +340,28 @@ class LLMNpcController(ActorController):
         self._retries_left -= 1
         feedback = reason + (f"（{suggestion}）" if suggestion else "")
         return self._generate(self._last_char, self._last_ctx, error_feedback=feedback)
+
+    # ── Conversation (NPC side) ─────────────────────────────────────────────
+    def take_npc_opening(self, char) -> str:
+        from ..game import StreamChunk
+        nudge = (f"## 現在請\n以 {char.name} 的身份，根據以上歷史和當前態度，"
+                 "用第一人稱繁體中文簡短回應走近的冒險者（開場第一句）。")
+        # Opening = first interaction; no prior signal to map to [+/-].
+        self.agent._skip_marker = True
+        return self.agent.generate(
+            nudge=nudge,
+            on_chunk=lambda c, thinking=False: self.emit_event(
+                StreamChunk("npc_talk", c, actor=char.name)
+            ),
+        )
+
+    def take_npc_response(self, char) -> str:
+        from ..game import StreamChunk
+        nudge = (f"## 現在請\n以 {char.name} 的身份，根據以上對話歷史和當前態度，"
+                 "用第一人稱繁體中文簡短回應對方剛才說的話。")
+        return self.agent.generate(
+            nudge=nudge,
+            on_chunk=lambda c, thinking=False: self.emit_event(
+                StreamChunk("npc_talk", c, actor=char.name)
+            ),
+        )
