@@ -22,12 +22,11 @@ class ArbiterAgent:
         actor_id: str,
         actor_name: str,
         available_targets: dict[str, str],  # {id: name}，只含存活目標
-        resources: dict,                    # {"action": bool, "bonus_action": bool, "movement": int}
+        resources: dict,                    # {"action": int, "movement": float}
         actor_char=None,                    # Character 物件，提供武器/消耗品列表
         world_state=None,                   # 用來查目標位置 / 計算距離
     ) -> dict:
-        action_str  = "可用" if resources.get("action")       else "已用完"
-        bonus_str   = "可用" if resources.get("bonus_action") else "已用完"
+        action_str  = "可用" if resources.get("action") else "已用完"
         move_str    = f"{resources.get('movement', 0)} 公尺"
 
         # Build weapon / consumable lines with range info
@@ -79,7 +78,7 @@ class ArbiterAgent:
             f"可用治療道具：{items_str}\n"
             f"可用投擲物（AOE）：{throws_str}\n"
             f"可攻擊目標：\n  {targets_str}\n"
-            f"剩餘資源：動作 {action_str}、附贈動作 {bonus_str}、移動距離 {move_str}\n"
+            f"剩餘資源：動作 {action_str}、移動距離 {move_str}\n"
         )
 
         messages = [

@@ -11,7 +11,10 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .engine.world_state import WorldState
-from .engine.combat import execute_action, format_result, make_saving_throw
+from .engine.combat import (
+    execute_action, format_result, make_saving_throw,
+    consume_resources, MOVE_BUDGET_M,
+)
 from .engine.quests import check_quest_progress, objective_progress_str
 from .engine.status import tick_status_effects
 from .llm.tag_parser import execute_all_tags, set_npc_agent_registry
@@ -91,8 +94,6 @@ _STOP = object()
 # ── Combat turn structure ─────────────────────────────────────────────────────
 
 _END_RE = re.compile(r'<\s*END\s*>', re.IGNORECASE)
-# Action types that consume the per-turn "action" slot
-_ACTION_CONSUMING_TYPES = {"ATTACK", "AOE", "USE_ITEM", "ROLL", "DODGE", "HIDE"}
 # Inputs from human player that mean "end my turn"
 _ARIA_END_INPUTS = {"end", "結束", "結束回合", "我這就好", "我這回合到這"}
 # Safety cap: max sub-actions per character per round (prevents runaway loops)
@@ -333,7 +334,7 @@ class GameSession:
                 tick_status_effects(char, "self_turn_start", combat.round_number)
 
                 # Per-turn resource budget. Sub-actions decrement these.
-                resources = {"action": 1, "bonus_action": 1, "movement": 9.0}
+                resources = {"action": 1, "movement": MOVE_BUDGET_M}
                 stop_round = self._take_combat_turn(cid, char, resources, combat.round_number, log)
 
                 # Phase: end of this character's turn
@@ -407,8 +408,7 @@ class GameSession:
 
             if ended:
                 return ""
-            # Auto-end if main resources exhausted (bonus_action ignored —
-            # not yet wired to any action type)
+            # Auto-end if all per-turn resources are exhausted
             if (resources.get("action", 0) <= 0
                 and resources.get("movement", 0) <= 1e-6):
                 return ""
@@ -518,7 +518,7 @@ class GameSession:
             return ("", ended)
 
         a_type = action.get("type", "").upper()
-        if a_type in _ACTION_CONSUMING_TYPES and resources.get("action", 0) <= 0:
+        if "action" in action.get("consumes", []) and resources.get("action", 0) <= 0:
             self._emit(StatusMessage(f"{char.name} 本回合動作已用完，跳過此 {a_type}"))
             return ("", ended)
 
@@ -529,16 +529,8 @@ class GameSession:
         summary = format_result(desc, result, char.name)
         self._emit(ActionResult(char.name, summary, debug, valid=True))
         ws.log_event("system", summary)
-        self._consume_resources(resources, a_type, result)
+        consume_resources(resources, action, result)
         return (summary, ended)
-
-    def _consume_resources(self, resources: dict, a_type: str, result: dict) -> None:
-        """Decrement per-turn budget based on what was just executed."""
-        if a_type in _ACTION_CONSUMING_TYPES:
-            resources["action"] = 0
-        elif a_type == "MOVE":
-            dist = result.get("distance", 0)
-            resources["movement"] = max(0.0, resources.get("movement", 0.0) - dist)
 
     def _thor_sub_action(self, char, resources: dict,
                          round_num: int) -> tuple[str, bool]:
@@ -598,7 +590,7 @@ class GameSession:
             return ("", ended)
 
         a_type = action.get("type", "").upper()
-        if a_type in _ACTION_CONSUMING_TYPES and resources.get("action", 0) <= 0:
+        if "action" in action.get("consumes", []) and resources.get("action", 0) <= 0:
             self._emit(StatusMessage(f"{char.name} 本回合動作已用完"))
             return ("", ended)
 
@@ -609,7 +601,7 @@ class GameSession:
         summary = format_result(desc, result, char.name)
         self._emit(ActionResult(char.name, summary, debug, valid=True))
         ws.log_event("system", summary)
-        self._consume_resources(resources, a_type, result)
+        consume_resources(resources, action, result)
         return (summary, ended)
 
     def _aria_combat_info(self, aria, resources: dict | None = None) -> str:
@@ -620,7 +612,7 @@ class GameSession:
         """
         ws = self.world_state
         if resources is None:
-            resources = {"action": 1, "bonus_action": 1, "movement": 9.0}
+            resources = {"action": 1, "movement": MOVE_BUDGET_M}
         action_status = "可用" if resources.get("action", 0) > 0 else "已用完"
         move_left = resources.get("movement", 0.0)
 
@@ -687,7 +679,7 @@ class GameSession:
                 continue
 
             a_type = action.get("type", "").upper()
-            if a_type in _ACTION_CONSUMING_TYPES and resources.get("action", 0) <= 0:
+            if "action" in action.get("consumes", []) and resources.get("action", 0) <= 0:
                 self._emit(StatusMessage("動作已用完，請改用移動或輸入「結束」結束回合"))
                 continue
 
@@ -699,7 +691,7 @@ class GameSession:
             self._emit(ActionResult(aria.name, summary, debug, valid=True))
             ws.log_event("system", summary)
             ws.event_log.append(f"凱恩：{human_input}")
-            self._consume_resources(resources, a_type, result)
+            consume_resources(resources, action, result)
             return (summary, False)
 
         return "quit"
