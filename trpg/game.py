@@ -13,6 +13,7 @@ from typing import Any
 from .engine.world_state import WorldState
 from .engine.combat import execute_action, format_result, make_saving_throw
 from .engine.quests import check_quest_progress, objective_progress_str
+from .engine.status import tick_status_effects
 from .llm.tag_parser import execute_all_tags, set_npc_agent_registry
 
 
@@ -291,6 +292,11 @@ class GameSession:
 
             if not enemies:
                 ws.combat.active = False
+                # Tick combat_end on all surviving combatants
+                for ccid in combat.initiative_order:
+                    c = ws.characters.get(ccid)
+                    if c and c.is_alive():
+                        tick_status_effects(c, "combat_end", combat.round_number)
                 # Cleanup: remove dead follower NPCs from party
                 for npc_id in list(ws.party_ids):
                     c = ws.characters.get(npc_id)
@@ -323,17 +329,34 @@ class GameSession:
                 if not char or not char.is_alive():
                     continue
 
-                # Dodge expires at the start of the dodger's next turn (D&D 5e rule)
-                if char.has_status("dodging"):
-                    char.remove_status("dodging")
+                # Phase: start of this character's turn
+                tick_status_effects(char, "self_turn_start", combat.round_number)
 
                 # Per-turn resource budget. Sub-actions decrement these.
                 resources = {"action": 1, "bonus_action": 1, "movement": 9.0}
                 stop_round = self._take_combat_turn(cid, char, resources, combat.round_number, log)
+
+                # Phase: end of this character's turn
+                tick_status_effects(char, "self_turn_end", combat.round_number)
                 if stop_round == "quit":
                     return log
                 if not self._alive_enemies() or not self._alive_pcs():
                     break
+
+            # Phase: end of round (after initiative cycle)
+            for ccid in combat.initiative_order:
+                c = ws.characters.get(ccid)
+                if c and c.is_alive():
+                    tick_status_effects(c, "round_end", combat.round_number)
+            # Mid-combat follower cleanup: dead NPCs leave the party immediately,
+            # so is_party_ally() returns false for them in the next round.
+            for npc_id in list(ws.party_ids):
+                c = ws.characters.get(npc_id)
+                if c and c.is_npc and not c.is_alive():
+                    ws.party_ids.remove(npc_id)
+                    agent = self.npc_agents.get(npc_id)
+                    if agent is not None:
+                        agent.in_party = False
 
         return log
 
