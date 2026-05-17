@@ -97,6 +97,26 @@ class ArbiterAgent:
         )
         return self._extract_json(content, player_action)
 
+    _CONSUMES_DEFAULT = {
+        "ATTACK": ["action"],
+        "AOE":    ["action"],
+        "USE_ITEM": ["action"],
+        "ROLL":   ["action"],
+        "DODGE":  ["action"],
+        "HIDE":   ["action"],
+        "MOVE":   ["movement"],
+    }
+
+    def _apply_defaults(self, action: dict) -> dict:
+        """Fill in `consumes` if missing for known valid action types.
+        Invalid actions are left untouched."""
+        if not action.get("valid"):
+            return action
+        t = action.get("type", "").upper()
+        if "consumes" not in action and t in self._CONSUMES_DEFAULT:
+            action["consumes"] = list(self._CONSUMES_DEFAULT[t])
+        return action
+
     def _extract_json(self, text: str, original_action: str) -> dict:
         # Strip markdown code fences (```json ... ```)
         cleaned = re.sub(r"```\w*", "", text).strip()
@@ -105,7 +125,6 @@ class ArbiterAgent:
         if start == -1:
             return self._fail(text)
 
-        # Walk forward with brace-counting to find the matching }
         depth = end = 0
         for i, ch in enumerate(cleaned[start:], start):
             if ch == "{":
@@ -118,16 +137,15 @@ class ArbiterAgent:
 
         if end:
             try:
-                return json.loads(cleaned[start:end])
+                return self._apply_defaults(json.loads(cleaned[start:end]))
             except json.JSONDecodeError:
                 pass
 
-        # Repair: strip trailing non-JSON garbage (e.g. ")" instead of "}") and close open braces
         fragment = re.sub(r"[,\s\)\]]*$", "", cleaned[start:])
         open_count = fragment.count("{") - fragment.count("}")
         if open_count > 0:
             try:
-                return json.loads(fragment + "}" * open_count)
+                return self._apply_defaults(json.loads(fragment + "}" * open_count))
             except json.JSONDecodeError:
                 pass
 

@@ -413,6 +413,24 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
     return {"type": "ERROR", "message": f"未知行動類型：{t}"}
 
 
+def consume_resources(resources: dict, action: dict, result: dict) -> None:
+    """Decrement per-turn resource budget based on action.consumes declaration.
+
+    Resource slots understood:
+      'action'        — sets to 0 (one action per turn)
+      'bonus_action'  — sets to 0
+      'movement'      — subtracts result.get('distance', 0)
+    Unknown slots are silently ignored (reserved for future expansion).
+    """
+    for slot in action.get("consumes", []):
+        if slot == "action":
+            resources["action"] = 0
+        elif slot == "bonus_action":
+            resources["bonus_action"] = 0
+        elif slot == "movement":
+            resources["movement"] = max(0.0, resources.get("movement", 0.0) - result.get("distance", 0))
+
+
 def format_result(player_description: str, result: dict, actor_name: str = "") -> str:
     """Convert execute_action result into a text summary for the GM."""
     label = f"【{actor_name}的行動】" if actor_name else "【玩家行動】"
