@@ -88,6 +88,12 @@ class QuestComplete:
 class GameOver:
     reason: str
 
+@dataclass
+class ConversationOutcome:
+    game_over: bool = False
+    skip_next_gm: bool = False
+    triggered_combat: bool = False
+
 
 _STOP = object()
 
@@ -163,9 +169,9 @@ class GameSession:
 
         # TagAgent still receives raw action strings (it's stateless and doesn't read log).
         self._tag_actions: list[str] = []
-        # When a conversation ends with the player attacking, skip the next GM
-        # narration (combat narration handles it) so the GM doesn't hallucinate
-        # the kill before combat resolves it.
+        # Latch set by _run_conversation via ConversationOutcome.skip_next_gm and
+        # consumed exactly once at the top of the next _exploration_turn.
+        # Do not set this elsewhere — flow through ConversationOutcome instead.
         self._skip_next_gm: bool = False
 
     # ── Public API ────────────────────────────────────────────────────────────
@@ -256,8 +262,10 @@ class GameSession:
             npc_id = ws.pending_conversation
             ws.pending_conversation = ""
             if npc_id in self.npc_agents:
-                over = self._run_conversation(npc_id)
-                if over:
+                outcome = self._run_conversation(npc_id)
+                if outcome.skip_next_gm:
+                    self._skip_next_gm = True   # legacy flag, consumed next _exploration_turn
+                if outcome.game_over:
                     return True
                 return False
 
@@ -502,12 +510,13 @@ class GameSession:
 
     # ── NPC Conversation ──────────────────────────────────────────────────────
 
-    def _run_conversation(self, npc_id: str) -> bool:
-        """Multi-turn NPC conversation. Returns True if game should end.
+    def _run_conversation(self, npc_id: str) -> ConversationOutcome:
+        """Multi-turn NPC conversation. Returns ConversationOutcome flags for the main loop.
 
         Conversation lines are pushed to the unified narrative_log; the NPC,
         Thor, and Aria all read their filtered view of it.
         """
+        outcome   = ConversationOutcome()
         ws        = self.world_state
         npc_agent = self.npc_agents[npc_id]
         npc_char  = ws.characters[npc_id]
@@ -552,7 +561,8 @@ class GameSession:
             player_input = self._get_input()
 
             if player_input is None:
-                return True
+                outcome.game_over = True
+                return outcome
             if player_input.lower() in ("離開", "結束", "quit"):
                 self._emit(StatusMessage(f"你結束了與 {npc_char.name} 的對話。"))
                 ws.log_event("system", f"（{aria_name} 離開了）")
@@ -574,7 +584,8 @@ class GameSession:
                 ok, errors = execute_all_tags(f"[ATTACK_NPC: {npc_id}]", ws)
                 self._emit(TagResult(ok, errors))
                 self._check_quests()
-                self._skip_next_gm = True
+                outcome.skip_next_gm = True
+                outcome.triggered_combat = True
                 break
             if check and check[0] == "social":
                 social_note = check[1]
@@ -612,7 +623,8 @@ class GameSession:
                 self._emit(TagResult(ok, errors))
                 self._check_quests()
                 if action == "attack":
-                    self._skip_next_gm = True
+                    outcome.skip_next_gm = True
+                    outcome.triggered_combat = True
                 ws.log_event("system",
                     f"（{npc_char.name} {'發動攻擊' if action == 'attack' else '逃離現場'}）")
                 break
@@ -620,7 +632,7 @@ class GameSession:
         # Conversation finished. GM reads everything from the log on next turn;
         # TagAgent doesn't need conversation actions queued.
         self._tag_actions = []
-        return False
+        return outcome
 
     _SOCIAL_RE     = re.compile(r'\[SOCIAL:\s*(\w+)\s+<?(\w+)>?(?:\s+DC\d+)?\]', re.IGNORECASE)
     _ATTACK_NPC_RE = re.compile(r'\[ATTACK_NPC:\s*<?(\w+)>?\]', re.IGNORECASE)
