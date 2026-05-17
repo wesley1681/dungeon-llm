@@ -240,9 +240,16 @@ class LLMPlayerController(ActorController):
                           if self.agent.combat_tactics else "")
         spells_line = f"可用法術：{ctx.spells_str}\n" if ctx.spells_str else ""
         spell_option = (
-            "- 施法：「我對 [目標] 施展 [法術]」或「我把 [法術] 扔到 [座標]m 處」\n"
+            "- 施法（消耗動作）：「我對 [目標] 施展 [法術]」或「我把 [法術] 扔到 [座標]m 處」\n"
             "  （AOE 法術記得避開隊友和自己——可指定一個遠離盟友的座標當圓心）\n"
             if ctx.spells_str else ""
+        )
+        res = ctx.resources or {}
+        action_status = "可用" if res.get("action", 0) > 0 else "已用完"
+        movement_left = res.get("movement", 0.0)
+        resources_line = (
+            f"剩餘資源：動作 {action_status}、移動 {movement_left:.1f}m"
+            f"（每回合 1 個動作，移動可分次走完）\n"
         )
         return (
             f"{combat_tactics}"
@@ -251,14 +258,15 @@ class LLMPlayerController(ActorController):
             f"你的位置：{ctx.actor_position:.1f}m\n"
             f"武器：{ctx.weapons_str}\n"
             f"{spells_line}"
+            f"{resources_line}"
             f"盟友：{ctx.allies_str}\n"
             f"敵人：{ctx.enemies_str}\n"
             f"從下列**選一個** sub-action 輸出（不要組合）：\n"
-            f"- 攻擊：「我用 [武器] 攻擊 [敵人]」\n"
+            f"- 攻擊（消耗動作）：「我用 [武器] 攻擊 [敵人]」\n"
             f"{spell_option}"
-            f"- 移動：「我衝上去」「我後退」（單次最多 9m）\n"
-            f"- 閃避：「我閃避」「我專注防禦」\n"
-            f"- 躲藏：「我躲到 X 後面」\n"
+            f"- 移動（消耗移動）：「我衝上去」「我後退」（單次最多 9m）\n"
+            f"- 閃避（消耗動作）：「我閃避」「我專注防禦」\n"
+            f"- 躲藏（消耗動作）：「我躲到 X 後面」\n"
             f"- 結束本回合：單獨輸出 <END>"
         )
 
@@ -338,13 +346,20 @@ class LLMNpcController(ActorController):
                           if self.agent.combat_tactics else "")
         spells_line = f"可用法術：{ctx.spells_str}\n" if ctx.spells_str else ""
         spell_option = (
-            "- 施法：「我對 [目標] 施展 [法術]」或「我把 [法術] 扔到 [座標]m 處」\n"
+            "- 施法（消耗動作）：「我對 [目標] 施展 [法術]」或「我把 [法術] 扔到 [座標]m 處」\n"
             "  （AOE 法術記得避開隊友和自己——可指定一個遠離盟友的座標當圓心）\n"
             if ctx.spells_str else ""
         )
         reasoning_section = (
             _REASONING_INSTRUCTION
             if getattr(self.agent, "combat_reasoning", False) else ""
+        )
+        res = ctx.resources or {}
+        action_status = "可用" if res.get("action", 0) > 0 else "已用完"
+        movement_left = res.get("movement", 0.0)
+        resources_line = (
+            f"剩餘資源：動作 {action_status}、移動 {movement_left:.1f}m"
+            f"（每回合 1 個動作，移動可分次走完）\n"
         )
         return (
             f"{combat_tactics}"
@@ -353,14 +368,15 @@ class LLMNpcController(ActorController):
             f"你的位置：{ctx.actor_position:.1f}m\n"
             f"武器：{ctx.weapons_str}\n"
             f"{spells_line}"
+            f"{resources_line}"
             f"盟友：{ctx.allies_str}\n"
             f"敵人：{ctx.enemies_str}\n"
             f"從下列**選一個** sub-action 輸出（不要組合）：\n"
-            f"- 攻擊：「我用 [武器] 攻擊 [敵人]」\n"
+            f"- 攻擊（消耗動作）：「我用 [武器] 攻擊 [敵人]」\n"
             f"{spell_option}"
-            f"- 移動：「我衝上去」「我後退」（單次最多 9m）\n"
-            f"- 閃避：「我閃避」「我專注防禦」\n"
-            f"- 躲藏：「我躲到 X 後面」\n"
+            f"- 移動（消耗移動）：「我衝上去」「我後退」（單次最多 9m）\n"
+            f"- 閃避（消耗動作）：「我閃避」「我專注防禦」\n"
+            f"- 躲藏（消耗動作）：「我躲到 X 後面」\n"
             f"- 結束本回合：單獨輸出 <END>\n"
             f"逃跑：訊息結尾加 <FLEE>，立刻離開戰場。"
             f"{reasoning_section}"
