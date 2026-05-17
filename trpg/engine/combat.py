@@ -332,12 +332,26 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
         char_id = next((cid for cid, c in world_state.characters.items() if c is char), None)
         old_pos = char.position
 
-        # Resolve destination from one of three formats, in priority order:
-        #   1. direction ("advance"/"retreat") — preferred, side-aware
-        #   2. target_position (absolute)
-        #   3. delta_m (raw axis delta, legacy)
+        # Resolve destination from one of four formats, in priority order:
+        #   1. target (creature_id) — move toward that character, capped at
+        #      their exact position so you never overshoot ("我朝薩滿衝鋒")
+        #   2. direction ("advance"/"retreat") — side-aware, fixed distance
+        #   3. target_position (absolute coordinate)
+        #   4. delta_m (raw axis delta, legacy)
         new_pos = None
-        if "direction" in action:
+        target_key = action.get("target")
+        if target_key:
+            target_char = _lookup_char(target_key, world_state)
+            if not target_char:
+                return {"type": "ERROR", "message": f"找不到移動目標：{target_key}"}
+            dest = target_char.position
+            delta = dest - old_pos
+            if abs(delta) <= MOVE_BUDGET_M + 1e-6:
+                new_pos = dest                 # arrive exactly, no overshoot
+            else:
+                sign = 1 if delta > 0 else -1
+                new_pos = old_pos + sign * MOVE_BUDGET_M
+        elif "direction" in action:
             direction = str(action["direction"]).lower()
             distance = abs(float(action.get("distance", MOVE_BUDGET_M)))
             distance = min(distance, MOVE_BUDGET_M)
@@ -371,7 +385,7 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
         elif "delta_m" in action:
             new_pos = old_pos + float(action["delta_m"])
         else:
-            return {"type": "ERROR", "message": "MOVE 需要 direction、target_position 或 delta_m"}
+            return {"type": "ERROR", "message": "MOVE 需要 target、direction、target_position 或 delta_m"}
 
         # Enforce movement budget (clamp in the requested direction)
         dist = abs(new_pos - old_pos)

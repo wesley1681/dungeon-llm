@@ -64,13 +64,19 @@ INT=智力(調查/奧秘)、WIS=感知(察覺/醫療/洞察)、CHA=魅力(說服
 ## 移動
 玩家描述：衝向、靠近、後退、拉開距離、追上去、退到後排等
 
-用語意方向：`direction` 取 "advance"（朝對立陣營靠近）或 "retreat"（遠離對立陣營）。
-`distance` 預設 9（單回合上限），可更小（小步靠近）。
+兩種主要方式擇一（優先級由上而下）：
+- `target`：朝某個角色 ID 移動。**會精準停在對方位置，絕不會衝過頭**——
+  「我朝薩滿衝鋒」「我跑到索爾旁邊」這類「鎖定一個人移動」的描述都用這個。
+- `direction`：取 "advance"（朝對立陣營靠近）或 "retreat"（遠離），搭配 `distance`（預設 9）。
+  「我後退」「拉開距離」這種沒指名對象的描述用這個。
+
+移動距離超過 9m 會被引擎自動裁切到 9m。
 ```json
 {
   "valid": true,
   "type": "MOVE",
   "character": "<角色ID>",
+  "target": "<目標角色ID 或 null>",
   "direction": "advance",
   "distance": 9,
   "description": "<簡短描述>"

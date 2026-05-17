@@ -125,6 +125,25 @@ def main() -> int:
     # Reset
     thor.position = 0.0
 
+    # ── 7b. MOVE target arrives exactly at the creature (no overshoot) ────────
+    g3.position = 6.0
+    action = {"type": "MOVE", "character": "thor", "target": "goblin_3"}
+    result = combat.execute_action(action, ws)
+    print(f"MOVE thor → g3 (at 6m): to={result['to_pos']:.1f} dist={result['distance']:.1f}")
+    assert result["to_pos"] == 6.0, f"should arrive exactly at g3, got {result['to_pos']}"
+    assert result["distance"] == 6.0
+    thor.position = 0.0
+
+    # ── 7c. MOVE target capped by budget when target is too far ───────────────
+    g3.position = 25.0
+    action = {"type": "MOVE", "character": "thor", "target": "goblin_3"}
+    result = combat.execute_action(action, ws)
+    print(f"MOVE thor → g3 (at 25m, far): to={result['to_pos']:.1f} dist={result['distance']:.1f}")
+    assert result["to_pos"] == 9.0, f"should cap at budget 9m, got {result['to_pos']}"
+    assert result["distance"] == 9.0
+    thor.position = 0.0
+    g3.position = 6.0   # reset
+
     # ── 8. Out-of-range ATTACK rejected ───────────────────────────────────────
     g3.position = 20.0   # move archer far back
     action = {"type": "ATTACK", "attacker": "thor", "target": "goblin_3", "weapon": "長劍"}
