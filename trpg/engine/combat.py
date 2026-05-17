@@ -589,6 +589,21 @@ def format_result(player_description: str, result: dict, actor_name: str = "") -
         if result.get("remaining") is not None:
             lines.append(f"剩餘 {result['item']}：{result['remaining']} 個")
 
+    elif t == "SPELL":
+        lines.append(
+            f"施展「{result['spell_name']}」（{result['slot_level']} 環，"
+            f"{result['damage_dice']} {result['damage_type']}傷，"
+            f"以 {result['center_name']} 為中心，"
+            f"{result['save_stat']} DC{result['save_dc']} 豁免半傷）"
+        )
+        for tr in result.get("target_results", []):
+            save_str  = "豁免成功（半傷）" if tr["save_success"] else "豁免失敗"
+            alive_str = "存活" if tr["target_alive"] else "倒下"
+            lines.append(
+                f"  {tr['target_name']}：{save_str}，受 {tr['damage']} 傷害，"
+                f"HP {tr['target_hp']}/{tr['target_max_hp']}（{alive_str}）"
+            )
+
     elif t == "USE_ITEM":
         if result.get("healed") is not None:
             lines.append(

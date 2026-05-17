@@ -229,6 +229,36 @@ def test_spell_handler_out_of_range() -> None:
     print("SPELL handler out-of-range ERROR: OK")
 
 
+def test_format_result_spell() -> None:
+    """Task 4: format_result renders SPELL results readably."""
+    from trpg.engine.combat import format_result
+
+    result = {
+        "type":          "SPELL",
+        "caster_name":   "測試薩滿",
+        "spell_name":    "火球術",
+        "slot_level":    3,
+        "center_name":   "地精乙",
+        "save_stat":     "DEX",
+        "save_dc":       13,
+        "damage_dice":   "8d6",
+        "damage_type":   "fire",
+        "target_results": [
+            {"target_name": "地精乙", "save_roll": 8, "save_success": False,
+             "damage": 24, "target_hp": 0, "target_max_hp": 7, "target_alive": False},
+            {"target_name": "測試薩滿", "save_roll": 18, "save_success": True,
+             "damage": 12, "target_hp": 6, "target_max_hp": 18, "target_alive": True},
+        ],
+    }
+    text = format_result("我對地精乙施展火球術", result, actor_name="測試薩滿")
+    assert "火球術" in text
+    assert "3 環" in text or "3環" in text
+    assert "DC13" in text or "DC 13" in text
+    assert "地精乙" in text and "倒下" in text
+    assert "測試薩滿" in text and "豁免成功" in text
+    print("format_result SPELL: OK")
+
+
 def main() -> int:
     test_spell_dataclass_and_catalog()
     test_character_spell_fields()
@@ -236,6 +266,7 @@ def main() -> int:
     test_spell_handler_no_slot_available()
     test_spell_handler_explicit_slot_level()
     test_spell_handler_out_of_range()
+    test_format_result_spell()
     print("\n=== ALL SPELL TESTS PASSED ===")
     return 0
 
