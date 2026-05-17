@@ -83,9 +83,13 @@ class PlayerAgent:
         if not history_msgs and not nudge:
             history_msgs = [{"role": "user", "content": "（場景剛開始，請描述你的角色行動或感想）"}]
 
-        messages = [{"role": "system", "content": self._system_prompt()}] + history_msgs
+        # Character settings + any per-turn nudge go in a single user message at
+        # the bottom — the LLM attends most strongly to the end of the context,
+        # so identity/rules/current state arrive right where they matter most.
+        bottom = self._system_prompt().rstrip()
         if nudge:
-            messages.append({"role": "user", "content": nudge})
+            bottom = bottom + "\n\n" + nudge
+        messages = history_msgs + [{"role": "user", "content": bottom}]
 
         (_DEBUG_DIR / f"{self.character.name}_context.json").write_text(
             json.dumps(messages, ensure_ascii=False, indent=2), encoding="utf-8", errors="replace"

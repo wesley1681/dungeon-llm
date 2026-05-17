@@ -129,7 +129,7 @@ _RECRUIT_SECTION = """## 對方邀你加入冒險（重要決定）
 
 """
 
-_COMBAT_SYSTEM_TEMPLATE = """你正在扮演 {name}。{personality}
+_COMBAT_PROMPT_TEMPLATE = """你正在扮演 {name}。{personality}
 
 {tactics_section}## 你的戰況
 HP：{hp}/{max_hp}
@@ -152,8 +152,7 @@ HP：{hp}/{max_hp}
 
 行為原則：依個性決定要分幾個 sub-action。攻擊型角色通常「移動 + 攻擊 + <END>」；謹慎角色可能「攻擊 + 閃避 + <END>」；膽小角色「<END>」直接結束。
 
-直接輸出你的決定，不要加思考或旁白。
-"""
+直接輸出你的決定，不要加思考或旁白。現在輪到你行動。"""
 
 _FLEE_RE = re.compile(r'<\s*FLEE\s*>', re.IGNORECASE)
 _END_RE  = re.compile(r'<\s*END\s*>', re.IGNORECASE)
@@ -247,7 +246,10 @@ class NpcAgent:
         if not history_msgs:
             history_msgs = [{"role": "user", "content": "（冒險者向你走近，看著你）"}]
 
-        messages = [{"role": "system", "content": self._system()}] + history_msgs
+        # Identity / personality / secrets / quests / attitude rules all go in a
+        # single user message at the bottom — matches the NPC combat structure
+        # and keeps the LLM's strongest attention on the role it must play.
+        messages = history_msgs + [{"role": "user", "content": self._system()}]
         (_DEBUG_DIR / f"npc_{self.char.name}_context.json").write_text(
             json.dumps(messages, ensure_ascii=False, indent=2), encoding="utf-8", errors="replace"
         )
@@ -340,7 +342,7 @@ class NpcAgent:
         )
 
         tactics_section = (self._tactics.rstrip() + "\n\n") if self._tactics else ""
-        system = _COMBAT_SYSTEM_TEMPLATE.format(
+        prompt = _COMBAT_PROMPT_TEMPLATE.format(
             name=self.char.name,
             personality=self._personality,
             tactics_section=tactics_section,
@@ -352,12 +354,11 @@ class NpcAgent:
             enemies=enemies,
             resources_block=resources_block,
         )
+        # History first so the NPC reads the narrative in order; identity +
+        # combat state + action menu go last to maximize attention to the
+        # current situation when generating the next sub-action.
         history_msgs = render_messages(self.world_state, self.char_id)
-        messages = (
-            [{"role": "system", "content": system}]
-            + history_msgs
-            + [{"role": "user", "content": "現在輪到你行動。"}]
-        )
+        messages = history_msgs + [{"role": "user", "content": prompt}]
         (_DEBUG_DIR / f"npc_{self.char.name}_combat_context.json").write_text(
             json.dumps(messages, ensure_ascii=False, indent=2), encoding="utf-8", errors="replace"
         )
