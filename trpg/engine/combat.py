@@ -475,7 +475,7 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
         target_pos_arg = action.get("target_position")
         if target_pos_arg is not None:
             center_pos = float(target_pos_arg)
-            center_name = f"位置 {center_pos:.1f}m"
+            center_name = f"座標 {center_pos:.1f}m"
         else:
             target_key = action.get("target", "")
             if target_key == "self":
@@ -681,8 +681,8 @@ class CombatContext:
     actor_id: str
     actor_position: float
     weapons_str: str         # "長劍（近戰 1.5m）、短弓（遠程 24m / 最大 96m）"
-    allies_str: str          # "凱恩 HP 22/22，位置 0.0m（距你 0.0m）"
-    enemies_str: str         # "哥布林 HP 7/7，位置 1.5m（距你 1.5m）"
+    allies_str: str          # "凱恩 HP 22/22，座標 0.0m（距離你 0.0m）"
+    enemies_str: str         # "哥布林 HP 7/7，座標 1.5m（距離你 1.5m）"
     spells_str: str = ""     # "火球術（3 環，剩餘 1 個 3 環法術位）" — empty for non-casters
     enemies: dict = field(default_factory=dict)   # {cid: name} — alive valid attack targets
     allies: dict = field(default_factory=dict)    # {cid: name} — alive non-self friendlies in room
@@ -736,7 +736,7 @@ def _weapons_str(char) -> str:
 def _entry_for(other, viewer) -> str:
     d = abs(other.position - viewer.position)
     dodging = "（閃避中）" if other.has_status("dodging") else ""
-    return f"{other.name} HP {other.hp}/{other.max_hp}，位置 {other.position:.1f}m（距你 {d:.1f}m）{dodging}"
+    return f"{other.name} HP {other.hp}/{other.max_hp}，座標 {other.position:.1f}m（距離你 {d:.1f}m）{dodging}"
 
 
 def build_combat_context(actor_id: str, actor, world_state,

@@ -428,7 +428,7 @@ def test_npc_controller_nudge_includes_spells() -> None:
         round_num=2, actor_id="x", actor_position=10.0,
         weapons_str="無武器（徒手）",
         spells_str="火球術（3 環，可用：3 環×1）",
-        allies_str="無", enemies_str="索爾 HP 31/31，位置 0.0m（距你 10.0m）",
+        allies_str="無", enemies_str="索爾 HP 31/31，座標 0.0m（距離你 10.0m）",
         enemies={"thor": "索爾"},
         resources={"action": 1, "movement": MOVE_BUDGET_M},
     )
@@ -652,7 +652,7 @@ def test_spell_handler_target_position() -> None:
         "target_position": 11.0,
     }, ws)
     assert result["type"] == "SPELL", f"got {result}"
-    assert result["center_name"] == "位置 11.0m", f"got {result['center_name']!r}"
+    assert result["center_name"] == "座標 11.0m", f"got {result['center_name']!r}"
     affected = {tr["target_name"] for tr in result["target_results"]}
     assert "地精甲" in affected and "地精乙" in affected, f"missing goblins: {affected}"
     assert "索爾" not in affected, f"thor was caught at distance 11m: {affected}"
@@ -692,7 +692,7 @@ def test_spell_target_position_overrides_target() -> None:
         "target_position": 30.0,
     }, ws)
     assert result["type"] == "SPELL"
-    assert result["center_name"] == "位置 30.0m"
+    assert result["center_name"] == "座標 30.0m"
     affected = {tr["target_name"] for tr in result["target_results"]}
     assert "地精甲" not in affected, f"target_position should override: {affected}"
     print("SPELL target_position overrides target: OK")

@@ -135,7 +135,7 @@ def format_aria_combat_info(aria, ctx) -> str:
         enemies_block = "\n".join(f"  - {it}" for it in items)
 
     return (
-        f"你的位置：{aria.position:.1f}m\n"
+        f"你的座標：{aria.position:.1f}m\n"
         f"剩餘資源：動作 {action_status}、移動 {move_left:.1f}m\n"
         f"你的武器：{weapons_line}\n"
         f"敵人：\n{enemies_block}\n"
