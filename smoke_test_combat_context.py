@@ -52,6 +52,22 @@ def main() -> int:
         f"enemies dict: {ctx.enemies}"
     print("enemies dict populated: OK")
 
+    # ── allies dict populated for both sides ─────────────────────────────────
+    # Thor (party PC) — allies should include Aria, enemies should NOT appear
+    assert "aria" in ctx.allies, f"thor's allies dict missing aria: {ctx.allies}"
+    assert "goblin_1" not in ctx.allies, f"enemy leaked into thor.allies: {ctx.allies}"
+    # NPC perspective — allies should include the other goblin
+    ctx_npc = build_combat_context(
+        actor_id="goblin_1", actor=g1, world_state=ws,
+        resources={"action": 1, "movement": MOVE_BUDGET_M}, round_num=1,
+    )
+    # The other goblin in the room should be an ally from goblin_1's POV
+    assert any(name.startswith("地精") for name in ctx_npc.allies.values()), \
+        f"goblin_1's allies dict should list fellow goblins: {ctx_npc.allies}"
+    assert "aria" not in ctx_npc.allies and "thor" not in ctx_npc.allies, \
+        f"PCs leaked into npc.allies: {ctx_npc.allies}"
+    print("allies dict populated for both sides: OK")
+
     print("\n=== ALL COMBAT CONTEXT TESTS PASSED ===")
     return 0
 

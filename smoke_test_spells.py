@@ -323,6 +323,50 @@ def test_arbiter_spell_defaults() -> None:
     print("Arbiter _CONSUMES_DEFAULT SPELL: OK")
 
 
+def test_arbiter_situation_lists_allies() -> None:
+    """Real bug: when goblin_2 said '往地精甲那邊靠攏' the arbiter only saw
+    enemies in its situation block and hallucinated target='aria' (a PC).
+    Allies must be exposed so the arbiter can map ally names → ally ids."""
+    from trpg.llm.arbiter import ArbiterAgent
+    from trpg.scenarios.dungeon import build_world_state
+    from trpg.engine.character import Character, Stats
+
+    ws = build_world_state()
+    actor = Character(
+        name="測試地精", race="地精", class_="—", level=1,
+        stats=Stats(), hp=7, max_hp=7, ac=13,
+        is_npc=True, attitude=0,
+    )
+
+    captured: list[dict] = []
+    import trpg.llm.arbiter as arb_mod
+    real_complete = arb_mod.complete_chat
+    def fake_complete(base_url, model, messages, options, backend="ollama", timeout=60):
+        captured.extend(messages)
+        return '{"valid": false, "reason": "test"}'
+    arb_mod.complete_chat = fake_complete
+    try:
+        arb = ArbiterAgent(model="dummy")
+        arb.parse(
+            player_action="我往地精甲那邊靠攏",
+            actor_id="test_goblin",
+            actor_name="測試地精",
+            available_targets={"aria": "凱恩", "thor": "索爾"},  # enemies
+            actor_char=actor,
+            allies={"goblin_1": "地精甲", "goblin_shaman": "地精薩滿沃克"},
+        )
+    finally:
+        arb_mod.complete_chat = real_complete
+
+    full_text = "\n".join(m["content"] for m in captured)
+    assert "盟友" in full_text, f"missing 盟友 section:\n{full_text[:600]}"
+    assert "地精甲" in full_text and "goblin_1" in full_text, \
+        "ally name+id must appear so arbiter can map them"
+    # Sanity: the attack-target list is still labelled clearly
+    assert "可攻擊目標" in full_text
+    print("Arbiter situation lists allies: OK")
+
+
 def test_arbiter_situation_includes_spells() -> None:
     """Task 6: parse() situation block lists available spells when caster has them."""
     from trpg.llm.arbiter import ArbiterAgent
@@ -849,6 +893,7 @@ def main() -> int:
     test_format_result_spell()
     test_combat_context_spells_str()
     test_arbiter_spell_defaults()
+    test_arbiter_situation_lists_allies()
     test_arbiter_situation_includes_spells()
     test_rulebook_has_spell_section()
     test_npc_controller_nudge_includes_spells()

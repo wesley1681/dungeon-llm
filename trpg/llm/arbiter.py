@@ -56,8 +56,9 @@ class ArbiterAgent:
         player_action: str,
         actor_id: str,
         actor_name: str,
-        available_targets: dict[str, str],  # {id: name}，只含存活目標
+        available_targets: dict[str, str],  # {id: name}，敵人（attack 目標）
         actor_char=None,                    # Character 物件，提供武器/消耗品列表
+        allies: dict[str, str] | None = None,   # {id: name}，盟友（MOVE/SPELL 中心可用）
     ) -> dict:
         # Arbiter only translates intent → JSON. Range / distance / resources /
         # damage are engine concerns and not shown — keeping the prompt narrow
@@ -85,6 +86,9 @@ class ArbiterAgent:
 
         target_lines = [f"{name}（{cid}）" for cid, name in available_targets.items()]
         targets_str = "\n  ".join(target_lines) if target_lines else "無"
+        ally_map = allies or {}
+        ally_lines = [f"{name}（{cid}）" for cid, name in ally_map.items()]
+        allies_str = "\n  ".join(ally_lines) if ally_lines else "無"
 
         situation_parts = [
             "## 當前情況",
@@ -95,7 +99,8 @@ class ArbiterAgent:
         ]
         if spells_str:
             situation_parts.append(f"可用法術：{spells_str}")
-        situation_parts.append(f"可攻擊目標：\n  {targets_str}")
+        situation_parts.append(f"可攻擊目標（敵人）：\n  {targets_str}")
+        situation_parts.append(f"盟友（不可攻擊，但 MOVE/SPELL 中心可指定）：\n  {allies_str}")
         situation = "\n".join(situation_parts) + "\n"
 
         messages = [{

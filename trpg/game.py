@@ -446,7 +446,9 @@ class GameSession:
 
             result_text = ""
             if decision.description:
-                result_text = self._execute_sub_action(cid, char, decision, ctrl, resources, ctx.enemies)
+                result_text = self._execute_sub_action(
+                    cid, char, decision, ctrl, resources, ctx.enemies, ctx.allies
+                )
 
             if result_text:
                 log.append(result_text)
@@ -473,7 +475,7 @@ class GameSession:
             if agent is not None:
                 agent.in_party = False
 
-    def _execute_sub_action(self, cid, char, decision, ctrl, resources, enemies) -> str:
+    def _execute_sub_action(self, cid, char, decision, ctrl, resources, enemies, allies) -> str:
         """Parse → execute → emit. Returns result_text (empty if invalid/blocked).
 
         Any rejection — unparseable arbiter output, resource exhausted, or
@@ -487,11 +489,11 @@ class GameSession:
             new_decision = ctrl.on_invalid_action(reason, suggestion)
             if new_decision is None or not new_decision.description:
                 return ""
-            return self._execute_sub_action(cid, char, new_decision, ctrl, resources, enemies)
+            return self._execute_sub_action(cid, char, new_decision, ctrl, resources, enemies, allies)
 
         action = self.arbiter.parse(
             player_action=decision.description, actor_id=cid, actor_name=char.name,
-            available_targets=enemies, actor_char=char,
+            available_targets=enemies, actor_char=char, allies=allies,
         )
         debug = json.dumps(action, ensure_ascii=False)
         if not action.get("valid"):

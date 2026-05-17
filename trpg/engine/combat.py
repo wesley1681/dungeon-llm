@@ -684,7 +684,8 @@ class CombatContext:
     allies_str: str          # "凱恩 HP 22/22，位置 0.0m（距你 0.0m）"
     enemies_str: str         # "哥布林 HP 7/7，位置 1.5m（距你 1.5m）"
     spells_str: str = ""     # "火球術（3 環，剩餘 1 個 3 環法術位）" — empty for non-casters
-    enemies: dict = field(default_factory=dict)   # {cid: name} — alive valid targets
+    enemies: dict = field(default_factory=dict)   # {cid: name} — alive valid attack targets
+    allies: dict = field(default_factory=dict)    # {cid: name} — alive non-self friendlies in room
     resources: dict = field(default_factory=dict)
 
 
@@ -754,6 +755,7 @@ def build_combat_context(actor_id: str, actor, world_state,
     ally_parts: list[str] = []
     enemy_parts: list[str] = []
     enemies_dict: dict[str, str] = {}
+    allies_dict: dict[str, str] = {}
 
     for oid, other in ws.characters.items():
         if oid == actor_id or not other.is_alive():
@@ -764,12 +766,14 @@ def build_combat_context(actor_id: str, actor, world_state,
         if is_party:
             if other_in_party:
                 ally_parts.append(entry)
+                allies_dict[oid] = other.name
             elif other_hostile:
                 enemy_parts.append(entry)
                 enemies_dict[oid] = other.name
         else:
             if other_hostile:
                 ally_parts.append(entry)
+                allies_dict[oid] = other.name
             elif other_in_party:
                 enemy_parts.append(entry)
                 enemies_dict[oid] = other.name
@@ -783,5 +787,6 @@ def build_combat_context(actor_id: str, actor, world_state,
         allies_str="、".join(ally_parts) or "無",
         enemies_str="、".join(enemy_parts) or "無",
         enemies=enemies_dict,
+        allies=allies_dict,
         resources=dict(resources),
     )
