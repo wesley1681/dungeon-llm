@@ -6,7 +6,7 @@ No LLM calls — tests the data plumbing only:
   - NpcAgent parses <JOIN> / <DECLINE> markers
   - TRAVEL syncs follower to new room.npc_ids
   - _alive_side_b includes follower
-  - _build_npc_combat_context: hostile sees follower as enemy; follower sees PCs+other followers as allies
+  - build_combat_context: hostile sees follower as enemy; follower sees PCs+other followers as allies
   - ATTACK_NPC on follower removes from party
   - Dead follower cleanup after combat end
 """
@@ -16,6 +16,7 @@ sys.path.insert(0, ".")
 from trpg.scenarios.dungeon import build_world_state, build_npc_agents
 from trpg.llm.tag_parser import execute_all_tags, set_npc_agent_registry
 from trpg.game import GameSession
+from trpg.engine.combat import build_combat_context, MOVE_BUDGET_M
 
 
 def main() -> int:
@@ -96,21 +97,22 @@ def main() -> int:
     assert "aria" in side_b and "thor" in side_b and "civilian" in side_b
     assert "goblin_1" not in side_b
 
-    # ── 8. _build_npc_combat_context from follower's POV ──────────────────────
+    # ── 8. build_combat_context from follower's POV ───────────────────────────
     # Move goblins into guard_room so they're "in current room" (already are by default)
     # civilian is in guard_room (we moved there)
-    weapons, allies, enemies = session._build_npc_combat_context("civilian", civ)
-    print(f"\n老柯 視角：allies={allies!r}, enemies={enemies!r}")
-    assert "凱恩" in allies and "索爾" in allies
+    res = {"action": 1, "movement": MOVE_BUDGET_M}
+    ctx = build_combat_context("civilian", civ, ws, res, 0)
+    print(f"\n老柯 視角：allies={ctx.allies_str!r}, enemies={ctx.enemies_str!r}")
+    assert "凱恩" in ctx.allies_str and "索爾" in ctx.allies_str
     # Goblins are hostile + in guard_room → should be enemies
-    assert "哥布林" in enemies or "地精" in enemies  # goblin name appears
+    assert "哥布林" in ctx.enemies_str or "地精" in ctx.enemies_str  # goblin name appears
 
-    # ── 9. _build_npc_combat_context from hostile goblin's POV ────────────────
+    # ── 9. build_combat_context from hostile goblin's POV ─────────────────────
     g1 = ws.characters["goblin_1"]
-    weapons, allies, enemies = session._build_npc_combat_context("goblin_1", g1)
-    print(f"goblin_1 視角：allies={allies!r}, enemies={enemies!r}")
-    assert "老柯" in enemies   # follower now appears as enemy to hostile
-    assert "凱恩" in enemies and "索爾" in enemies
+    ctx = build_combat_context("goblin_1", g1, ws, res, 0)
+    print(f"goblin_1 視角：allies={ctx.allies_str!r}, enemies={ctx.enemies_str!r}")
+    assert "老柯" in ctx.enemies_str   # follower now appears as enemy to hostile
+    assert "凱恩" in ctx.enemies_str and "索爾" in ctx.enemies_str
 
     # ── 10. ATTACK_NPC removes follower from party ────────────────────────────
     # Need civilian to be in current room (already in guard_room)

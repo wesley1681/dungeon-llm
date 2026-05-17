@@ -13,7 +13,7 @@ from typing import Any
 from .engine.world_state import WorldState
 from .engine.combat import (
     execute_action, format_result, make_saving_throw,
-    consume_resources, MOVE_BUDGET_M,
+    consume_resources, MOVE_BUDGET_M, build_combat_context,
 )
 from .engine.quests import check_quest_progress, objective_progress_str
 from .engine.status import tick_status_effects
@@ -93,18 +93,10 @@ _STOP = object()
 
 # ── Combat turn structure ─────────────────────────────────────────────────────
 
-_END_RE = re.compile(r'<\s*END\s*>', re.IGNORECASE)
 # Inputs from human player that mean "end my turn"
 _ARIA_END_INPUTS = {"end", "結束", "結束回合", "我這就好", "我這回合到這"}
 # Safety cap: max sub-actions per character per round (prevents runaway loops)
 _MAX_SUB_ACTIONS = 5
-
-
-def _strip_end_marker(text: str) -> tuple[str, bool]:
-    """Return (cleaned_text, ended): strips <END> and reports whether it was present."""
-    ended = bool(_END_RE.search(text))
-    cleaned = _END_RE.sub("", text).strip()
-    return cleaned, ended
 
 
 def format_aria_combat_info(aria, ctx) -> str:
@@ -160,6 +152,14 @@ class GameSession:
         self._events    : queue.Queue = queue.Queue()
         self._player_in : queue.Queue = queue.Queue()
         self._stop_flag = threading.Event()
+
+        from .llm.controllers import HumanController, LLMPlayerController, LLMNpcController
+        self.controllers = {
+            "aria": HumanController("aria", self._get_input, self._emit, _ARIA_END_INPUTS),
+            "thor": LLMPlayerController(thor_agent, self._emit),
+        }
+        for cid, agent in self.npc_agents.items():
+            self.controllers[cid] = LLMNpcController(agent, self._emit)
 
         # TagAgent still receives raw action strings (it's stateless and doesn't read log).
         self._tag_actions: list[str] = []
@@ -400,17 +400,16 @@ class GameSession:
 
     def _take_combat_turn(self, cid: str, char, resources: dict,
                           round_num: int, log: list) -> str:
-        """Run a multi-step combat turn for one character.
+        """Run a multi-step combat turn for one character via its controller.
 
-        The character may issue multiple sub-actions (move + attack + dodge etc.)
-        within their turn budget. Loop ends when:
-          - the character emits the <END> marker / Aria types "結束"
-          - all resources exhausted
-          - safety cap (_MAX_SUB_ACTIONS) reached
-          - combat ends (someone wiped)
-        Returns "quit" to signal the outer loop to stop, "" otherwise.
+        Loop ends on <END>/quit/fled, all resources exhausted, safety cap, or combat end.
+        Returns "quit" to signal outer loop to stop, "" otherwise.
         """
         ws = self.world_state
+        ctrl = self.controllers.get(cid)
+        if ctrl is None:
+            return ""
+
         for _ in range(_MAX_SUB_ACTIONS):
             if self._stop_flag.is_set():
                 return "quit"
@@ -419,37 +418,77 @@ class GameSession:
             if not self._alive_enemies() or not self._alive_pcs():
                 return ""
 
-            if char.is_npc:
-                targets = self._alive_enemies() if ws.is_party_ally(cid) else self._alive_side_b()
-                result_text, ended = self._npc_sub_action(cid, char, targets, resources)
-            elif cid == "thor":
-                result_text, ended = self._thor_sub_action(char, resources, round_num)
-            elif cid == "aria":
-                outcome = self._aria_sub_action(char, resources)
-                if outcome == "quit":
-                    return "quit"
-                result_text, ended = outcome
-            else:
+            ctx = build_combat_context(cid, char, ws, resources, round_num)
+            decision = ctrl.take_sub_action(char, ctx)
+
+            if decision.quit:
+                self._emit(GameOver("冒險結束。再見！"))
+                return "quit"
+            if decision.fled:
+                self._handle_flee(cid, char)
                 return ""
+
+            result_text = ""
+            if decision.description:
+                result_text = self._execute_sub_action(cid, char, decision, ctrl, resources, ctx.enemies)
 
             if result_text:
                 log.append(result_text)
-                brief = (
-                    "用一句（30字以內）繁體中文敘述此戰鬥結果，"
-                    "直接輸出敘事，不加格式欄位：\n" + result_text
-                )
+                brief = ("用一句（30字以內）繁體中文敘述此戰鬥結果，"
+                         "直接輸出敘事，不加格式欄位：\n" + result_text)
                 self.gm.combat_narrate(
                     brief,
                     on_chunk=lambda c, thinking=False: self._emit(StreamChunk("narrate", c)),
                 )
 
-            if ended:
+            if decision.ended:
                 return ""
-            # Auto-end if all per-turn resources are exhausted
-            if (resources.get("action", 0) <= 0
-                and resources.get("movement", 0) <= 1e-6):
+            if resources.get("action", 0) <= 0 and resources.get("movement", 0) <= 1e-6:
                 return ""
         return ""
+
+    def _handle_flee(self, cid: str, char) -> None:
+        from .llm.tag_parser import execute_all_tags
+        ok, _ = execute_all_tags(f"[FLEE: {cid}]", self.world_state)
+        summary = f"{char.name} 逃離了戰鬥"
+        self._emit(ActionResult(char.name, summary, "FLEE", valid=True))
+        self.world_state.log_event("system", summary)
+        if cid in self.world_state.party_ids:
+            self.world_state.party_ids.remove(cid)
+            agent = self.npc_agents.get(cid)
+            if agent is not None:
+                agent.in_party = False
+
+    def _execute_sub_action(self, cid, char, decision, ctrl, resources, enemies) -> str:
+        """Parse → execute → emit. Returns result_text (empty if invalid/blocked)."""
+        ws = self.world_state
+        action = self.arbiter.parse(
+            player_action=decision.description, actor_id=cid, actor_name=char.name,
+            available_targets=enemies, resources=resources, actor_char=char,
+            world_state=ws,
+        )
+        debug = json.dumps(action, ensure_ascii=False)
+        if not action.get("valid"):
+            self._emit(ActionResult(char.name, f"無效行動：{action.get('reason')}", debug, valid=False))
+            retry = ctrl.on_invalid_action(action.get("reason", ""), action.get("suggestion", ""))
+            if retry is None or not retry.description:
+                return ""
+            # Retry once with the new decision
+            return self._execute_sub_action(cid, char, retry, ctrl, resources, enemies)
+
+        if "action" in action.get("consumes", []) and resources.get("action", 0) <= 0:
+            self._emit(StatusMessage(f"{char.name} 本回合動作已用完"))
+            return ""
+
+        result = execute_action(action, ws)
+        if result.get("type") == "ERROR":
+            self._emit(ActionResult(char.name, f"{char.name}：{result['message']}", debug, valid=False))
+            return ""
+        summary = format_result(decision.description, result, char.name)
+        self._emit(ActionResult(char.name, summary, debug, valid=True))
+        ws.log_event("system", summary)
+        consume_resources(resources, action, result)
+        return summary
 
     def _check_quests(self) -> None:
         """Check for newly-completed quests; emit events and push notes to log."""
@@ -460,199 +499,6 @@ class GameSession:
             self._emit(QuestComplete(q.title, giver_name))
             note = f"【系統通知：任務「{q.title}」已達成完成條件，可回去找 {giver_name} 回報】"
             self.world_state.log_event("system", note)
-
-    def _build_npc_combat_context(self, cid: str, char) -> tuple[str, str, str]:
-        """Backward-compat wrapper — returns (weapons, allies, enemies) strings.
-        New code should call engine.combat.build_combat_context directly."""
-        from .engine.combat import build_combat_context, MOVE_BUDGET_M
-        ctx = build_combat_context(
-            actor_id=cid, actor=char, world_state=self.world_state,
-            resources={"action": 1, "movement": MOVE_BUDGET_M}, round_num=0,
-        )
-        return ctx.weapons_str, ctx.allies_str, ctx.enemies_str
-
-    def _npc_sub_action(self, cid: str, char, targets: dict,
-                        resources: dict) -> tuple[str, bool]:
-        """One NPC sub-action. Returns (result_text, ended)."""
-        ws = self.world_state
-        npc_agent = self.npc_agents.get(cid)
-        actor = char.name
-
-        if not npc_agent:
-            self._emit(ActionResult(actor, f"{actor} 無 NpcAgent，跳過行動", "", valid=False))
-            return ("", True)
-
-        weapons_str, allies_str, enemies_str = self._build_npc_combat_context(cid, char)
-        desc, fled, ended = npc_agent.combat_action(
-            weapons_str, allies_str, enemies_str,
-            resources=resources,
-            on_chunk=lambda c, thinking=False: self._emit(StreamChunk("npc", c, actor=actor)),
-        )
-
-        if fled:
-            from .llm.tag_parser import execute_all_tags
-            ok, _ = execute_all_tags(f"[FLEE: {cid}]", ws)
-            summary = f"{actor} 逃離了戰鬥"
-            self._emit(ActionResult(actor, summary, "FLEE", valid=True))
-            ws.log_event("system", summary)
-            if cid in ws.party_ids:
-                ws.party_ids.remove(cid)
-                npc_agent.in_party = False
-            return (summary, True)
-
-        # Empty desc (LLM only output <END>): just end the turn
-        if not desc.strip():
-            return ("", ended)
-
-        action = self.arbiter.parse(
-            player_action=desc, actor_id=cid, actor_name=char.name,
-            available_targets=targets, resources=resources, actor_char=char,
-            world_state=ws,
-        )
-        debug = json.dumps(action, ensure_ascii=False)
-        if not action.get("valid"):
-            self._emit(ActionResult(char.name, f"無效行動：{action.get('reason')}", debug, valid=False))
-            return ("", ended)
-
-        a_type = action.get("type", "").upper()
-        if "action" in action.get("consumes", []) and resources.get("action", 0) <= 0:
-            self._emit(StatusMessage(f"{char.name} 本回合動作已用完，跳過此 {a_type}"))
-            return ("", ended)
-
-        result  = execute_action(action, ws)
-        if result.get("type") == "ERROR":
-            self._emit(ActionResult(char.name, f"{char.name}：{result['message']}", debug, valid=False))
-            return ("", ended)
-        summary = format_result(desc, result, char.name)
-        self._emit(ActionResult(char.name, summary, debug, valid=True))
-        ws.log_event("system", summary)
-        consume_resources(resources, action, result)
-        return (summary, ended)
-
-    def _thor_sub_action(self, char, resources: dict,
-                         round_num: int) -> tuple[str, bool]:
-        """One Thor sub-action. Returns (result_text, ended)."""
-        ws = self.world_state
-        enemies = self._alive_enemies()
-
-        room_enemies = (ws.dungeon_map.current_room.alive_enemies(ws.characters).values()
-                        if ws.dungeon_map else [])
-        enemies_lines = []
-        for c in room_enemies:
-            d = abs(c.position - char.position)
-            dodging = "（閃避中）" if c.has_status("dodging") else ""
-            enemies_lines.append(f"{c.name}（HP {c.hp}/{c.max_hp}，距你 {d:.1f}m{dodging}）")
-        enemies_str = "、".join(enemies_lines) or "、".join(enemies.values())
-
-        aria_char = ws.characters.get("aria")
-        aria_hp   = f"{aria_char.hp}/{aria_char.max_hp}" if aria_char else "?"
-        weapon_parts = []
-        for w in char.weapons:
-            if w.range_type == "近戰":
-                weapon_parts.append(f"{w.name}（近戰 {w.range_normal:.1f}m）")
-            else:
-                weapon_parts.append(f"{w.name}（遠程 {w.range_normal:.0f}m）")
-        weapons_str = "、".join(weapon_parts) or "無武器"
-
-        action_status = "可用" if resources.get("action", 0) > 0 else "已用完"
-        move_left = resources.get("movement", 0.0)
-        nudge = (
-            f"【戰鬥回合 {round_num}】\n"
-            f"你的位置：{char.position:.1f}m\n"
-            f"剩餘資源：動作 {action_status}、移動 {move_left:.1f}m\n"
-            f"HP：{char.hp}/{char.max_hp}　凱恩 HP：{aria_hp}\n"
-            f"武器：{weapons_str}\n"
-            f"敵人：{enemies_str}\n"
-            f"做一個 sub-action（攻擊 / 移動 / 閃避）；想結束本回合就在訊息結尾加 <END>。\n"
-            f"例：「我衝向哥布林。」不加 <END>→系統會問你下一步；"
-            f"「我用長劍砍他。<END>」→ 砍完直接結束。"
-        )
-        desc = self.thor_agent.generate(
-            nudge=nudge,
-            on_chunk=lambda c, thinking=False: self._emit(StreamChunk("thor_combat", c)),
-        )
-        desc, ended = _strip_end_marker(desc)
-
-        if not desc.strip():
-            return ("", ended)
-
-        action = self.arbiter.parse(
-            player_action=desc, actor_id="thor", actor_name=char.name,
-            available_targets=enemies, resources=resources, actor_char=char,
-            world_state=ws,
-        )
-        debug = json.dumps(action, ensure_ascii=False)
-        if not action.get("valid"):
-            self._emit(ActionResult(char.name, f"無效行動：{action.get('reason')}", debug, valid=False))
-            return ("", ended)
-
-        a_type = action.get("type", "").upper()
-        if "action" in action.get("consumes", []) and resources.get("action", 0) <= 0:
-            self._emit(StatusMessage(f"{char.name} 本回合動作已用完"))
-            return ("", ended)
-
-        result  = execute_action(action, ws)
-        if result.get("type") == "ERROR":
-            self._emit(ActionResult(char.name, f"{char.name}：{result['message']}", debug, valid=False))
-            return ("", ended)
-        summary = format_result(desc, result, char.name)
-        self._emit(ActionResult(char.name, summary, debug, valid=True))
-        ws.log_event("system", summary)
-        consume_resources(resources, action, result)
-        return (summary, ended)
-
-    def _aria_sub_action(self, char, resources: dict):
-        """One Aria sub-action. Returns (result_text, ended) tuple, or "quit"."""
-        ws   = self.world_state
-        aria = ws.characters["aria"]
-        while not self._stop_flag.is_set():
-            enemies = self._alive_enemies()
-            from .engine.combat import build_combat_context
-            ctx = build_combat_context("aria", aria, ws, resources, ws.combat.round_number if ws.combat else 0)
-            self._emit(CombatPrompt(aria, enemies, info_text=format_aria_combat_info(aria, ctx)))
-            human_input = self._get_input()
-
-            if human_input is None:
-                return "quit"
-            stripped = human_input.strip()
-            if not stripped:
-                continue
-            if stripped.lower() == "quit":
-                self._emit(GameOver("冒險結束。再見！"))
-                return "quit"
-            if stripped.lower() in _ARIA_END_INPUTS:
-                return ("", True)
-
-            action = self.arbiter.parse(
-                player_action=human_input, actor_id="aria", actor_name=aria.name,
-                available_targets=enemies, resources=resources, actor_char=aria,
-                world_state=ws,
-            )
-            debug = json.dumps(action, ensure_ascii=False)
-            if not action.get("valid"):
-                self._emit(StatusMessage(
-                    f"❌ {action.get('reason', '無效行動')}\n"
-                    f"💡 {action.get('suggestion', '')}"
-                ))
-                continue
-
-            a_type = action.get("type", "").upper()
-            if "action" in action.get("consumes", []) and resources.get("action", 0) <= 0:
-                self._emit(StatusMessage("動作已用完，請改用移動或輸入「結束」結束回合"))
-                continue
-
-            result  = execute_action(action, ws)
-            if result.get("type") == "ERROR":
-                self._emit(StatusMessage(f"❌ {result.get('message')}"))
-                continue
-            summary = format_result(human_input, result, aria.name)
-            self._emit(ActionResult(aria.name, summary, debug, valid=True))
-            ws.log_event("system", summary)
-            ws.event_log.append(f"凱恩：{human_input}")
-            consume_resources(resources, action, result)
-            return (summary, False)
-
-        return "quit"
 
     # ── NPC Conversation ──────────────────────────────────────────────────────
 

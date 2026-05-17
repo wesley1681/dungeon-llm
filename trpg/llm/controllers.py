@@ -98,3 +98,61 @@ class HumanController(ActorController):
         if text.lower() == "quit":
             return ActorDecision(quit=True)
         return ActorDecision(description=text)
+
+
+# ── LLM-driven controllers ───────────────────────────────────────────────────
+
+class LLMPlayerController(ActorController):
+    """Wraps a PlayerAgent. Builds a Thor-style combat nudge from CombatContext
+    and lets the agent generate a sub-action description; strips <END> marker."""
+
+    def __init__(self, agent, emit_event):
+        self.agent = agent
+        self.emit_event = emit_event
+
+    def _build_nudge(self, char, ctx: CombatContext) -> str:
+        action_status = "可用" if ctx.resources.get("action", 0) > 0 else "已用完"
+        move_left = ctx.resources.get("movement", 0.0)
+        return (
+            f"【戰鬥回合 {ctx.round_num}】\n"
+            f"你的位置：{ctx.actor_position:.1f}m\n"
+            f"剩餘資源：動作 {action_status}、移動 {move_left:.1f}m\n"
+            f"HP：{char.hp}/{char.max_hp}\n"
+            f"武器：{ctx.weapons_str}\n"
+            f"盟友：{ctx.allies_str}\n"
+            f"敵人：{ctx.enemies_str}\n"
+            f"做一個 sub-action（攻擊 / 移動 / 閃避）；想結束本回合就在訊息結尾加 <END>。\n"
+            f"例：「我衝向哥布林。」不加 <END>→系統會問你下一步；"
+            f"「我用長劍砍他。<END>」→ 砍完直接結束。"
+        )
+
+    def take_sub_action(self, char, ctx: CombatContext) -> ActorDecision:
+        from ..game import StreamChunk
+        nudge = self._build_nudge(char, ctx)
+        desc = self.agent.generate(
+            nudge=nudge,
+            on_chunk=lambda c, thinking=False: self.emit_event(StreamChunk("thor_combat", c)),
+        )
+        desc, ended = _strip_marker(desc, _END_RE)
+        return ActorDecision(description=desc, ended=ended)
+
+
+class LLMNpcController(ActorController):
+    """Wraps an NpcAgent. Delegates to NpcAgent.combat_action() which already
+    returns (desc, fled, ended); maps to ActorDecision."""
+
+    def __init__(self, agent, emit_event):
+        self.agent = agent
+        self.emit_event = emit_event
+
+    def take_sub_action(self, char, ctx: CombatContext) -> ActorDecision:
+        from ..game import StreamChunk
+        actor = char.name
+        desc, fled, ended = self.agent.combat_action(
+            ctx.weapons_str, ctx.allies_str, ctx.enemies_str,
+            resources=ctx.resources,
+            on_chunk=lambda c, thinking=False: self.emit_event(StreamChunk("npc", c, actor=actor)),
+        )
+        if fled:
+            return ActorDecision(fled=True)
+        return ActorDecision(description=desc, ended=ended)
