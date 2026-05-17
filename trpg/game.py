@@ -100,7 +100,7 @@ _STOP = object()
 # ── Combat turn structure ─────────────────────────────────────────────────────
 
 # Inputs from human player that mean "end my turn"
-_ARIA_END_INPUTS = {"end", "結束", "結束回合", "我這就好", "我這回合到這"}
+_PLAYER_END_INPUTS = {"end", "結束", "結束回合", "我這就好", "我這回合到這"}
 # Safety cap: max sub-actions per character per round (prevents runaway loops)
 _MAX_SUB_ACTIONS = 5
 
@@ -161,7 +161,7 @@ class GameSession:
 
         from .llm.controllers import HumanController, LLMPlayerController, LLMNpcController
         self.controllers = {
-            "aria": HumanController("aria", self._get_input, self._emit, _ARIA_END_INPUTS),
+            "aria": HumanController("aria", self._get_input, self._emit, _PLAYER_END_INPUTS),
             "thor": LLMPlayerController(thor_agent, self._emit),
         }
         for cid, agent in self.npc_agents.items():
@@ -214,16 +214,17 @@ class GameSession:
         return {cid: c.name for cid, c in ws.characters.items()
                 if c.is_npc and c.is_alive() and c.attitude == 0}
 
-    def _alive_pcs(self) -> dict[str, str]:
-        """Strict PCs only — used for the 'did the party wipe?' GameOver check."""
+    def _alive_human_pcs(self) -> dict[str, str]:
+        """Strict human-controlled PCs only — used for the 'did the party wipe?'
+        GameOver check. Follower NPC death does NOT trigger GameOver."""
         return {cid: c.name for cid, c in self.world_state.characters.items()
                 if not c.is_npc and c.is_alive()}
 
-    def _alive_side_b(self) -> dict[str, str]:
-        """Side B = PCs + follower NPCs that are still alive.
+    def _alive_party(self) -> dict[str, str]:
+        """All alive party members (human PCs + follower NPCs).
 
-        Used as the target pool for hostile NPC turns (they may attack anyone
-        on the party's side).
+        Used as the target pool for hostile NPC turns and for the GameOver
+        wipe check at the party level.
         """
         ws = self.world_state
         return {cid: c.name for cid, c in ws.characters.items()
@@ -305,7 +306,7 @@ class GameSession:
 
         thor_text = self.thor_agent.generate(on_chunk=_thor_chunk)
         ws.log_event("thor", thor_text)
-        ws.event_log.append(f"索爾：{thor_text}")
+        ws.event_log.append(f"{ws.characters['thor'].name}：{thor_text}")
 
         # ── Player prompt ─────────────────────────────────────────────────────
         self._emit(ExplorationPrompt(ws.characters["aria"], gm_text, thor_text))
@@ -316,8 +317,10 @@ class GameSession:
             return True
 
         ws.log_event("aria", player_input)
-        ws.event_log.append(f"凱恩：{player_input}")
-        self._tag_actions = [f"索爾：{thor_text}", f"凱恩：{player_input}"]
+        ws.event_log.append(f"{ws.characters['aria'].name}：{player_input}")
+        thor_name = ws.characters["thor"].name
+        aria_name = ws.characters["aria"].name
+        self._tag_actions = [f"{thor_name}：{thor_text}", f"{aria_name}：{player_input}"]
         return False
 
     # ── Combat ────────────────────────────────────────────────────────────────
@@ -334,7 +337,7 @@ class GameSession:
 
         while not self._stop_flag.is_set():
             enemies = self._alive_enemies()
-            pcs     = self._alive_pcs()
+            pcs     = self._alive_human_pcs()
 
             if not enemies:
                 ws.combat.active = False
@@ -386,7 +389,7 @@ class GameSession:
                 tick_status_effects(char, "self_turn_end", combat.round_number)
                 if stop_round == "quit":
                     return log
-                if not self._alive_enemies() or not self._alive_pcs():
+                if not self._alive_enemies() or not self._alive_human_pcs():
                     break
 
             # Phase: end of round (after initiative cycle)
@@ -423,7 +426,7 @@ class GameSession:
                 return "quit"
             if not char.is_alive():
                 return ""
-            if not self._alive_enemies() or not self._alive_pcs():
+            if not self._alive_enemies() or not self._alive_human_pcs():
                 return ""
 
             ctx = build_combat_context(cid, char, ws, resources, round_num)
@@ -495,6 +498,8 @@ class GameSession:
         summary = format_result(decision.description, result, char.name)
         self._emit(ActionResult(char.name, summary, debug, valid=True))
         ws.log_event("system", summary)
+        if cid == "aria":
+            ws.event_log.append(f"{char.name}：{decision.description}")
         consume_resources(resources, action, result)
         return summary
 
@@ -572,9 +577,9 @@ class GameSession:
 
             # ── Social skill check (after both Thor + Aria have spoken) ───────
             combined = (
-                f"{thor_name}：{thor_text.strip()}\n凱恩：{player_input}"
+                f"{thor_name}：{thor_text.strip()}\n{aria_name}：{player_input}"
                 if spoke
-                else f"凱恩：{player_input}"
+                else f"{aria_name}：{player_input}"
             )
             check = self._run_social_check(combined, npc_agent, npc_id)
             if check and check[0] == "attack":

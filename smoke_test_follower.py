@@ -5,7 +5,7 @@ No LLM calls — tests the data plumbing only:
   - RECRUIT sets pending_join_decision on agent
   - NpcAgent parses <JOIN> / <DECLINE> markers
   - TRAVEL syncs follower to new room.npc_ids
-  - _alive_side_b includes follower
+  - _alive_party includes follower
   - build_combat_context: hostile sees follower as enemy; follower sees PCs+other followers as allies
   - ATTACK_NPC on follower removes from party
   - Dead follower cleanup after combat end
@@ -92,8 +92,8 @@ def main() -> int:
         npc_agents=npc_agents,
     )
 
-    side_b = session._alive_side_b()
-    print(f"\n_alive_side_b: {side_b}")
+    side_b = session._alive_party()
+    print(f"\n_alive_party: {side_b}")
     assert "aria" in side_b and "thor" in side_b and "civilian" in side_b
     assert "goblin_1" not in side_b
 
