@@ -425,54 +425,14 @@ class GameSession:
             self.world_state.log_event("system", note)
 
     def _build_npc_combat_context(self, cid: str, char) -> tuple[str, str, str]:
-        """Build (weapons, allies, enemies) strings for an NPC's combat prompt.
-
-        Sides are determined by party membership; entries include positions
-        and distances relative to the acting NPC so the LLM can decide whether
-        to attack from here, move closer, or hold back.
-        """
-        ws = self.world_state
-        weapon_parts = []
-        for w in char.weapons:
-            if w.range_type == "近戰":
-                weapon_parts.append(f"{w.name}（近戰，伸手 {w.range_normal:.1f}m）")
-            else:
-                weapon_parts.append(
-                    f"{w.name}（遠程，正常 {w.range_normal:.0f}m / 最大 {w.range_long:.0f}m）"
-                )
-        weapons_str = "、".join(weapon_parts) or "無武器（徒手）"
-
-        room = ws.dungeon_map.current_room if ws.dungeon_map else None
-        room_ids = set(room.npc_ids) if room else set(ws.characters.keys())
-        is_party_npc = ws.is_party_ally(cid)
-
-        def _entry(other) -> str:
-            d = abs(other.position - char.position)
-            dodging = "（閃避中）" if other.has_status("dodging") else ""
-            return f"{other.name} HP {other.hp}/{other.max_hp}，位置 {other.position:.1f}m（距你 {d:.1f}m）{dodging}"
-
-        ally_parts, enemy_parts = [], []
-        for oid, other in ws.characters.items():
-            if oid == cid or not other.is_alive():
-                continue
-            other_in_party = ws.is_party_ally(oid)
-            other_hostile = other.is_npc and other.attitude == 0 and oid in room_ids
-            entry = _entry(other)
-            if is_party_npc:
-                if other_in_party:
-                    ally_parts.append(entry)
-                elif other_hostile:
-                    enemy_parts.append(entry)
-            else:
-                if other_hostile:
-                    ally_parts.append(entry)
-                elif other_in_party:
-                    enemy_parts.append(entry)
-        return (
-            weapons_str,
-            "、".join(ally_parts) or "無",
-            "、".join(enemy_parts) or "無",
+        """Backward-compat wrapper — returns (weapons, allies, enemies) strings.
+        New code should call engine.combat.build_combat_context directly."""
+        from .engine.combat import build_combat_context, MOVE_BUDGET_M
+        ctx = build_combat_context(
+            actor_id=cid, actor=char, world_state=self.world_state,
+            resources={"action": 1, "movement": MOVE_BUDGET_M}, round_num=0,
         )
+        return ctx.weapons_str, ctx.allies_str, ctx.enemies_str
 
     def _npc_sub_action(self, cid: str, char, targets: dict,
                         resources: dict) -> tuple[str, bool]:

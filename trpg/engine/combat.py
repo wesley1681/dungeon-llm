@@ -1,3 +1,5 @@
+from dataclasses import dataclass, field
+
 from .dice import roll, roll_d20, combine_advantage
 from .character import Character, CombatState
 from .world_state import WorldState
@@ -510,3 +512,89 @@ def format_result(player_description: str, result: dict, actor_name: str = "") -
         lines.append(f"錯誤：{result['message']}")
 
     return "\n".join(lines)
+
+
+# ── Unified combat context ────────────────────────────────────────────────────
+
+@dataclass
+class CombatContext:
+    """Snapshot of combat state from a single actor's perspective.
+
+    Built once per sub-action by GameSession and consumed by all three
+    ActorController implementations. Strings are pre-formatted for direct
+    inclusion in LLM prompts or human UI.
+    """
+    round_num: int
+    actor_id: str
+    actor_position: float
+    weapons_str: str         # "長劍（近戰 1.5m）、短弓（遠程 24m / 最大 96m）"
+    allies_str: str          # "凱恩 HP 22/22，位置 0.0m（距你 0.0m）"
+    enemies_str: str         # "哥布林 HP 7/7，位置 1.5m（距你 1.5m）"
+    enemies: dict = field(default_factory=dict)   # {cid: name} — alive valid targets
+    resources: dict = field(default_factory=dict)
+
+
+def _weapons_str(char) -> str:
+    parts = []
+    for w in char.weapons:
+        if w.range_type == "近戰":
+            parts.append(f"{w.name}（近戰，伸手 {w.range_normal:.1f}m）")
+        else:
+            parts.append(
+                f"{w.name}（遠程，正常 {w.range_normal:.0f}m / 最大 {w.range_long:.0f}m）"
+            )
+    return "、".join(parts) or "無武器（徒手）"
+
+
+def _entry_for(other, viewer) -> str:
+    d = abs(other.position - viewer.position)
+    dodging = "（閃避中）" if other.has_status("dodging") else ""
+    return f"{other.name} HP {other.hp}/{other.max_hp}，位置 {other.position:.1f}m（距你 {d:.1f}m）{dodging}"
+
+
+def build_combat_context(actor_id: str, actor, world_state,
+                         resources: dict, round_num: int) -> CombatContext:
+    """Build the combat-side view that any controller (LLM or human) consumes.
+
+    Sides are decided by party membership: from the actor's POV, party members
+    are allies and hostile NPCs (alive, in the same room, attitude == 0) are
+    enemies. Room scoping applies if a dungeon_map is present.
+    """
+    ws = world_state
+    is_party = ws.is_party_ally(actor_id)
+    room = ws.dungeon_map.current_room if ws.dungeon_map else None
+    room_ids = set(room.npc_ids) if room else set(ws.characters.keys())
+
+    ally_parts: list[str] = []
+    enemy_parts: list[str] = []
+    enemies_dict: dict[str, str] = {}
+
+    for oid, other in ws.characters.items():
+        if oid == actor_id or not other.is_alive():
+            continue
+        other_in_party = ws.is_party_ally(oid)
+        other_hostile = other.is_npc and other.attitude == 0 and oid in room_ids
+        entry = _entry_for(other, actor)
+        if is_party:
+            if other_in_party:
+                ally_parts.append(entry)
+            elif other_hostile:
+                enemy_parts.append(entry)
+                enemies_dict[oid] = other.name
+        else:
+            if other_hostile:
+                ally_parts.append(entry)
+            elif other_in_party:
+                enemy_parts.append(entry)
+                enemies_dict[oid] = other.name
+
+    return CombatContext(
+        round_num=round_num,
+        actor_id=actor_id,
+        actor_position=actor.position,
+        weapons_str=_weapons_str(actor),
+        allies_str="、".join(ally_parts) or "無",
+        enemies_str="、".join(enemy_parts) or "無",
+        enemies=enemies_dict,
+        resources=dict(resources),
+    )
