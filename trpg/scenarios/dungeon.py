@@ -179,7 +179,7 @@ def build_world_state() -> WorldState:
                     "東邊有扇半開的木門，南邊是來時的走廊。"
                 ),
                 exits={"south": "entrance", "east": "storage_room"},
-                npc_ids=["goblin_1", "goblin_2"],
+                npc_ids=["goblin_1", "goblin_2", "goblin_shaman"],
                 loot=[
                     Consumable("治療藥水", 1, "heal", "2d4+2"),
                     # 守衛室的月光草明顯可見（散落在骨堆旁）
@@ -224,7 +224,7 @@ def build_world_state() -> WorldState:
                     "這裡只有南邊一條退路。"
                 ),
                 exits={"south": "storage_room"},
-                npc_ids=["goblin_boss", "goblin_3", "goblin_shaman"],
+                npc_ids=["goblin_boss", "goblin_3"],
                 loot=[
                     Consumable("護符", 1, "quest", ""),
                 ],
@@ -313,6 +313,7 @@ def build_npc_agents(world_state: WorldState, model: str,
                      base_url: str, backend: str) -> dict:
     """Build all NPC agents for this scenario. Add new NPCs here only."""
     def _agent(cid, personality, tactics="", combat_tactics="",
+               combat_reasoning=False,
                secrets=None, reveal=3, quests=None):
         return NpcAgent(
             model=model,
@@ -321,6 +322,7 @@ def build_npc_agents(world_state: WorldState, model: str,
             personality=personality,
             tactics=tactics,
             combat_tactics=combat_tactics,
+            combat_reasoning=combat_reasoning,
             secrets=secrets,
             reveal_threshold=reveal,
             quests=quests,
@@ -339,5 +341,6 @@ def build_npc_agents(world_state: WorldState, model: str,
         "goblin_2":      _agent("goblin_2",      GOBLIN_GRUNT_PERSONALITY),
         "goblin_3":      _agent("goblin_3",      GOBLIN_ARCHER_PERSONALITY),
         "goblin_boss":   _agent("goblin_boss",   GOBLIN_BOSS_PERSONALITY),
-        "goblin_shaman": _agent("goblin_shaman", GOBLIN_SHAMAN_PERSONALITY),
+        "goblin_shaman": _agent("goblin_shaman", GOBLIN_SHAMAN_PERSONALITY,
+                                combat_reasoning=True),
     }

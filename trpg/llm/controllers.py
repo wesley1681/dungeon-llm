@@ -17,12 +17,40 @@ from ..engine.combat import CombatContext
 
 _END_RE = re.compile(r'<\s*END\s*>', re.IGNORECASE)
 _FLEE_RE = re.compile(r'<\s*FLEE\s*>', re.IGNORECASE)
+# Chain-of-thought block emitted by combat_reasoning NPCs. Stripped before
+# the action text is handed to the arbiter; the raw stream still goes to the
+# UI so the human can watch the NPC reason in real time.
+_THINK_RE = re.compile(r'<\s*think\s*>.*?<\s*/\s*think\s*>',
+                       re.IGNORECASE | re.DOTALL)
 
 
 def _strip_marker(text: str, pat: re.Pattern) -> tuple[str, bool]:
     matched = bool(pat.search(text))
     cleaned = pat.sub("", text).strip()
     return cleaned, matched
+
+
+_REASONING_INSTRUCTION = """
+## 戰鬥推理（先想、後做）
+輸出動作前，先用 <think>...</think> 包住簡短分析（3-5 行就好），
+然後另起一行才是實際 sub-action。<END> / <FLEE> 標記放在動作行尾，不要寫在 <think> 裡。
+
+<think> 內容建議涵蓋（不必每點都寫）：
+- 自己、關鍵敵人、盟友的座標與距離
+- 想用的招式 vs 射程/AOE 半徑——誰會被打到（含自己人）
+- 至少評估一個替代方案（不同目標、不同位置、或換招）
+- 結論：選哪個，為什麼
+
+範例：
+<think>
+我 6m，索爾 0m，葛茲 1.5m，盟友丙 6m。
+火球半徑 6m → 自爆區 0~12m，我在裡面。
+若放 -1m：傷索爾/凱恩，自己距 7m 安全，丙距 7m 安全。
+若放 6m：我自爆死，不值。
+選 -1m。
+</think>
+我把火球術扔到 -1m 處。
+"""
 
 
 @dataclass
@@ -315,6 +343,10 @@ class LLMNpcController(ActorController):
             "  （AOE 法術記得避開隊友和自己——可指定一個遠離盟友的座標當圓心）\n"
             if ctx.spells_str else ""
         )
+        reasoning_section = (
+            _REASONING_INSTRUCTION
+            if getattr(self.agent, "combat_reasoning", False) else ""
+        )
         return (
             f"{combat_tactics}"
             f"【戰鬥回合 {ctx.round_num}】\n"
@@ -333,6 +365,7 @@ class LLMNpcController(ActorController):
             f"- 結束本回合：單獨輸出 <END>\n"
             f"完成本動作想結束回合，訊息結尾加 <END>。\n"
             f"逃跑：訊息結尾加 <FLEE>，立刻離開戰場。"
+            f"{reasoning_section}"
         )
 
     def _generate(self, char, ctx: CombatContext, error_feedback: str) -> ActorDecision:
@@ -347,6 +380,10 @@ class LLMNpcController(ActorController):
                 StreamChunk("npc", c, actor=actor)
             ),
         )
+        # Strip <think>...</think> CoT block first — only the post-think text is
+        # an actual action description for the arbiter. The live stream above
+        # has already shown the full think+action to the UI for observability.
+        desc = _THINK_RE.sub("", desc).strip()
         # <FLEE> overrides everything (leave combat); otherwise check <END>.
         desc, fled = _strip_marker(desc, _FLEE_RE)
         if fled:

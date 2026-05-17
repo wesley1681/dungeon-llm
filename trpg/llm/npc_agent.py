@@ -141,6 +141,7 @@ class NpcAgent:
                  base_url: str, backend: str, world_state, options: dict = None,
                  tactics: str = "",
                  combat_tactics: str = "",
+                 combat_reasoning: bool = False,
                  secrets: list[str] = None, reveal_threshold: int = 3,
                  quests: list[Quest] = None):
         self.model            = model
@@ -149,7 +150,10 @@ class NpcAgent:
         self.base_url         = base_url
         self.backend          = backend
         self.world_state      = world_state
-        self.options          = options or {"temperature": 0.85, "num_predict": 150}
+        # Reasoning agents need budget for <think>…</think> + action; plain
+        # NPCs stay slim. Explicit `options=` still overrides.
+        default_predict = 500 if combat_reasoning else 150
+        self.options          = options or {"temperature": 0.85, "num_predict": default_predict}
         self._personality     = personality
         # Routed by mode: _system() (conversation) reads _tactics; combat
         # callers read .combat_tactics directly (exposed as public attr so
@@ -157,6 +161,11 @@ class NpcAgent:
         # LLMPlayerController reads PlayerAgent.combat_tactics).
         self._tactics         = tactics
         self.combat_tactics   = combat_tactics
+        # When True, LLMNpcController appends a chain-of-thought instruction to
+        # the combat nudge (think inside <think>...</think>, then action). The
+        # controller strips the think block before passing to the arbiter.
+        # Opt-in: small grunts stay fast/cheap; bosses & casters get reasoning.
+        self.combat_reasoning = combat_reasoning
         self._secrets         = secrets or []
         self._reveal_threshold = reveal_threshold
         self._quests          = quests or []

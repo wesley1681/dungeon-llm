@@ -464,13 +464,18 @@ def test_goblin_shaman_scenario() -> None:
     assert shaman.proficiency_bonus == 2
     assert shaman.stats.modifier("WIS") == 3
 
-    # Placed in boss_chamber
-    assert "goblin_shaman" in ws.dungeon_map.rooms["boss_chamber"].npc_ids, \
-        f"shaman not in boss_chamber.npc_ids: {ws.dungeon_map.rooms['boss_chamber'].npc_ids}"
+    # Placed in guard_room (the first combat encounter — easier to playtest
+    # than waiting until boss_chamber). Must NOT be in boss_chamber anymore.
+    assert "goblin_shaman" in ws.dungeon_map.rooms["guard_room"].npc_ids, \
+        f"shaman not in guard_room.npc_ids: {ws.dungeon_map.rooms['guard_room'].npc_ids}"
+    assert "goblin_shaman" not in ws.dungeon_map.rooms["boss_chamber"].npc_ids, \
+        f"shaman should not be in boss_chamber anymore"
 
-    # NpcAgent registered
+    # NpcAgent registered with combat_reasoning enabled
     agents = build_npc_agents(ws, model="dummy", base_url="http://x", backend="ollama")
     assert "goblin_shaman" in agents, f"agent registry missing shaman: {list(agents)}"
+    assert agents["goblin_shaman"].combat_reasoning is True, \
+        "shaman should have combat_reasoning enabled as the CoT pilot"
     print("Goblin shaman scenario data: OK")
 
 
@@ -649,6 +654,93 @@ def test_spell_target_position_overrides_target() -> None:
     print("SPELL target_position overrides target: OK")
 
 
+def test_combat_reasoning_nudge_toggle() -> None:
+    """combat_reasoning=True attaches the <think> instruction to the nudge;
+    combat_reasoning=False keeps the nudge slim."""
+    from trpg.llm.controllers import LLMNpcController
+    from trpg.engine.combat import CombatContext, MOVE_BUDGET_M
+
+    class _Agent:
+        combat_tactics = ""
+        char_id = "x"
+        combat_reasoning = True
+
+    class _Char:
+        name = "薩滿"
+        hp = 18
+        max_hp = 18
+
+    ctx = CombatContext(
+        round_num=1, actor_id="x", actor_position=6.0,
+        weapons_str="骨杖", spells_str="火球術（3 環）",
+        allies_str="無", enemies_str="索爾",
+        enemies={"thor": "索爾"},
+        resources={"action": 1, "movement": MOVE_BUDGET_M},
+    )
+
+    ctrl = LLMNpcController(_Agent(), emit_event=lambda e: None)
+    nudge_on = ctrl._build_nudge(_Char(), ctx)
+    assert "戰鬥推理" in nudge_on, "reasoning header missing"
+    assert "<think>" in nudge_on, "instruction must mention <think>"
+    assert "替代方案" in nudge_on, "must prompt for alternative evaluation"
+
+    _Agent.combat_reasoning = False
+    nudge_off = ctrl._build_nudge(_Char(), ctx)
+    assert "戰鬥推理" not in nudge_off, "reasoning section leaked when toggle off"
+    assert "<think>" not in nudge_off
+    print("combat_reasoning nudge toggle: OK")
+
+
+def test_think_block_stripped_from_action() -> None:
+    """LLMNpcController removes <think>...</think> before the action goes to
+    the arbiter. The block can span multiple lines; <END>/<FLEE> on the
+    action line still parse correctly afterwards."""
+    from trpg.llm.controllers import LLMNpcController
+    from trpg.engine.combat import CombatContext, MOVE_BUDGET_M
+
+    class _Agent:
+        combat_tactics = ""
+        combat_reasoning = True
+        def generate(self, nudge="", combat=False, on_chunk=None):
+            return (
+                "<think>\n"
+                "我在 6m，火球半徑 6m → 自爆區 0~12m。\n"
+                "丟 -1m：索爾受傷，我距 7m 安全。\n"
+                "選 -1m。\n"
+                "</think>\n"
+                "我把火球術扔到 -1m 處。<END>"
+            )
+
+    class _Char:
+        name = "薩滿"
+        hp = 18
+        max_hp = 18
+        position = 6.0
+
+    ctx = CombatContext(
+        round_num=1, actor_id="x", actor_position=6.0,
+        weapons_str="骨杖", spells_str="火球術（3 環）",
+        allies_str="無", enemies_str="索爾",
+        enemies={"thor": "索爾"},
+        resources={"action": 1, "movement": MOVE_BUDGET_M},
+    )
+
+    ctrl = LLMNpcController(_Agent(), emit_event=lambda e: None)
+    decision = ctrl.take_sub_action(_Char(), ctx)
+
+    # think block fully removed
+    assert "<think>" not in decision.description
+    assert "</think>" not in decision.description
+    assert "自爆區" not in decision.description, \
+        f"reasoning content leaked into action: {decision.description!r}"
+    # action survived
+    assert "火球術" in decision.description
+    assert "-1m" in decision.description
+    # <END> still detected after think strip
+    assert decision.ended is True, "ended flag should fire from <END>"
+    print("think block stripped: OK")
+
+
 def main() -> int:
     test_spell_dataclass_and_catalog()
     test_character_spell_fields()
@@ -667,6 +759,8 @@ def main() -> int:
     test_caster_starts_in_back_row()
     test_spell_handler_target_position()
     test_spell_target_position_overrides_target()
+    test_combat_reasoning_nudge_toggle()
+    test_think_block_stripped_from_action()
     test_end_to_end_shaman_fireball()
     print("\n=== ALL SPELL TESTS PASSED ===")
     return 0
