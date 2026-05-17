@@ -8,7 +8,12 @@ Hook points (called by engine/combat.py):
   on_incoming_attack   — resolve_attack, target side, before roll
   on_outgoing_damage   — resolve_attack, attacker side, after hit (e.g. sneak attack)
   on_incoming_damage   — apply_damage, target side (e.g. resistance)
-  on_critical_hit      — resolve_attack, on natural 20
+  on_critical_hit      — resolve_attack, on natural 20 (notification only; return value ignored)
+
+Convention: the first positional argument of every hook is the Character this
+modifier is currently attached to (the "subject"). The opposing combatant
+is always passed too. Character/Weapon parameters are intentionally untyped
+to avoid forward-reference imports — call sites pass real objects.
 
 All hooks default to no-op so subclasses only override what they care about.
 """
