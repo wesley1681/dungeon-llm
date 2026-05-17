@@ -85,7 +85,10 @@ def attack_range_check(attacker: Character, target: Character, weapon) -> tuple[
 
 def resolve_attack(attacker: Character, target: Character,
                    weapon=None, mode: str = "normal") -> tuple[bool, int]:
-    """Returns (hit, total_roll). mode: 'normal' / 'advantage' / 'disadvantage'."""
+    """Returns (hit, total_roll). mode: 'normal' / 'advantage' / 'disadvantage'.
+
+    Iterates attacker + target Modifiers to apply hook-based mode adjustments
+    (equipment passives, status effects like Dodging, etc.)."""
     if weapon is None:
         weapon = attacker.get_weapon()
     if "精巧" in (weapon.properties if weapon else []):
@@ -94,15 +97,31 @@ def resolve_attack(attacker: Character, target: Character,
         stat_mod = attacker.stats.modifier("DEX")
     else:
         stat_mod = attacker.stats.modifier("STR")
+
+    for m in attacker.iter_modifiers():
+        mode = m.on_outgoing_attack(attacker, target, weapon, mode)
+    for m in target.iter_modifiers():
+        mode = m.on_incoming_attack(target, attacker, weapon, mode)
+
     attack_roll = roll_d20(mode)
     total = attack_roll + stat_mod + attacker.proficiency_bonus
     return total >= target.ac, total
 
 
-def apply_damage(target: Character, damage_notation: str) -> int:
-    damage = roll(damage_notation)
-    target.hp = max(0, target.hp - damage)
-    return damage
+def apply_damage(target: Character, amount, dtype: str = "untyped",
+                 attacker=None) -> int:
+    """Apply damage to target. `amount` is either a dice notation string
+    (e.g. '1d6+2') or a pre-rolled int. Filters through target's Modifiers.
+
+    Returns the actual damage dealt after modifiers.
+    """
+    if isinstance(amount, str):
+        amount = roll(amount)
+    for m in target.iter_modifiers():
+        amount = m.on_incoming_damage(target, attacker, amount, dtype)
+    amount = max(0, amount)
+    target.hp = max(0, target.hp - amount)
+    return amount
 
 
 def apply_heal(target: Character, dice_notation: str) -> int:
@@ -179,8 +198,10 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
         }
         if hit:
             base_dmg = roll(weapon.damage_dice)
-            damage   = max(1, base_dmg + dmg_mod)
-            target.hp = max(0, target.hp - damage)
+            raw = max(1, base_dmg + dmg_mod)
+            for m in attacker.iter_modifiers():
+                raw = m.on_outgoing_damage(attacker, target, raw, weapon.damage_type)
+            damage = apply_damage(target, raw, dtype=weapon.damage_type, attacker=attacker)
             result.update({
                 "damage":        damage,
                 "damage_dice":   weapon.damage_dice,
