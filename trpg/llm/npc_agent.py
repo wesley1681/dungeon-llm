@@ -320,12 +320,17 @@ class NpcAgent:
 
     def combat_action(self, weapons: str, allies: str, enemies: str,
                       resources: dict | None = None,
+                      error_feedback: str = "",
                       on_chunk=None) -> tuple[str, bool, bool]:
         """Decide one combat sub-action.
 
         resources: {"action": int, "movement": float}
                    remaining resources for THIS turn (the caller decrements
                    between sub-actions). Used to inform the LLM.
+
+        error_feedback: if non-empty, appended to the prompt as a system note
+                        about why the previous sub-action was rejected — the
+                        agent uses it to pick something else.
 
         Returns (description, fled, ended):
           - description: cleaned natural-language action (markers stripped)
@@ -354,6 +359,11 @@ class NpcAgent:
             enemies=enemies,
             resources_block=resources_block,
         )
+        if error_feedback:
+            prompt = prompt + (
+                f"\n\n## 系統訊息\n上次行動被拒：{error_feedback}\n"
+                "請改選不同的 sub-action。"
+            )
         # History first so the NPC reads the narrative in order; identity +
         # combat state + action menu go last to maximize attention to the
         # current situation when generating the next sub-action.

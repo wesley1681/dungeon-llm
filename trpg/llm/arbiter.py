@@ -22,32 +22,20 @@ class ArbiterAgent:
         actor_id: str,
         actor_name: str,
         available_targets: dict[str, str],  # {id: name}，只含存活目標
-        resources: dict,                    # {"action": int, "movement": float}
         actor_char=None,                    # Character 物件，提供武器/消耗品列表
-        world_state=None,                   # 用來查目標位置 / 計算距離
     ) -> dict:
-        action_str  = "可用" if resources.get("action") else "已用完"
-        move_str    = f"{resources.get('movement', 0)} 公尺"
-
-        # Build weapon / consumable lines with range info
+        # Arbiter only translates intent → JSON. Range / distance / resources /
+        # damage are engine concerns and not shown — keeping the prompt narrow
+        # makes parsing more reliable. Engine errors trigger a retry upstream.
         if actor_char:
-            weapon_descs = []
-            for w in actor_char.weapons:
-                if w.range_type == "近戰":
-                    weapon_descs.append(f"{w.name}（近戰，伸手 {w.range_normal:.1f}m）")
-                else:
-                    weapon_descs.append(
-                        f"{w.name}（遠程，正常 {w.range_normal:.0f}m / 最大 {w.range_long:.0f}m）"
-                    )
-            weapons_str = "、".join(weapon_descs) or "無武器"
+            weapons_str = "、".join(w.name for w in actor_char.weapons) or "無武器"
             heals = [
                 f"{c.name}×{c.quantity}" if c.quantity > 1 else c.name
                 for c in actor_char.consumables
                 if c.effect_type == "heal" and c.quantity > 0
             ]
             throws = [
-                f"{c.name}×{c.quantity}（AOE投擲，{c.effect_value}）" if c.quantity > 1
-                else f"{c.name}（AOE投擲，{c.effect_value}）"
+                f"{c.name}×{c.quantity}" if c.quantity > 1 else c.name
                 for c in actor_char.consumables
                 if c.effect_type == "throw" and c.quantity > 0
             ]
@@ -58,33 +46,25 @@ class ArbiterAgent:
             items_str   = "未知"
             throws_str  = "未知"
 
-        # Positions + distances
-        actor_pos = actor_char.position if actor_char else 0.0
-        target_lines = []
-        for cid, name in available_targets.items():
-            target_char = world_state.characters.get(cid) if world_state else None
-            if target_char:
-                d = abs(target_char.position - actor_pos)
-                dodging = "（閃避中）" if target_char.has_status("dodging") else ""
-                target_lines.append(f"{name}（{cid}）：距離 {d:.1f}m，位置 {target_char.position:.1f}m{dodging}")
-            else:
-                target_lines.append(f"{name}（{cid}）")
+        target_lines = [f"{name}（{cid}）" for cid, name in available_targets.items()]
         targets_str = "\n  ".join(target_lines) if target_lines else "無"
 
         situation = (
             f"## 當前情況\n"
-            f"行動者：{actor_name}（{actor_id}），位置 {actor_pos:.1f}m\n"
+            f"行動者：{actor_name}（{actor_id}）\n"
             f"可用武器：{weapons_str}\n"
             f"可用治療道具：{items_str}\n"
-            f"可用投擲物（AOE）：{throws_str}\n"
+            f"可用投擲物：{throws_str}\n"
             f"可攻擊目標：\n  {targets_str}\n"
-            f"剩餘資源：動作 {action_str}、移動距離 {move_str}\n"
         )
 
-        messages = [
-            {"role": "system", "content": COMBAT_RULEBOOK + "\n\n" + situation},
-            {"role": "user",   "content": player_action},
-        ]
+        messages = [{
+            "role": "user",
+            "content": (
+                f"{COMBAT_RULEBOOK}\n\n{situation}\n"
+                f"## 玩家行動\n{player_action}"
+            ),
+        }]
 
         (_DEBUG_DIR / f"arbiter_{actor_id}_context.json").write_text(
             json.dumps(messages, ensure_ascii=False, indent=2), encoding="utf-8", errors="replace"

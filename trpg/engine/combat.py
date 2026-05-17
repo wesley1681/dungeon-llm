@@ -219,10 +219,14 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
         attacker   = _lookup_char(action.get("attacker", ""), world_state)
         target_ids = action.get("targets", [])
         item_name  = action.get("item", "")
-        damage_dice = action.get("damage_dice", "1d6")
         save_stat   = action.get("save_stat", "DEX").upper()
         save_dc     = int(action.get("save_dc", 13))
         half_on_save = action.get("half_on_save", True)
+
+        # Damage dice live on the consumable itself — arbiter no longer copies
+        # them into the action so we look them up here.
+        item_obj = attacker.get_consumable(item_name) if (attacker and item_name) else None
+        damage_dice = item_obj.effect_value if (item_obj and item_obj.effect_value) else "1d6"
 
         if item_name and attacker:
             if not attacker.consume(item_name):

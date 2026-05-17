@@ -102,6 +102,13 @@ class HumanController(ActorController):
 
 # ── LLM-driven controllers ───────────────────────────────────────────────────
 
+# LLM controllers cap retries so a misbehaving model can't loop forever on
+# the same rejected sub-action. Caller (game.py _execute_sub_action) hands the
+# rejection reason to on_invalid_action; the controller regenerates with that
+# reason injected into the next prompt so the model can pick something else.
+_LLM_RETRIES_PER_SUB_ACTION = 1
+
+
 class LLMPlayerController(ActorController):
     """Wraps a PlayerAgent. Builds a Thor-style combat nudge from CombatContext
     and lets the agent generate a sub-action description; strips <END> marker."""
@@ -109,14 +116,13 @@ class LLMPlayerController(ActorController):
     def __init__(self, agent, emit_event):
         self.agent = agent
         self.emit_event = emit_event
+        self._last_char = None
+        self._last_ctx: CombatContext | None = None
+        self._retries_left = 0
 
     def _build_nudge(self, char, ctx: CombatContext) -> str:
-        action_status = "可用" if ctx.resources.get("action", 0) > 0 else "已用完"
-        move_left = ctx.resources.get("movement", 0.0)
         return (
             f"【戰鬥回合 {ctx.round_num}】\n"
-            f"你的位置：{ctx.actor_position:.1f}m\n"
-            f"剩餘資源：動作 {action_status}、移動 {move_left:.1f}m\n"
             f"HP：{char.hp}/{char.max_hp}\n"
             f"武器：{ctx.weapons_str}\n"
             f"盟友：{ctx.allies_str}\n"
@@ -126,9 +132,11 @@ class LLMPlayerController(ActorController):
             f"「我用長劍砍他。<END>」→ 砍完直接結束。"
         )
 
-    def take_sub_action(self, char, ctx: CombatContext) -> ActorDecision:
+    def _generate(self, char, ctx: CombatContext, error_feedback: str) -> ActorDecision:
         from ..game import StreamChunk
         nudge = self._build_nudge(char, ctx)
+        if error_feedback:
+            nudge += f"\n\n## 系統訊息\n上次行動被拒：{error_feedback}\n請改選不同的 sub-action。"
         actor = char.name
         desc = self.agent.generate(
             nudge=nudge,
@@ -139,6 +147,19 @@ class LLMPlayerController(ActorController):
         desc, ended = _strip_marker(desc, _END_RE)
         return ActorDecision(description=desc, ended=ended)
 
+    def take_sub_action(self, char, ctx: CombatContext) -> ActorDecision:
+        self._last_char = char
+        self._last_ctx = ctx
+        self._retries_left = _LLM_RETRIES_PER_SUB_ACTION
+        return self._generate(char, ctx, error_feedback="")
+
+    def on_invalid_action(self, reason: str, suggestion: str) -> ActorDecision | None:
+        if self._retries_left <= 0 or self._last_char is None or self._last_ctx is None:
+            return None
+        self._retries_left -= 1
+        feedback = reason + (f"（{suggestion}）" if suggestion else "")
+        return self._generate(self._last_char, self._last_ctx, error_feedback=feedback)
+
 
 class LLMNpcController(ActorController):
     """Wraps an NpcAgent. Delegates to NpcAgent.combat_action() which already
@@ -147,15 +168,32 @@ class LLMNpcController(ActorController):
     def __init__(self, agent, emit_event):
         self.agent = agent
         self.emit_event = emit_event
+        self._last_char = None
+        self._last_ctx: CombatContext | None = None
+        self._retries_left = 0
 
-    def take_sub_action(self, char, ctx: CombatContext) -> ActorDecision:
+    def _generate(self, char, ctx: CombatContext, error_feedback: str) -> ActorDecision:
         from ..game import StreamChunk
         actor = char.name
         desc, fled, ended = self.agent.combat_action(
             ctx.weapons_str, ctx.allies_str, ctx.enemies_str,
             resources=ctx.resources,
+            error_feedback=error_feedback,
             on_chunk=lambda c, thinking=False: self.emit_event(StreamChunk("npc", c, actor=actor)),
         )
         if fled:
             return ActorDecision(fled=True)
         return ActorDecision(description=desc, ended=ended)
+
+    def take_sub_action(self, char, ctx: CombatContext) -> ActorDecision:
+        self._last_char = char
+        self._last_ctx = ctx
+        self._retries_left = _LLM_RETRIES_PER_SUB_ACTION
+        return self._generate(char, ctx, error_feedback="")
+
+    def on_invalid_action(self, reason: str, suggestion: str) -> ActorDecision | None:
+        if self._retries_left <= 0 or self._last_char is None or self._last_ctx is None:
+            return None
+        self._retries_left -= 1
+        feedback = reason + (f"（{suggestion}）" if suggestion else "")
+        return self._generate(self._last_char, self._last_ctx, error_feedback=feedback)

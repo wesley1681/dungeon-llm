@@ -469,30 +469,42 @@ class GameSession:
                 agent.in_party = False
 
     def _execute_sub_action(self, cid, char, decision, ctrl, resources, enemies) -> str:
-        """Parse → execute → emit. Returns result_text (empty if invalid/blocked)."""
+        """Parse → execute → emit. Returns result_text (empty if invalid/blocked).
+
+        Any rejection — unparseable arbiter output, resource exhausted, or
+        engine ERROR — funnels through ctrl.on_invalid_action so the actor
+        gets a chance to pick something else. Controllers bound their own
+        retries (HumanController re-prompts; LLM controllers cap at 1 retry).
+        """
         ws = self.world_state
+
+        def _retry(reason: str, suggestion: str = "") -> str:
+            new_decision = ctrl.on_invalid_action(reason, suggestion)
+            if new_decision is None or not new_decision.description:
+                return ""
+            return self._execute_sub_action(cid, char, new_decision, ctrl, resources, enemies)
+
         action = self.arbiter.parse(
             player_action=decision.description, actor_id=cid, actor_name=char.name,
-            available_targets=enemies, resources=resources, actor_char=char,
-            world_state=ws,
+            available_targets=enemies, actor_char=char,
         )
         debug = json.dumps(action, ensure_ascii=False)
         if not action.get("valid"):
-            self._emit(ActionResult(char.name, f"無效行動：{action.get('reason')}", debug, valid=False))
-            retry = ctrl.on_invalid_action(action.get("reason", ""), action.get("suggestion", ""))
-            if retry is None or not retry.description:
-                return ""
-            # Retry once with the new decision
-            return self._execute_sub_action(cid, char, retry, ctrl, resources, enemies)
+            reason = action.get("reason", "")
+            self._emit(ActionResult(char.name, f"無效行動：{reason}", debug, valid=False))
+            return _retry(reason, action.get("suggestion", ""))
 
         if "action" in action.get("consumes", []) and resources.get("action", 0) <= 0:
-            self._emit(StatusMessage(f"{char.name} 本回合動作已用完"))
-            return ""
+            reason = "本回合動作已用完"
+            self._emit(StatusMessage(f"{char.name} {reason}"))
+            return _retry(reason, "改用移動或結束回合")
 
         result = execute_action(action, ws)
         if result.get("type") == "ERROR":
-            self._emit(ActionResult(char.name, f"{char.name}：{result['message']}", debug, valid=False))
-            return ""
+            reason = result["message"]
+            self._emit(ActionResult(char.name, f"{char.name}：{reason}", debug, valid=False))
+            return _retry(reason)
+
         summary = format_result(decision.description, result, char.name)
         self._emit(ActionResult(char.name, summary, debug, valid=True))
         ws.log_event("system", summary)
