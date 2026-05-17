@@ -301,6 +301,71 @@ def test_combat_context_spells_str() -> None:
     print("CombatContext spells_str: OK")
 
 
+def test_arbiter_spell_defaults() -> None:
+    """Task 6: ArbiterAgent._CONSUMES_DEFAULT includes SPELL → ['action']."""
+    from trpg.llm.arbiter import ArbiterAgent
+    assert "SPELL" in ArbiterAgent._CONSUMES_DEFAULT, f"keys: {list(ArbiterAgent._CONSUMES_DEFAULT)}"
+    assert ArbiterAgent._CONSUMES_DEFAULT["SPELL"] == ["action"]
+
+    # _apply_defaults fills consumes when missing
+    arb = ArbiterAgent(model="dummy")
+    filled = arb._apply_defaults({
+        "valid": True, "type": "SPELL", "caster": "x", "spell_name": "火球術", "target": "y",
+    })
+    assert filled.get("consumes") == ["action"], f"got {filled}"
+    print("Arbiter _CONSUMES_DEFAULT SPELL: OK")
+
+
+def test_arbiter_situation_includes_spells() -> None:
+    """Task 6: parse() situation block lists available spells when caster has them."""
+    from trpg.llm.arbiter import ArbiterAgent
+    from trpg.scenarios.dungeon import build_world_state
+    from trpg.engine.character import Character, Stats
+
+    ws = build_world_state()
+    caster = Character(
+        name="測試薩滿", race="地精", class_="薩滅", level=3,
+        stats=Stats(WIS=16), hp=18, max_hp=18, ac=12,
+        spells=["火球術"], spell_slots={3: 1}, spellcasting_ability="WIS",
+        is_npc=True, attitude=0,
+    )
+
+    # Use _build_situation if extracted, else inspect the messages debug file.
+    # Easiest: monkey-patch complete_chat and inspect the messages sent.
+    captured: list[dict] = []
+    import trpg.llm.arbiter as arb_mod
+    real_complete = arb_mod.complete_chat
+    def fake_complete(base_url, model, messages, options, backend="ollama", timeout=60):
+        captured.extend(messages)
+        return '{"valid": false, "reason": "test"}'
+    arb_mod.complete_chat = fake_complete
+    try:
+        arb = ArbiterAgent(model="dummy")
+        arb.parse(
+            player_action="我對地精甲施展火球術",
+            actor_id="caster_x",
+            actor_name="測試薩滿",
+            available_targets={"goblin_1": "地精甲"},
+            actor_char=caster,
+        )
+    finally:
+        arb_mod.complete_chat = real_complete
+
+    full_text = "\n".join(m["content"] for m in captured)
+    assert "可用法術" in full_text, f"missing 可用法術 line; sent:\n{full_text[:600]}"
+    assert "火球術" in full_text, f"missing spell name in situation block"
+    print("Arbiter situation includes spells: OK")
+
+
+def test_rulebook_has_spell_section() -> None:
+    """Task 6: COMBAT_RULEBOOK contains a 法術 / SPELL example."""
+    from trpg.llm.rulebook import COMBAT_RULEBOOK
+    assert "法術" in COMBAT_RULEBOOK, "rulebook missing 法術 heading"
+    assert '"type": "SPELL"' in COMBAT_RULEBOOK, "rulebook missing SPELL JSON example"
+    assert '"slot_level"' in COMBAT_RULEBOOK, "rulebook should document optional slot_level"
+    print("Rulebook SPELL section: OK")
+
+
 def main() -> int:
     test_spell_dataclass_and_catalog()
     test_character_spell_fields()
@@ -310,6 +375,9 @@ def main() -> int:
     test_spell_handler_out_of_range()
     test_format_result_spell()
     test_combat_context_spells_str()
+    test_arbiter_spell_defaults()
+    test_arbiter_situation_includes_spells()
+    test_rulebook_has_spell_section()
     print("\n=== ALL SPELL TESTS PASSED ===")
     return 0
 

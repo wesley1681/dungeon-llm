@@ -16,6 +16,28 @@ class ArbiterAgent:
         self.backend = backend
         self.options = {"temperature": 0.1, "num_predict": 512}
 
+    def _format_spells(self, actor_char) -> str:
+        """Compact spell summary for the situation block. '' for non-casters."""
+        spells = getattr(actor_char, "spells", None) or []
+        if not spells or not getattr(actor_char, "spellcasting_ability", ""):
+            return ""
+        from ..engine.spells import SPELLS
+        parts = []
+        for name in spells:
+            spell = SPELLS.get(name)
+            if not spell:
+                continue
+            slots_avail = [
+                lvl for lvl in sorted(actor_char.spell_slots)
+                if lvl >= spell.level and actor_char.spell_slots[lvl] > 0
+            ]
+            if slots_avail:
+                slot_repr = "、".join(f"{lvl} 環×{actor_char.spell_slots[lvl]}" for lvl in slots_avail)
+                parts.append(f"{spell.name}（{spell.level} 環；剩餘 {slot_repr}）")
+            else:
+                parts.append(f"{spell.name}（{spell.level} 環；無可用法術位）")
+        return "、".join(parts)
+
     def parse(
         self,
         player_action: str,
@@ -41,22 +63,27 @@ class ArbiterAgent:
             ]
             items_str  = "、".join(heals)  or "無"
             throws_str = "、".join(throws) or "無"
+            spells_str = self._format_spells(actor_char)
         else:
             weapons_str = "未知"
             items_str   = "未知"
             throws_str  = "未知"
+            spells_str  = ""
 
         target_lines = [f"{name}（{cid}）" for cid, name in available_targets.items()]
         targets_str = "\n  ".join(target_lines) if target_lines else "無"
 
-        situation = (
-            f"## 當前情況\n"
-            f"行動者：{actor_name}（{actor_id}）\n"
-            f"可用武器：{weapons_str}\n"
-            f"可用治療道具：{items_str}\n"
-            f"可用投擲物：{throws_str}\n"
-            f"可攻擊目標：\n  {targets_str}\n"
-        )
+        situation_parts = [
+            "## 當前情況",
+            f"行動者：{actor_name}（{actor_id}）",
+            f"可用武器：{weapons_str}",
+            f"可用治療道具：{items_str}",
+            f"可用投擲物：{throws_str}",
+        ]
+        if spells_str:
+            situation_parts.append(f"可用法術：{spells_str}")
+        situation_parts.append(f"可攻擊目標：\n  {targets_str}")
+        situation = "\n".join(situation_parts) + "\n"
 
         messages = [{
             "role": "user",
@@ -79,6 +106,7 @@ class ArbiterAgent:
     _CONSUMES_DEFAULT = {
         "ATTACK": ["action"],
         "AOE":    ["action"],
+        "SPELL":  ["action"],
         "USE_ITEM": ["action"],
         "ROLL":   ["action"],
         "DODGE":  ["action"],
