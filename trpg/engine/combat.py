@@ -659,8 +659,28 @@ class CombatContext:
     weapons_str: str         # "長劍（近戰 1.5m）、短弓（遠程 24m / 最大 96m）"
     allies_str: str          # "凱恩 HP 22/22，位置 0.0m（距你 0.0m）"
     enemies_str: str         # "哥布林 HP 7/7，位置 1.5m（距你 1.5m）"
+    spells_str: str = ""     # "火球術（3 環，剩餘 1 個 3 環法術位）" — empty for non-casters
     enemies: dict = field(default_factory=dict)   # {cid: name} — alive valid targets
     resources: dict = field(default_factory=dict)
+
+
+def _spells_str(char) -> str:
+    if not char.spells or not char.spellcasting_ability:
+        return ""
+    from .spells import SPELLS
+    parts = []
+    for name in char.spells:
+        spell = SPELLS.get(name)
+        if not spell:
+            continue
+        available = [lvl for lvl in sorted(char.spell_slots)
+                     if lvl >= spell.level and char.spell_slots[lvl] > 0]
+        if available:
+            slots_str = "、".join(f"{lvl} 環×{char.spell_slots[lvl]}" for lvl in available)
+            parts.append(f"{spell.name}（{spell.level} 環，可用：{slots_str}）")
+        else:
+            parts.append(f"{spell.name}（{spell.level} 環，無可用法術位）")
+    return "、".join(parts)
 
 
 def _weapons_str(char) -> str:
@@ -722,6 +742,7 @@ def build_combat_context(actor_id: str, actor, world_state,
         actor_id=actor_id,
         actor_position=actor.position,
         weapons_str=_weapons_str(actor),
+        spells_str=_spells_str(actor),
         allies_str="、".join(ally_parts) or "無",
         enemies_str="、".join(enemy_parts) or "無",
         enemies=enemies_dict,

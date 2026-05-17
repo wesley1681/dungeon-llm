@@ -259,6 +259,48 @@ def test_format_result_spell() -> None:
     print("format_result SPELL: OK")
 
 
+def test_combat_context_spells_str() -> None:
+    """Task 5: build_combat_context populates spells_str for casters, '' for others."""
+    from trpg.scenarios.dungeon import build_world_state
+    from trpg.engine import combat
+    from trpg.engine.combat import build_combat_context, MOVE_BUDGET_M
+    from trpg.engine.character import Character, Stats
+
+    ws = build_world_state()
+    ws.dungeon_map.current_room_id = "guard_room"
+    caster = Character(
+        name="測試薩滿", race="地精", class_="薩滅", level=3,
+        stats=Stats(WIS=16), hp=18, max_hp=18, ac=12,
+        spells=["火球術"],
+        spell_slots={3: 1},
+        spellcasting_ability="WIS",
+        is_npc=True, attitude=0,
+        position=10.0,
+    )
+    ws.characters["caster_ctx"] = caster
+    ws.dungeon_map.current_room.npc_ids.append("caster_ctx")
+    combat.roll_initiative(ws, ["thor", "aria", "goblin_1", "caster_ctx"])
+
+    # Caster context — spells_str should mention the spell name and slot count
+    ctx = build_combat_context(
+        actor_id="caster_ctx", actor=caster, world_state=ws,
+        resources={"action": 1, "movement": MOVE_BUDGET_M}, round_num=1,
+    )
+    assert hasattr(ctx, "spells_str"), "CombatContext missing spells_str field"
+    assert "火球術" in ctx.spells_str, f"got {ctx.spells_str!r}"
+    assert "3 環" in ctx.spells_str or "3環" in ctx.spells_str, f"got {ctx.spells_str!r}"
+    print(f"caster spells_str: {ctx.spells_str}")
+
+    # Non-caster (Thor) — empty spells_str
+    thor = ws.characters["thor"]
+    ctx_thor = build_combat_context(
+        actor_id="thor", actor=thor, world_state=ws,
+        resources={"action": 1, "movement": MOVE_BUDGET_M}, round_num=1,
+    )
+    assert ctx_thor.spells_str == "", f"non-caster should have empty spells_str, got {ctx_thor.spells_str!r}"
+    print("CombatContext spells_str: OK")
+
+
 def main() -> int:
     test_spell_dataclass_and_catalog()
     test_character_spell_fields()
@@ -267,6 +309,7 @@ def main() -> int:
     test_spell_handler_explicit_slot_level()
     test_spell_handler_out_of_range()
     test_format_result_spell()
+    test_combat_context_spells_str()
     print("\n=== ALL SPELL TESTS PASSED ===")
     return 0
 
