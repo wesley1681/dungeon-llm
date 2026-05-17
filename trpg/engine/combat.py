@@ -163,7 +163,7 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
             dmg_mod = attacker.stats.modifier("STR")
 
         # Advantage / disadvantage compose: target dodging → disadvantage; range_mode also contributes
-        target_dodging = "dodging" in target.status_effects
+        target_dodging = target.has_status("dodging")
         mode = combine_advantage(range_mode, "disadvantage" if target_dodging else "normal")
 
         hit, roll_total = resolve_attack(attacker, target, weapon, mode=mode)
@@ -362,11 +362,12 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
 
     # ── DODGE ─────────────────────────────────────────────────────────────────
     if t == "DODGE":
+        from .status import Dodging
         char = _lookup_char(action.get("character", ""), world_state)
         if not char:
             return {"type": "ERROR", "message": "找不到角色"}
-        if "dodging" not in char.status_effects:
-            char.status_effects.append("dodging")
+        round_num = world_state.combat.round_number if world_state.combat else 0
+        char.add_status(Dodging(applied_round=round_num))
         return {
             "type":      "DODGE",
             "character": char.name,
@@ -374,12 +375,14 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
 
     # ── HIDE ──────────────────────────────────────────────────────────────────
     if t == "HIDE":
+        from .status import Hidden
         char = _lookup_char(action.get("character", ""), world_state)
         if not char:
             return {"type": "ERROR", "message": "找不到角色"}
         success, total = make_saving_throw(char, "DEX", 12)
         if success:
-            char.status_effects.append("hidden")
+            round_num = world_state.combat.round_number if world_state.combat else 0
+            char.add_status(Hidden(applied_round=round_num))
         return {
             "type":    "HIDE",
             "success": success,

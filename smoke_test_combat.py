@@ -139,14 +139,15 @@ def main() -> int:
     result = combat.execute_action(action, ws)
     print(f"\nDODGE aria: {result}")
     assert result["type"] == "DODGE"
-    assert "dodging" in aria.status_effects
+    assert aria.has_status("dodging")
     print("DODGE adds 'dodging' status: OK")
 
     # ── 10. ATTACK vs dodging target → disadvantage ───────────────────────────
     # g1 attacks aria (who is dodging) with melee. Need g1 in reach.
     g1.position = 1.5   # reset
     aria.position = 0.0
-    aria.status_effects = ["dodging"]   # ensure dodging
+    from trpg.engine.status import Dodging
+    aria.status_effects = [Dodging(applied_round=1)]   # ensure dodging
     g1_weapon = g1.get_weapon()         # whatever they have
     if g1_weapon.range_type != "近戰":
         g1.weapons = [WEAPON_DEFS["彎刀"]]
