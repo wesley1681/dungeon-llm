@@ -127,9 +127,13 @@ class LLMPlayerController(ActorController):
             f"武器：{ctx.weapons_str}\n"
             f"盟友：{ctx.allies_str}\n"
             f"敵人：{ctx.enemies_str}\n"
-            f"做一個 sub-action（攻擊 / 移動 / 閃避）；想結束本回合就在訊息結尾加 <END>。\n"
-            f"例：「我衝向哥布林。」不加 <END>→系統會問你下一步；"
-            f"「我用長劍砍他。<END>」→ 砍完直接結束。"
+            f"從下列**選一個** sub-action 輸出（不要組合）：\n"
+            f"- 攻擊：「我用 [武器] 攻擊 [敵人]」\n"
+            f"- 移動：「我衝上去」「我後退」（單次最多 9m）\n"
+            f"- 閃避：「我閃避」「我專注防禦」\n"
+            f"- 躲藏：「我躲到 X 後面」\n"
+            f"- 結束本回合：單獨輸出 <END>\n"
+            f"完成本動作想直接結束回合，訊息結尾加 <END>（例：「我用長劍砍他。<END>」）。"
         )
 
     def _generate(self, char, ctx: CombatContext, error_feedback: str) -> ActorDecision:
