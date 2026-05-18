@@ -63,17 +63,17 @@ _register(ClassAbility(
     class_id="fighter",
     description="bonus action 回復 1d10 + 戰士等級 HP，每短休 1 次。",
     features=SkillFeatures(
-        expected_healing=10.0,    # ~5.5 + level-3 STR/level placeholder
+        expected_healing=10.0,    # ~5.5 + level-3 placeholder
         cost_bonus=1.0,
         remaining_uses=1.0,
         target_type=TargetType.SELF,
     ),
     engine_ready=True,
     builder=lambda actor, target, coord: {
-        "type": "USE_ITEM", "character": actor, "item": "二度氣息",
-        "target": actor, "consumes": ["bonus_action"],
-    },   # note: faked through USE_ITEM heal path; proper HEAL action coming
-    engine_todo="needs dedicated HEAL action type (currently piggybacks USE_ITEM)",
+        "type": "HEAL", "caster": actor, "target": actor,
+        "dice": "1d10+3", "range_m": 0.0,
+        "consumes": ["bonus_action"],
+    },
 ))
 
 _register(ClassAbility(
@@ -169,11 +169,14 @@ _register(ClassAbility(
         applies_status=_status_multihot("paralyzed"),
         status_duration=10.0,
     ),
-    engine_ready=False,
-    engine_todo="needs single-target SPELL handler (current SPELL is AOE-only) "
-                "+ engine respect for requires_concentration (auto-set "
-                "caster.concentrating_on, drop on damage). Concentration "
-                "tracking field exists; assignment hook isn't wired.",
+    engine_ready=True,
+    builder=lambda actor, target, coord: {
+        "type": "SPELL", "caster": actor, "spell_name": "定身術",
+        "target": target, "consumes": ["action"],
+    },
+    engine_todo="paralyzed status is attached as a label; the actual D&D "
+                "paralyzed effects (incoming attacks have advantage + crit on "
+                "hit within 1.5m) are not yet hooked into resolve_attack",
 ))
 
 _register(ClassAbility(
@@ -188,10 +191,15 @@ _register(ClassAbility(
         target_type=TargetType.POINT,
         is_teleport=True,
     ),
-    engine_ready=False,
-    engine_todo="needs MOVE handler to honour is_teleport: skip LoS check, "
-                "skip path-blocking, charge no movement budget. Endpoint "
-                "still must be in bounds and not on a wall cell.",
+    engine_ready=True,
+    builder=lambda actor, target, coord: {
+        "type": "MOVE", "character": actor,
+        "target_position": list(coord) if coord else [0.0, 0.0],
+        "teleport": True, "range_m": 9.0,
+        "consumes": ["bonus_action"],
+    },
+    engine_todo="spell slot consumption from this builder is not yet hooked "
+                "(MOVE doesn't read cost_slot_level); needs slot decrement",
 ))
 
 
@@ -209,9 +217,12 @@ _register(ClassAbility(
         cost_slot_level=1.0,
         target_type=TargetType.SINGLE_ALLY,
     ),
-    engine_ready=False,
-    engine_todo="needs HEAL action handler (target_ally + dice). USE_ITEM heal "
-                "path exists but is for consumables only.",
+    engine_ready=True,
+    builder=lambda actor, target, coord: {
+        "type": "HEAL", "caster": actor, "target": target,
+        "dice": "1d8+3", "range_m": 1.5, "slot_level": 1,
+        "consumes": ["action"],
+    },
 ))
 
 _register(ClassAbility(
@@ -227,8 +238,11 @@ _register(ClassAbility(
         cost_action=1.0,
         target_type=TargetType.SINGLE_ENEMY,
     ),
-    engine_ready=False,
-    engine_todo="needs single-target SPELL handler with save (no AOE).",
+    engine_ready=True,
+    builder=lambda actor, target, coord: {
+        "type": "SPELL", "caster": actor, "spell_name": "神聖光輝",
+        "target": target, "consumes": ["action"],
+    },
 ))
 
 _register(ClassAbility(

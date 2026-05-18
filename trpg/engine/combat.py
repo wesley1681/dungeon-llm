@@ -337,6 +337,45 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
             "remaining":      remaining,
         }
 
+    # ── HEAL ──────────────────────────────────────────────────────────────────
+    # Dedicated healing action for spells / abilities (Cure Wounds, Second
+    # Wind, Healing Word, etc.). Distinct from USE_ITEM which is for
+    # consumables. Optionally consumes a spell slot when `slot_level` > 0.
+    if t == "HEAL":
+        caster = _lookup_char(action.get("caster", ""), world_state)
+        target = _lookup_char(action.get("target", ""), world_state)
+        if not caster or not target:
+            return {"type": "ERROR", "message": "找不到治療者或目標"}
+        if not target.is_alive():
+            return {"type": "ERROR", "message": f"{target.name} 已倒下，無法治療"}
+
+        slot_level = int(action.get("slot_level", 0))
+        if slot_level > 0 and caster.spell_slots.get(slot_level, 0) <= 0:
+            return {"type": "ERROR",
+                    "message": f"{caster.name} 沒有 {slot_level} 環法術位"}
+
+        range_m = float(action.get("range_m", 1.5))
+        d = caster.position.distance_to(target.position)
+        if d > range_m + 1e-6:
+            return {"type": "ERROR",
+                    "message": f"目標距離 {d:.1f}m，超出治療範圍 {range_m:.1f}m"}
+
+        dice = action.get("dice", "1d4")
+        healed = apply_heal(target, dice)
+        if slot_level > 0:
+            caster.spell_slots[slot_level] -= 1
+
+        return {
+            "type":          "HEAL",
+            "caster_name":   caster.name,
+            "target_name":   target.name,
+            "amount":        healed,
+            "dice":          dice,
+            "slot_level":    slot_level,
+            "target_hp":     target.hp,
+            "target_max_hp": target.max_hp,
+        }
+
     # ── USE_ITEM ──────────────────────────────────────────────────────────────
     if t == "USE_ITEM":
         char = _lookup_char(action.get("character", ""), world_state)
@@ -400,6 +439,38 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
         char_id = next((cid for cid, c in world_state.characters.items() if c is char), None)
         old_pos: Vec2 = char.position
         battlefield = world_state.combat.battlefield if world_state.combat else None
+
+        # Teleport branch (e.g. Misty Step) — short-circuit before the
+        # ground-movement logic. Teleport ignores LoS, terrain multipliers
+        # and the standard movement budget; it has its own range, charged to
+        # whatever resource the caller declared (typically bonus_action +
+        # spell slot) and budgets are zero for the move slot itself.
+        if action.get("teleport"):
+            new_pos = Vec2.coerce(action.get("target_position", [old_pos.x, old_pos.y]))
+            tp_range = float(action.get("range_m", 9.0))
+            dist = old_pos.distance_to(new_pos)
+            if dist > tp_range + 1e-6:
+                return {"type": "ERROR",
+                        "message": f"瞬移目標距離 {dist:.1f}m，超出射程 {tp_range:.0f}m"}
+            if battlefield is not None:
+                if not battlefield.in_bounds(new_pos):
+                    return {"type": "ERROR",
+                            "message": f"目的座標 ({new_pos.x:.1f}, {new_pos.y:.1f}) 超出戰場邊界"}
+                if battlefield.is_blocked(new_pos):
+                    return {"type": "ERROR",
+                            "message": f"目的座標 ({new_pos.x:.1f}, {new_pos.y:.1f}) 被障礙物佔據"}
+            char.position = new_pos
+            return {
+                "type":              "MOVE",
+                "character":         char.name,
+                "from_pos":          old_pos,
+                "to_pos":            new_pos,
+                "distance":          0.0,          # no movement budget consumed
+                "physical_distance": dist,
+                "terrain_mult":      1.0,
+                "teleport":          True,
+                "description":       action.get("description", "瞬移"),
+            }
 
         # Resolve destination from one of four formats, in priority order:
         #   1. target (creature_id) — move toward that character along the
@@ -538,25 +609,29 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
         if not caster.spellcasting_ability:
             return {"type": "ERROR", "message": f"{caster.name} 不是施法者"}
 
-        # Resolve slot_level — explicit arg, or first available level >= spell.level
-        requested = action.get("slot_level")
-        if requested is None:
-            slot_level = None
-            for lvl in sorted(caster.spell_slots):
-                if lvl >= spell.level and caster.spell_slots[lvl] > 0:
-                    slot_level = lvl
-                    break
-            if slot_level is None:
-                return {"type": "ERROR",
-                        "message": f"{caster.name} 沒有可用的法術位施展「{spell_name}」"}
+        # Resolve slot_level — cantrips (level 0) consume no slot, otherwise
+        # explicit arg or first available level ≥ spell.level.
+        if spell.level == 0:
+            slot_level = 0
         else:
-            slot_level = int(requested)
-            if slot_level < spell.level:
-                return {"type": "ERROR",
-                        "message": f"「{spell_name}」需要 {spell.level} 環或以上的法術位"}
-            if caster.spell_slots.get(slot_level, 0) <= 0:
-                return {"type": "ERROR",
-                        "message": f"{caster.name} 沒有 {slot_level} 環法術位"}
+            requested = action.get("slot_level")
+            if requested is None:
+                slot_level = None
+                for lvl in sorted(caster.spell_slots):
+                    if lvl >= spell.level and caster.spell_slots[lvl] > 0:
+                        slot_level = lvl
+                        break
+                if slot_level is None:
+                    return {"type": "ERROR",
+                            "message": f"{caster.name} 沒有可用的法術位施展「{spell_name}」"}
+            else:
+                slot_level = int(requested)
+                if slot_level < spell.level:
+                    return {"type": "ERROR",
+                            "message": f"「{spell_name}」需要 {spell.level} 環或以上的法術位"}
+                if caster.spell_slots.get(slot_level, 0) <= 0:
+                    return {"type": "ERROR",
+                            "message": f"{caster.name} 沒有 {slot_level} 環法術位"}
 
         # Resolve AOE center position. Two ways:
         #   1. target_position: explicit [x, y] (lets the caster place AOE
@@ -610,8 +685,9 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
             if c.position.distance_to(center_pos) <= spell.aoe_radius_m + 1e-6:
                 affected_ids.append(cid)
 
-        # Roll saves, apply damage
+        # Roll saves, apply damage + on-fail status
         target_results = []
+        round_num = world_state.combat.round_number if world_state.combat else 0
         for cid in affected_ids:
             target = world_state.characters[cid]
             success, save_roll = make_saving_throw(target, spell.save_ability, save_dc)
@@ -619,18 +695,36 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
             actual_dmg = full_dmg // 2 if success else full_dmg
             if actual_dmg > 0:
                 apply_damage(target, actual_dmg, dtype=spell.damage_type, attacker=caster)
+            status_applied = ""
+            if not success and spell.applies_status_on_fail:
+                from .status import StatusEffect
+                target.add_status(StatusEffect(
+                    name=spell.applies_status_on_fail,
+                    expires_on="never",
+                    rounds_remaining=spell.status_rounds,
+                    save_each=f"{spell.save_ability} DC{save_dc}",
+                    applied_round=round_num,
+                    source_id=action.get("caster", ""),
+                ))
+                status_applied = spell.applies_status_on_fail
             target_results.append({
-                "target_name":   target.name,
-                "save_roll":     save_roll,
-                "save_success":  success,
-                "damage":        actual_dmg,
-                "target_hp":     target.hp,
-                "target_max_hp": target.max_hp,
-                "target_alive":  target.is_alive(),
+                "target_name":    target.name,
+                "save_roll":      save_roll,
+                "save_success":   success,
+                "damage":         actual_dmg,
+                "status_applied": status_applied,
+                "target_hp":      target.hp,
+                "target_max_hp":  target.max_hp,
+                "target_alive":   target.is_alive(),
             })
 
-        # Decrement slot after successful cast
-        caster.spell_slots[slot_level] = caster.spell_slots.get(slot_level, 0) - 1
+        # Decrement slot after successful cast (cantrips skip this)
+        if slot_level > 0:
+            caster.spell_slots[slot_level] = caster.spell_slots.get(slot_level, 0) - 1
+
+        # Concentration: replace any prior concentration spell with this one.
+        if spell.requires_concentration:
+            caster.concentrating_on = spell_name
 
         return {
             "type":          "SPELL",
@@ -703,6 +797,8 @@ def _format_intent(action: dict) -> str:
         return "躲藏"
     if t == "USE_ITEM":
         return f"使用 {action.get('item', '?')}"
+    if t == "HEAL":
+        return f"治療 {action.get('target', '?')}"
     if t == "AOE":
         return f"投擲 {action.get('item', '?')}"
     if t == "ROLL":
@@ -753,19 +849,33 @@ def format_result(action: dict, result: dict, actor_name: str = "") -> str:
             lines.append(f"剩餘 {result['item']}：{result['remaining']} 個")
 
     elif t == "SPELL":
+        slot_str = f"{result['slot_level']} 環" if result['slot_level'] > 0 else "戲法"
+        dmg_str = f"{result['damage_dice']} {result['damage_type']}傷，" if result.get('damage_dice') else ""
         lines.append(
-            f"施展「{result['spell_name']}」（{result['slot_level']} 環，"
-            f"{result['damage_dice']} {result['damage_type']}傷，"
+            f"施展「{result['spell_name']}」（{slot_str}，{dmg_str}"
             f"以 {result['center_name']} 為中心，"
-            f"{result['save_stat']} DC{result['save_dc']} 豁免半傷）"
+            f"{result['save_stat']} DC{result['save_dc']} 豁免）"
         )
         for tr in result.get("target_results", []):
-            save_str  = "豁免成功（半傷）" if tr["save_success"] else "豁免失敗"
+            save_str  = "豁免成功" if tr["save_success"] else "豁免失敗"
             alive_str = "存活" if tr["target_alive"] else "倒下"
+            extras = []
+            if tr["damage"] > 0:
+                extras.append(f"受 {tr['damage']} 傷害")
+            if tr.get("status_applied"):
+                extras.append(f"獲得狀態 [{tr['status_applied']}]")
+            extras_str = "，".join(extras) or "無效"
             lines.append(
-                f"  {tr['target_name']}：{save_str}，受 {tr['damage']} 傷害，"
+                f"  {tr['target_name']}：{save_str}，{extras_str}，"
                 f"HP {tr['target_hp']}/{tr['target_max_hp']}（{alive_str}）"
             )
+
+    elif t == "HEAL":
+        slot_part = f"，{result['slot_level']} 環" if result.get("slot_level", 0) > 0 else ""
+        lines.append(
+            f"{result['caster_name']} 治療 {result['target_name']}（{result['dice']}{slot_part}）：恢復 {result['amount']} HP "
+            f"({result['target_hp']}/{result['target_max_hp']})"
+        )
 
     elif t == "USE_ITEM":
         if result.get("healed") is not None:
