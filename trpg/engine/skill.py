@@ -1,0 +1,350 @@
+"""Skill — RL-facing abstraction over weapons, spells, and other turn-actions.
+
+The point of this module is the **feature vector**: a fixed-length numeric
+encoding of "what this skill does" that an RL policy reads instead of a skill
+name. New skills with novel parameter combinations (different range, damage,
+save type, status) generalize without retraining; only genuinely new
+mechanics (new feature dimension) require schema extension.
+
+Three layers:
+  - SkillFeatures        the orthogonal numeric encoding (`.as_vector()` → np)
+  - Skill                features + a builder that turns (actor, target,
+                         coord) → engine action dict
+  - available_skills()   enumerate everything a character can invoke this turn
+
+Status slot indexing in STATUS_SLOTS is append-only — never reorder existing
+entries, since trained policies index by position.
+"""
+from __future__ import annotations
+import re
+from dataclasses import dataclass, field
+from enum import IntEnum
+from typing import Callable
+
+import numpy as np
+
+
+# ── Schema enums (orderings are frozen — append-only) ────────────────────────
+
+class SaveStat(IntEnum):
+    STR = 0
+    DEX = 1
+    CON = 2
+    INT = 3
+    WIS = 4
+    CHA = 5
+
+N_SAVE_STATS = 6   # save_stat = -1 → no save, all save-stat one-hot bits stay 0
+
+
+class TargetType(IntEnum):
+    SELF = 0
+    SINGLE_ENEMY = 1
+    SINGLE_ALLY = 2
+    POINT = 3      # arbitrary (x, y) on the battlefield
+    LINE = 4       # reserved
+    CONE = 5       # reserved
+
+N_TARGET_TYPES = 6
+
+
+# Index = slot position in the multihot vector. Append-only.
+STATUS_SLOTS: list[str] = [
+    "dodging",       # 0
+    "hidden",        # 1
+    "poisoned",      # 2  reserved (no implementation yet)
+    "restrained",    # 3
+    "charmed",       # 4
+    "frightened",    # 5
+    "stunned",       # 6
+    "prone",         # 7
+    "blinded",       # 8
+    "deafened",      # 9
+    "grappled",      # 10
+    "incapacitated", # 11
+    "invisible",     # 12
+    "paralyzed",     # 13
+    "petrified",     # 14
+    "unconscious",   # 15
+]
+N_STATUS_SLOTS = len(STATUS_SLOTS)   # 16 — leave room by extending the list
+
+
+# Total feature-vector length (downstream code can introspect this).
+SKILL_FEATURE_DIM = (
+    12                # scalar fields
+    + N_SAVE_STATS    # save_stat one-hot
+    + N_TARGET_TYPES  # target_type one-hot
+    + N_STATUS_SLOTS  # applies_status multi-hot
+)
+# = 12 + 6 + 6 + 16 = 40
+
+
+# ── SkillFeatures ────────────────────────────────────────────────────────────
+
+@dataclass
+class SkillFeatures:
+    """Orthogonal numeric encoding. All fields default to 0 / no-op."""
+
+    # Effect magnitudes — zero means "doesn't do this"
+    expected_damage:  float = 0.0
+    expected_healing: float = 0.0
+    status_duration:  float = 0.0   # rounds; 0 = instantaneous / no status
+
+    # Geometry
+    range_m:      float = 0.0       # caster → target / AOE centre
+    aoe_radius_m: float = 0.0       # 0 = single target / no area
+
+    # Resolution (mutually exclusive — both non-zero means engine bug)
+    attack_vs_ac: float = 0.0       # bonus added to d20 attack roll
+    save_dc:      float = 0.0       # 0 = no save involved
+
+    save_stat: int = -1             # SaveStat enum, or -1 for "no save"
+
+    # Cost (what slots the skill consumes — see consume_resources)
+    cost_action:     float = 0.0    # 0 or 1
+    cost_bonus:      float = 0.0    # 0 or 1
+    cost_movement:   float = 0.0    # metres consumed (0 for non-move skills)
+    cost_slot_level: float = 0.0    # spell slot level required (0 = no slot)
+    remaining_uses:  float = 1.0    # available right now (slots left, ammo,
+                                    # daily uses); 0 means can't use this turn
+
+    # Targeting
+    target_type: int = TargetType.SELF
+
+    # Multi-hot over STATUS_SLOTS — which conditions this skill applies
+    applies_status: tuple[bool, ...] = field(
+        default_factory=lambda: (False,) * N_STATUS_SLOTS
+    )
+
+    def as_vector(self) -> np.ndarray:
+        save_oh   = np.zeros(N_SAVE_STATS,   dtype=np.float32)
+        target_oh = np.zeros(N_TARGET_TYPES, dtype=np.float32)
+        if 0 <= self.save_stat < N_SAVE_STATS:
+            save_oh[self.save_stat] = 1.0
+        if 0 <= self.target_type < N_TARGET_TYPES:
+            target_oh[self.target_type] = 1.0
+        return np.concatenate([
+            np.array([
+                self.expected_damage, self.expected_healing, self.status_duration,
+                self.range_m, self.aoe_radius_m,
+                self.attack_vs_ac, self.save_dc,
+                self.cost_action, self.cost_bonus, self.cost_movement,
+                self.cost_slot_level, self.remaining_uses,
+            ], dtype=np.float32),
+            save_oh,
+            target_oh,
+            np.array(self.applies_status, dtype=np.float32),
+        ])
+
+
+# ── Skill (features + action builder) ────────────────────────────────────────
+
+ActionBuilder = Callable[[str, str | None, "tuple[float, float] | None"], dict | None]
+
+
+@dataclass
+class Skill:
+    """A single invokable ability. `features` is what RL sees; `builder` turns
+    a high-level choice (actor, optional target entity, optional coord) into
+    the engine action dict execute_action consumes."""
+    skill_id: str
+    display_name: str
+    features: SkillFeatures
+    builder: ActionBuilder
+
+    def build_action(self, actor_id: str,
+                     target_entity_id: str | None = None,
+                     target_coord: tuple[float, float] | None = None) -> dict | None:
+        return self.builder(actor_id, target_entity_id, target_coord)
+
+
+# ── Factory helpers ──────────────────────────────────────────────────────────
+
+_DICE_RE = re.compile(r"(\d+)d(\d+)\s*([+-]\s*\d+)?")
+
+
+def _expected_dice(dice_str: str) -> float:
+    """Expected value of an XdY[+Z] roll. Returns 0.0 on empty / unparseable."""
+    if not dice_str:
+        return 0.0
+    m = _DICE_RE.match(dice_str.replace(" ", ""))
+    if not m:
+        return 0.0
+    n, sides = int(m.group(1)), int(m.group(2))
+    flat = int((m.group(3) or "0").replace(" ", ""))
+    return n * (sides + 1) / 2.0 + flat
+
+
+def _save_stat_index(stat: str) -> int:
+    try:
+        return SaveStat[stat.upper()].value
+    except (KeyError, AttributeError):
+        return -1
+
+
+def _melee_damage_mod(char) -> int:
+    """STR for melee; max(STR, DEX) for finesse weapons. Mirrors combat.py."""
+    return char.stats.modifier("STR")
+
+
+def from_weapon(weapon, char) -> Skill:
+    """Project a Weapon onto a Skill. Damage = dice + ability modifier."""
+    is_ranged = weapon.range_type == "遠程"
+    is_finesse = "精巧" in weapon.properties
+    if is_finesse:
+        dmg_mod = max(char.stats.modifier("STR"), char.stats.modifier("DEX"))
+    elif is_ranged:
+        dmg_mod = char.stats.modifier("DEX")
+    else:
+        dmg_mod = char.stats.modifier("STR")
+    attack_mod = dmg_mod + char.proficiency_bonus
+
+    feats = SkillFeatures(
+        expected_damage=max(1.0, _expected_dice(weapon.damage_dice) + dmg_mod),
+        range_m=weapon.range_normal,
+        attack_vs_ac=float(attack_mod),
+        cost_action=1.0,
+        target_type=TargetType.SINGLE_ENEMY,
+    )
+
+    def builder(actor_id, target_id, coord):
+        if not target_id:
+            return None
+        return {
+            "type":     "ATTACK",
+            "attacker": actor_id,
+            "target":   target_id,
+            "weapon":   weapon.name,
+            "consumes": ["action"],
+        }
+
+    return Skill(
+        skill_id=f"weapon:{weapon.name}",
+        display_name=weapon.name,
+        features=feats,
+        builder=builder,
+    )
+
+
+def from_spell(spell, char) -> Skill:
+    """Project a Spell onto a Skill. Currently AOE-save spells only — extend
+    when spell_attack and utility variants land in spells.py."""
+    save_dc = 8 + char.proficiency_bonus + char.stats.modifier(char.spellcasting_ability)
+    available_slots = sum(
+        char.spell_slots[lvl]
+        for lvl in char.spell_slots
+        if lvl >= spell.level
+    )
+
+    feats = SkillFeatures(
+        expected_damage=_expected_dice(spell.damage_dice),
+        range_m=spell.range_m,
+        aoe_radius_m=spell.aoe_radius_m,
+        save_dc=float(save_dc),
+        save_stat=_save_stat_index(spell.save_ability),
+        cost_action=1.0,
+        cost_slot_level=float(spell.level),
+        remaining_uses=float(available_slots),
+        target_type=TargetType.POINT if spell.aoe_radius_m > 0 else TargetType.SINGLE_ENEMY,
+    )
+
+    def builder(actor_id, target_id, coord):
+        action = {
+            "type":       "SPELL",
+            "caster":     actor_id,
+            "spell_name": spell.name,
+            "consumes":   ["action"],
+        }
+        if coord is not None:
+            action["target_position"] = [float(coord[0]), float(coord[1])]
+        elif target_id:
+            action["target"] = target_id
+        else:
+            return None
+        return action
+
+    return Skill(
+        skill_id=f"spell:{spell.name}",
+        display_name=spell.name,
+        features=feats,
+        builder=builder,
+    )
+
+
+def _status_multihot(*names: str) -> tuple[bool, ...]:
+    return tuple(slot in names for slot in STATUS_SLOTS)
+
+
+def dodge_skill(char) -> Skill:
+    feats = SkillFeatures(
+        cost_action=1.0,
+        target_type=TargetType.SELF,
+        applies_status=_status_multihot("dodging"),
+        status_duration=1.0,
+    )
+    return Skill("dodge", "閃避", feats,
+                 lambda a, t, c: {"type": "DODGE", "character": a, "consumes": ["action"]})
+
+
+def hide_skill(char) -> Skill:
+    feats = SkillFeatures(
+        cost_action=1.0,
+        target_type=TargetType.SELF,
+        applies_status=_status_multihot("hidden"),
+        status_duration=0.0,
+    )
+    return Skill("hide", "躲藏", feats,
+                 lambda a, t, c: {"type": "HIDE", "character": a, "consumes": ["action"]})
+
+
+def move_skill(char, budget_m: float = 9.0) -> Skill:
+    feats = SkillFeatures(
+        cost_movement=budget_m,
+        target_type=TargetType.POINT,
+        range_m=budget_m,
+    )
+
+    def builder(actor_id, target_id, coord):
+        if coord is not None:
+            return {"type": "MOVE", "character": actor_id,
+                    "target_position": [float(coord[0]), float(coord[1])],
+                    "consumes": ["movement"]}
+        if target_id:
+            return {"type": "MOVE", "character": actor_id, "target": target_id,
+                    "consumes": ["movement"]}
+        return None
+
+    return Skill("move", "移動", feats, builder)
+
+
+def end_turn_skill() -> Skill:
+    """No-op skill so the policy has an explicit END action."""
+    feats = SkillFeatures(target_type=TargetType.SELF)
+    return Skill("end", "結束", feats, lambda a, t, c: None)
+
+
+# ── Enumeration ──────────────────────────────────────────────────────────────
+
+def available_skills(char, world_state=None) -> list[Skill]:
+    """List everything `char` can invoke this turn. Order is stable across
+    calls so the policy's skill_idx stays consistent within an episode.
+
+    Order: [END, MOVE, weapons..., spells..., DODGE, HIDE]
+    """
+    from .spells import SPELLS
+
+    out: list[Skill] = [end_turn_skill(), move_skill(char)]
+
+    for w in char.weapons:
+        out.append(from_weapon(w, char))
+
+    if char.spells and char.spellcasting_ability:
+        for name in char.spells:
+            spell = SPELLS.get(name)
+            if spell is not None:
+                out.append(from_spell(spell, char))
+
+    out.append(dodge_skill(char))
+    out.append(hide_skill(char))
+    return out
