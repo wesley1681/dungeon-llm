@@ -228,6 +228,39 @@ class HuntersMark(StatusEffect):
                          applied_round=applied_round, source_id=source_id)
 
 
+class Blurred(StatusEffect):
+    """Blur spell (L2 concentration). All attacks against this creature have disadvantage."""
+    def __init__(self, applied_round: int = 0, source_id: str = ""):
+        super().__init__(name="blurred", expires_on="never",
+                         applied_round=applied_round, source_id=source_id)
+    def on_incoming_attack(self, defender, attacker, weapon, mode: str) -> str:
+        return combine_advantage(mode, "disadvantage")
+
+
+class Baned(StatusEffect):
+    """Bane spell (L1 concentration). Subtract 1d4 from attack rolls and saving throws."""
+    def __init__(self, applied_round: int = 0, source_id: str = ""):
+        super().__init__(name="baned", expires_on="never",
+                         applied_round=applied_round, source_id=source_id)
+    def on_outgoing_attack_total(self, attacker, target, weapon, total: int) -> int:
+        from .dice import roll
+        return total - roll("1d4")
+    def on_saving_throw(self, char, stat: str, modifier: int) -> int:
+        from .dice import roll
+        return modifier - roll("1d4")
+
+
+class SacredWeaponBuff(StatusEffect):
+    """Sacred Weapon (Channel Divinity, Devotion Paladin). +3 to attack rolls for 1 minute.
+    (Approximates CHA +3 for a typical L6 Devotion Paladin with CHA 16.)"""
+    def __init__(self, applied_round: int = 0, source_id: str = ""):
+        super().__init__(name="sacred_weapon_buff", expires_on="never",
+                         rounds_remaining=10, applied_round=applied_round,
+                         source_id=source_id)
+    def on_outgoing_attack_total(self, attacker, target, weapon, total: int) -> int:
+        return total + 3
+
+
 # ── Registry ─────────────────────────────────────────────────────────────────
 # Looked up by APPLY_MOD action handler. Append-only when adding new buff /
 # debuff statuses that need to be applied through the generic action.
@@ -246,8 +279,11 @@ MODIFIER_CLASSES: dict[str, type] = {
     "restrained":   Restrained,
     "frightened":   Frightened,
     "charmed":      Charmed,
-    "evasion":      Evasion,
-    "hunters_mark": HuntersMark,
+    "evasion":            Evasion,
+    "hunters_mark":       HuntersMark,
+    "blurred":            Blurred,
+    "baned":              Baned,
+    "sacred_weapon_buff": SacredWeaponBuff,
 }
 
 # Statuses that exist only for the duration of one combat — buffs/debuffs the
@@ -259,6 +295,7 @@ COMBAT_ONLY_STATUSES: frozenset[str] = frozenset({
     "dodging", "hidden", "reckless", "blessed", "raging", "shielded",
     "prone", "paralyzed", "stunned", "poisoned", "restrained",
     "frightened", "charmed", "disengaging", "evasion", "hunters_mark",
+    "blurred", "baned", "sacred_weapon_buff",
 })
 
 
