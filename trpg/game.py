@@ -414,6 +414,7 @@ class GameSession:
 
                 # Phase: start of this character's turn
                 tick_status_effects(char, "self_turn_start", combat.round_number)
+                char.reaction_used = False
                 terrain_dmg = tick_terrain_damage(char, combat.battlefield)
                 if terrain_dmg > 0:
                     note = f"{char.name} 因危險地形受到 {terrain_dmg} 點傷害（HP {char.hp}/{char.max_hp}）"

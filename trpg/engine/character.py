@@ -48,6 +48,10 @@ class Character:
     # 正在維持的專注法術（skill_id 或法術名）。每名角色最多 1 個專注效果；
     # 受傷時要過 CON 豁免否則中斷，新的專注法術會直接覆蓋舊的。
     concentrating_on: str = ""
+    # 已備好的反應動作名稱（如 "shield_spell"）。引擎在攻擊／法術觸發時
+    # 自動檢查並可能消耗。
+    reactions: list = field(default_factory=list)
+    reaction_used: bool = False   # 已使用本回合反應？self_turn_start 重置
 
     @property
     def proficiency_bonus(self) -> int:

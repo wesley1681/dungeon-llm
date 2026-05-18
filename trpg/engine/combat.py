@@ -125,6 +125,16 @@ def attack_range_check(attacker: Character, target: Character, weapon,
     return True, "", "normal"
 
 
+def effective_ac(char: Character) -> int:
+    """Compute character AC including all active Modifier hooks (Shield +5,
+    etc.). Use this anywhere combat needs to compare an attack total to
+    a target's defence — `char.ac` alone misses temporary buffs/debuffs."""
+    ac = char.ac
+    for m in char.iter_modifiers():
+        ac = m.on_compute_ac(char, ac)
+    return ac
+
+
 def resolve_attack(attacker: Character, target: Character,
                    weapon=None, mode: str = "normal") -> tuple[bool, int]:
     """Returns (hit, total_roll). mode: 'normal' / 'advantage' / 'disadvantage'.
@@ -150,7 +160,7 @@ def resolve_attack(attacker: Character, target: Character,
     # Numeric riders on the d20 total (e.g. Bless +1d4).
     for m in attacker.iter_modifiers():
         total = m.on_outgoing_attack_total(attacker, target, weapon, total)
-    return total >= target.ac, total
+    return total >= effective_ac(target), total
 
 
 def apply_damage(target: Character, amount, dtype: str = "untyped",
@@ -224,6 +234,72 @@ def _lookup_char(key: str, world_state: WorldState):
     return char
 
 
+# ── Reaction system ──────────────────────────────────────────────────────────
+#
+# Reactions fire in response to events on *another* creature's turn. Each
+# character has one reaction per round, tracked on Character.reaction_used and
+# reset at self_turn_start. The catalogue is intentionally tiny right now
+# (Shield only) — opportunity attack, Counterspell, Hellish Rebuke etc. plug
+# in by adding more branches below and registering on Character.reactions.
+
+def _fire_shield_spell(defender: Character, world_state: WorldState) -> int:
+    """Cast Shield: consume reaction + lowest available slot, attach Shielded.
+    Returns the slot level consumed."""
+    from .status import Shielded
+    defender.reaction_used = True
+    consumed = 0
+    for lvl in (1, 2, 3, 4, 5, 6, 7, 8, 9):
+        if defender.spell_slots.get(lvl, 0) > 0:
+            defender.spell_slots[lvl] -= 1
+            consumed = lvl
+            break
+    round_num = world_state.combat.round_number if world_state.combat else 0
+    defender.add_status(Shielded(applied_round=round_num))
+    return consumed
+
+
+def _try_react_to_attack(defender: Character, attacker: Character,
+                          attack_total: int, world_state: WorldState
+                          ) -> tuple[bool, str, int]:
+    """Iterate defender's available reactions for an incoming attack roll.
+
+    Returns (blocked, reaction_name, slot_consumed):
+      blocked       — True if the attack should be re-evaluated as a miss
+      reaction_name — for narration (empty when nothing fired)
+      slot_consumed — spell slot level used (0 if none)
+
+    Shield's auto-fire rule: only spend the reaction when +5 AC would flip
+    this specific attack from hit to miss. Wasting Shield on an attack that
+    would hit anyway or miss without help is suppressed.
+    """
+    if defender.reaction_used or not defender.is_alive():
+        return False, "", 0
+
+    if "shield_spell" in defender.reactions:
+        has_slot = any(defender.spell_slots.get(lvl, 0) > 0 for lvl in range(1, 10))
+        if has_slot:
+            base_ac = effective_ac(defender)
+            if base_ac <= attack_total < base_ac + 5:
+                slot = _fire_shield_spell(defender, world_state)
+                return True, "shield_spell", slot
+    return False, "", 0
+
+
+def _try_react_to_auto_damage(defender: Character, world_state: WorldState
+                                ) -> tuple[bool, str, int]:
+    """For Magic Missile and similar auto-hits, Shield blocks unconditionally
+    when available (5e rule: Shield's casting trigger explicitly names
+    Magic Missile). Returns (blocked, reaction_name, slot_consumed)."""
+    if defender.reaction_used or not defender.is_alive():
+        return False, "", 0
+    if "shield_spell" in defender.reactions:
+        has_slot = any(defender.spell_slots.get(lvl, 0) > 0 for lvl in range(1, 10))
+        if has_slot:
+            slot = _fire_shield_spell(defender, world_state)
+            return True, "shield_spell", slot
+    return False, "", 0
+
+
 def execute_action(action: dict, world_state: WorldState) -> dict:
     """Execute a parsed action JSON from the arbiter. Returns a result summary dict."""
     t = action.get("type")
@@ -272,16 +348,31 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
             attacker.add_status(Reckless(applied_round=round_num))
 
         hit, roll_total = resolve_attack(attacker, target, weapon, mode=mode)
+        target_ac = effective_ac(target)
+        # Reaction interception: target may cast Shield etc. to flip the hit.
+        reaction_blocked, reaction_name, reaction_slot = (False, "", 0)
+        if hit:
+            reaction_blocked, reaction_name, reaction_slot = _try_react_to_attack(
+                target, attacker, roll_total, world_state
+            )
+            if reaction_blocked:
+                # Re-evaluate AC after the reaction (Shield adds Shielded status)
+                target_ac = effective_ac(target)
+                if roll_total < target_ac:
+                    hit = False
         result = {
             "type":          "ATTACK",
             "attacker_name": attacker.name,
             "target_name":   target.name,
             "weapon_name":   weapon.name,
             "roll":          roll_total,
-            "target_ac":     target.ac,
+            "target_ac":     target_ac,
             "hit":           hit,
             "advantage_mode": mode,
         }
+        if reaction_blocked:
+            result["reaction"] = reaction_name
+            result["reaction_slot"] = reaction_slot
         if hit:
             base_dmg = roll(weapon.damage_dice)
             raw = max(1, base_dmg + dmg_mod)
@@ -459,6 +550,22 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
                     attacker.position, target.position):
                 return {"type": "ERROR",
                         "message": f"視線被遮擋，無法擊中 {target.name}"}
+            # Shield blocks Magic Missile in full (5e rule)
+            blocked, reaction_name, reaction_slot = _try_react_to_auto_damage(
+                target, world_state
+            )
+            if blocked:
+                target_results.append({
+                    "target_name":   target.name,
+                    "darts":         hits,
+                    "damage":        0,
+                    "reaction":      reaction_name,
+                    "reaction_slot": reaction_slot,
+                    "target_hp":     target.hp,
+                    "target_max_hp": target.max_hp,
+                    "target_alive":  target.is_alive(),
+                })
+                continue
             total_dmg = 0
             for _ in range(hits):
                 rolled = roll(damage_per)
@@ -1011,6 +1118,9 @@ def format_result(action: dict, result: dict, actor_name: str = "") -> str:
         lines.append(
             f"使用 {result['weapon_name']}{mode_str}，攻擊骰 {result['roll']} vs AC {result['target_ac']}：{hit_str}"
         )
+        if result.get("reaction"):
+            slot_str = f"（消耗 {result['reaction_slot']} 環）" if result.get("reaction_slot") else ""
+            lines.append(f"  ↳ 反應：{result['reaction']}{slot_str} 觸發，AC 變為 {result['target_ac']}")
         if result["hit"]:
             alive    = "存活" if result.get("target_alive") else "倒下"
             dmg_mod  = result.get("damage_mod", 0)
@@ -1084,10 +1194,16 @@ def format_result(action: dict, result: dict, actor_name: str = "") -> str:
         )
         for tr in result.get("target_results", []):
             alive_str = "存活" if tr["target_alive"] else "倒下"
-            lines.append(
-                f"  {tr['target_name']}：{tr['darts']} 發共 {tr['damage']} 傷，"
-                f"HP {tr['target_hp']}/{tr['target_max_hp']}（{alive_str}）"
-            )
+            if tr.get("reaction"):
+                lines.append(
+                    f"  {tr['target_name']}：反應 {tr['reaction']} 阻擋 {tr['darts']} 發傷害，"
+                    f"HP {tr['target_hp']}/{tr['target_max_hp']}（{alive_str}）"
+                )
+            else:
+                lines.append(
+                    f"  {tr['target_name']}：{tr['darts']} 發共 {tr['damage']} 傷，"
+                    f"HP {tr['target_hp']}/{tr['target_max_hp']}（{alive_str}）"
+                )
 
     elif t == "APPLY_MOD":
         slot_str = f"，{result['slot_level']} 環" if result['slot_level'] > 0 else ""

@@ -78,6 +78,16 @@ class Blessed(StatusEffect):
         return modifier + roll("1d4")
 
 
+class Shielded(StatusEffect):
+    """Shield spell — +5 AC until the start of the defender's next turn.
+    Auto-attached by the engine when a Shield reaction fires."""
+    def __init__(self, applied_round: int = 0):
+        super().__init__(name="shielded", expires_on="self_turn_start",
+                         applied_round=applied_round)
+    def on_compute_ac(self, char, current_ac: int) -> int:
+        return current_ac + 5
+
+
 class Raging(StatusEffect):
     """Barbarian Rage. +2 to physical-type outgoing damage; physical-type
     incoming damage is halved (resistance). 10 rounds in our simplified model
@@ -104,6 +114,7 @@ MODIFIER_CLASSES: dict[str, type] = {
     "reckless": Reckless,
     "blessed":  Blessed,
     "raging":   Raging,
+    "shielded": Shielded,
 }
 
 

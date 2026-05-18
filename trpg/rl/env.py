@@ -165,7 +165,9 @@ class CombatEnv:
     # ── Internal: turn cycling ──────────────────────────────────────────────
 
     def _tick_terrain(self, char: Character) -> int:
-        """Apply dangerous-terrain damage at start of `char`'s turn."""
+        """Apply start-of-turn ticks: refresh reaction budget then dangerous
+        terrain damage. Returns the damage dealt (0 if none)."""
+        char.reaction_used = False
         return tick_terrain_damage(char, self.ws.combat.battlefield)
 
     def _advance_to_agent_turn(self) -> None:

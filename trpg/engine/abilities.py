@@ -41,8 +41,12 @@ class ClassAbility:
     features: SkillFeatures
     engine_ready: bool = False
     engine_todo: str = ""     # what the engine still needs for this to execute
-    # Optional builder: (actor_id, target_entity_id, target_coord) -> action dict
+    # Optional builder: (actor_id, target_entity_id, target_coord) -> action dict.
+    # For reactions (is_reaction=True), the builder is irrelevant — the engine
+    # checks Character.reactions and auto-fires on the right trigger event.
     builder: Callable | None = None
+    is_reaction: bool = False   # if True, listed for RL observation but
+                                # NEVER offered as an active-turn action choice
 
 
 # ── Catalog ──────────────────────────────────────────────────────────────────
@@ -151,7 +155,9 @@ _register(ClassAbility(
     skill_id="shield_spell",
     display_name="法盾",
     class_id="wizard",
-    description="REACTION：被攻擊或被魔法飛彈鎖定時，+5 AC 直到下回合。",
+    description="REACTION：被攻擊命中或被魔法飛彈鎖定時，+5 AC 直到下回合。"
+                "由引擎自動觸發 — 角色將 'shield_spell' 加入 Character.reactions "
+                "且有 1+ 環法術位即可使用。",
     features=SkillFeatures(
         cost_reaction=1.0,
         cost_slot_level=1.0,
@@ -159,10 +165,10 @@ _register(ClassAbility(
         conferred_ac_mod=5.0,
         status_duration=1.0,
     ),
-    engine_ready=False,
-    engine_todo="reactions need an event-hook system: skills with "
-                "cost_reaction>0 fire on triggers (incoming attack), not on "
-                "the caster's own turn. Schema is ready; engine isn't.",
+    engine_ready=True,
+    is_reaction=True,
+    engine_todo="smart-fire only triggers when +5 AC would flip a hit to miss; "
+                "Magic Missile is always blocked. No 'always cast' option yet.",
 ))
 
 _register(ClassAbility(
