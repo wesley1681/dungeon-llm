@@ -230,6 +230,73 @@ def _parse_command(text: str, actor_id: str, world_state) -> dict:
     if cmd in _HIDE_WORDS:
         return {"type": "HIDE", "character": actor_id, "consumes": ["action"]}
 
+    # ── 招式 <skill_id> [args] ────────────────────────────────────────────
+    # Invoke a ClassAbility from the catalogue. Args interpretation depends
+    # on the ability's target_type:
+    #   SELF                — no args
+    #   SINGLE_ENEMY/ALLY   — arg[0] is target id or display name
+    #   POINT               — arg[0], arg[1] are x, y in metres
+    #   MULTI_ENEMY/ALLY    — arg[0] is "id1,id2,..." (comma-separated)
+    if cmd in ("招式", "ability", "skill"):
+        from .abilities import CLASS_ABILITIES
+        from .skill import TargetType
+        actor = world_state.characters.get(actor_id)
+        if len(parts) < 2:
+            # No skill_id → list what this actor can invoke
+            avail = []
+            for sid in (actor.known_abilities if actor else []):
+                ab = CLASS_ABILITIES.get(sid)
+                if ab and not ab.is_reaction and ab.engine_ready:
+                    avail.append(f"{sid}（{ab.display_name}）")
+            tip = "、".join(avail) or "（無）"
+            raise ValueError(f"用法：招式 <skill_id> [args]。你會的招式：{tip}")
+        skill_id = parts[1]
+        ab = CLASS_ABILITIES.get(skill_id)
+        if ab is None:
+            for a in CLASS_ABILITIES.values():
+                if a.display_name == skill_id:
+                    ab = a
+                    skill_id = a.skill_id
+                    break
+        if ab is None:
+            raise ValueError(f"未知技能：{skill_id}")
+        if ab.is_reaction:
+            raise ValueError(f"{skill_id} 是反應動作，引擎自動觸發，不能主動使用")
+        if not ab.engine_ready or ab.builder is None:
+            raise ValueError(f"{skill_id} 引擎尚未就緒")
+        if actor is not None and actor.known_abilities and skill_id not in actor.known_abilities:
+            raise ValueError(f"你不會 {skill_id}")
+
+        tt = ab.features.target_type
+        args = parts[2:]
+        target_arg = None
+        coord_arg = None
+
+        if tt == TargetType.SELF:
+            pass
+        elif tt in (TargetType.SINGLE_ENEMY, TargetType.SINGLE_ALLY):
+            if not args:
+                raise ValueError(f"用法：招式 {skill_id} <目標>")
+            target_arg = _resolve_id(args[0], world_state) or args[0]
+        elif tt == TargetType.POINT:
+            if len(args) < 2:
+                raise ValueError(f"用法：招式 {skill_id} <x> <y>")
+            try:
+                coord_arg = (float(args[0]), float(args[1]))
+            except ValueError:
+                raise ValueError(f"無效座標：{args[0]} {args[1]}")
+        elif tt in (TargetType.MULTI_ENEMY, TargetType.MULTI_ALLY):
+            if not args:
+                raise ValueError(f"用法：招式 {skill_id} <目標1,目標2,...>")
+            tokens = [t.strip() for t in args[0].split(",") if t.strip()]
+            resolved = [_resolve_id(tok, world_state) or tok for tok in tokens]
+            target_arg = ",".join(resolved)
+
+        action = ab.builder(actor_id, target_arg, coord_arg)
+        if action is None:
+            raise ValueError(f"{skill_id}：builder 回傳 None（檢查 args 是否齊全）")
+        return action
+
     raise ValueError(f"無法解析指令：{text}")
 
 

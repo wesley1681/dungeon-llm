@@ -52,6 +52,9 @@ class Character:
     # 自動檢查並可能消耗。
     reactions: list = field(default_factory=list)
     reaction_used: bool = False   # 已使用本回合反應？self_turn_start 重置
+    # 此角色會使用的 ClassAbility skill_id 清單（如 ["second_wind","rage"]）。
+    # HumanInputPolicy 用「招式」指令時會檢查這份清單。
+    known_abilities: list = field(default_factory=list)
 
     @property
     def proficiency_bonus(self) -> int:

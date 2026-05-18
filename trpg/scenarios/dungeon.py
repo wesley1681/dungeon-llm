@@ -65,6 +65,7 @@ def build_world_state() -> WorldState:
         weapons=[
             WEAPON_DEFS["短劍"],
             WEAPON_DEFS["匕首"],
+            WEAPON_DEFS["長劍"],            # 供 trip_attack / reckless_attack 用
             Weapon("神話長劍", "4d6+10", "斬擊", "近戰"),
         ],
         consumables=[
@@ -74,6 +75,17 @@ def build_world_state() -> WorldState:
         ],
         gear=["盜賊工具", "繩索 15 尺"],
         proficiencies=["DEX", "INT", "潛行", "開鎖", "察覺", "欺騙"],
+        # 測試用：把 12 招的相關資源都裝齊（多職業混血）
+        spells=["神聖光輝", "治療術", "定身術", "霧步"],
+        spell_slots={1: 3, 2: 2},
+        spellcasting_ability="INT",
+        reactions=["shield_spell"],
+        known_abilities=[
+            "second_wind", "action_surge", "trip_attack",
+            "magic_missile", "hold_person", "misty_step",
+            "cure_wounds", "sacred_flame", "bless",
+            "rage", "reckless_attack",
+        ],
         is_npc=False,
     )
 
