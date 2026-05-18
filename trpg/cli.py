@@ -18,7 +18,6 @@ from .scenarios.dungeon import (
 from .llm.gm_agent import GMAgent
 from .llm.tag_agent import TagAgent
 from .llm.player_agent import PlayerAgent
-from .llm.arbiter import ArbiterAgent
 from .game import (
     GameSession,
     TagResult, StreamChunk, ActionResult,
@@ -46,7 +45,8 @@ THOR_THINK         = False
 THOR_SHOW_THINKING = False
 THOR_OPTIONS = {"temperature": 0.9, "num_predict": 150}
 
-DEBUG_ARBITER = True
+# When True, sub-action JSON gets echoed under each ActionResult line.
+DEBUG_COMBAT_ACTION = True
 
 CLAUDE_TEST     = False
 CLAUDE_RESPONSE = pathlib.Path(__file__).parent.parent / "claude_response.txt"
@@ -113,7 +113,6 @@ def run_game() -> None:
                                   world_state=world_state,
                                   think=THOR_THINK, show_thinking=THOR_SHOW_THINKING,
                                   options=THOR_OPTIONS, base_url=url, backend=bk),
-        arbiter     = ArbiterAgent(model=model, base_url=url, backend=bk),
         npc_agents  = build_npc_agents(world_state, model, url, bk),
     )
 
@@ -185,8 +184,8 @@ def run_game() -> None:
         elif isinstance(event, ActionResult):
             _seen.pop("narrate_current", None)  # reset narrate slot for next action
             print(f"\n  {event.summary}")
-            if DEBUG_ARBITER and event.debug:
-                print(f"  [判定器] {event.debug}")
+            if DEBUG_COMBAT_ACTION and event.debug:
+                print(f"  [動作] {event.debug}")
 
         elif isinstance(event, CombatStart):
             print(f"\n  先攻順序：{'→'.join(event.order)}")

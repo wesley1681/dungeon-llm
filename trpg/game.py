@@ -15,6 +15,7 @@ from .engine.combat import (
     execute_action, format_result, make_saving_throw,
     consume_resources, MOVE_BUDGET_M, build_combat_context,
 )
+from .engine.combat_policy import CombatPolicy, HeuristicCombatPolicy
 from .engine.quests import check_quest_progress, objective_progress_str
 from .engine.status import tick_status_effects
 from .llm.tag_parser import execute_all_tags, set_npc_agent_registry
@@ -100,10 +101,43 @@ _STOP = object()
 
 # ── Combat turn structure ─────────────────────────────────────────────────────
 
-# Inputs from human player that mean "end my turn"
-_PLAYER_END_INPUTS = {"end", "結束", "結束回合", "我這就好", "我這回合到這"}
 # Safety cap: max sub-actions per character per round (prevents runaway loops)
 _MAX_SUB_ACTIONS = 5
+
+
+def _describe_action(action: dict) -> str:
+    """Synthesize the player-description string format_result expects.
+
+    Combat decisions are made by CombatPolicy and arrive as structured dicts;
+    this rebuilds a short natural-language label so the narrator's headline
+    line ("【索爾的行動】我用長劍攻擊地精") still reads correctly.
+    """
+    t = action.get("type", "")
+    if t == "ATTACK":
+        return f"我用 {action.get('weapon', '武器')} 攻擊 {action.get('target', '敵人')}"
+    if t == "MOVE":
+        if action.get("target"):
+            return f"我朝 {action['target']} 移動"
+        tp = action.get("target_position")
+        if tp is not None:
+            return f"我移動到 ({tp[0]:.1f}, {tp[1]:.1f})"
+        d = action.get("direction")
+        if d == "advance":
+            return "我前進"
+        if d == "retreat":
+            return "我後退"
+        return "我移動"
+    if t == "SPELL":
+        return f"我施展 {action.get('spell_name', '法術')}"
+    if t == "DODGE":
+        return "我閃避"
+    if t == "HIDE":
+        return "我躲藏"
+    if t == "USE_ITEM":
+        return f"我使用 {action.get('item', '道具')}"
+    if t == "AOE":
+        return f"我投擲 {action.get('item', '物品')}"
+    return f"我執行 {t}"
 
 
 def format_aria_combat_info(aria, ctx) -> str:
@@ -146,15 +180,25 @@ def format_aria_combat_info(aria, ctx) -> str:
 # ── GameSession ───────────────────────────────────────────────────────────────
 
 class GameSession:
-    def __init__(self, world_state: WorldState, gm, tag_agent, thor_agent, arbiter,
-                 npc_agents: dict = None):
+    def __init__(self, world_state: WorldState, gm, tag_agent, thor_agent,
+                 npc_agents: dict = None,
+                 policies: dict[str, CombatPolicy] | None = None):
         self.world_state = world_state
         self.gm          = gm
         self.tag_agent   = tag_agent
         self.thor_agent  = thor_agent
-        self.arbiter     = arbiter
         self.npc_agents  = npc_agents or {}
         set_npc_agent_registry(self.npc_agents)
+
+        # Combat decisions go through a policy per character. Anyone without an
+        # explicit policy falls back to the scripted heuristic — this is the
+        # placeholder until a trained RL policy plugs in. Aria (human PC) also
+        # uses the heuristic for now; we'll swap in a structured-input policy
+        # once the UI exposes action choices instead of free text.
+        self.policies: dict[str, CombatPolicy] = dict(policies or {})
+        default_policy = HeuristicCombatPolicy()
+        for cid in world_state.characters:
+            self.policies.setdefault(cid, default_policy)
 
         self._events    : queue.Queue = queue.Queue()
         self._player_in : queue.Queue = queue.Queue()
@@ -162,7 +206,7 @@ class GameSession:
 
         from .llm.controllers import HumanController, LLMPlayerController, LLMNpcController
         self.controllers = {
-            "aria": HumanController("aria", self._get_input, self._emit, _PLAYER_END_INPUTS),
+            "aria": HumanController("aria", self._get_input, self._emit),
             "thor": LLMPlayerController(thor_agent, self._emit),
         }
         for cid, agent in self.npc_agents.items():
@@ -416,14 +460,14 @@ class GameSession:
 
     def _take_combat_turn(self, cid: str, char, resources: dict,
                           round_num: int, log: list) -> str:
-        """Run a multi-step combat turn for one character via its controller.
+        """Run a multi-step combat turn for one character via its CombatPolicy.
 
-        Loop ends on <END>/quit/fled, all resources exhausted, safety cap, or combat end.
-        Returns "quit" to signal outer loop to stop, "" otherwise.
+        Loop ends on policy returning ended/fled, resources exhausted, safety
+        cap, or combat end. Returns "quit" if the stop flag is set, "" otherwise.
         """
         ws = self.world_state
-        ctrl = self.controllers.get(cid)
-        if ctrl is None:
+        policy = self.policies.get(cid)
+        if policy is None:
             return ""
 
         for _ in range(_MAX_SUB_ACTIONS):
@@ -434,20 +478,16 @@ class GameSession:
             if not self._alive_enemies() or not self._alive_human_pcs():
                 return ""
 
-            ctx = build_combat_context(cid, char, ws, resources, round_num)
-            decision = ctrl.take_sub_action(char, ctx)
+            decision = policy.decide(cid, char, ws, resources, round_num)
 
-            if decision.quit:
-                self._emit(GameOver("冒險結束。再見！"))
-                return "quit"
             if decision.fled:
                 self._handle_flee(cid, char)
                 return ""
 
             result_text = ""
-            if decision.description:
+            if decision.action is not None:
                 result_text = self._execute_sub_action(
-                    cid, char, decision, ctrl, resources, ctx.enemies, ctx.allies
+                    cid, char, decision.action, resources
                 )
 
             if result_text:
@@ -475,48 +515,32 @@ class GameSession:
             if agent is not None:
                 agent.in_party = False
 
-    def _execute_sub_action(self, cid, char, decision, ctrl, resources, enemies, allies) -> str:
-        """Parse → execute → emit. Returns result_text (empty if invalid/blocked).
+    def _execute_sub_action(self, cid, char, action: dict, resources) -> str:
+        """Validate → execute → emit. Returns result_text ("" on rejection).
 
-        Any rejection — unparseable arbiter output, resource exhausted, or
-        engine ERROR — funnels through ctrl.on_invalid_action so the actor
-        gets a chance to pick something else. Controllers bound their own
-        retries (HumanController re-prompts; LLM controllers cap at 1 retry).
+        The action is a structured dict from a CombatPolicy. Engine ERRORs and
+        resource-exhausted cases are emitted as invalid ActionResults; the
+        policy can choose to react on its next decide() call, so no controller
+        retry loop is needed.
         """
         ws = self.world_state
-
-        def _retry(reason: str, suggestion: str = "") -> str:
-            new_decision = ctrl.on_invalid_action(reason, suggestion)
-            if new_decision is None or not new_decision.description:
-                return ""
-            return self._execute_sub_action(cid, char, new_decision, ctrl, resources, enemies, allies)
-
-        action = self.arbiter.parse(
-            player_action=decision.description, actor_id=cid, actor_name=char.name,
-            available_targets=enemies, actor_char=char, allies=allies,
-        )
         debug = json.dumps(action, ensure_ascii=False)
-        if not action.get("valid"):
-            reason = action.get("reason", "")
-            self._emit(ActionResult(char.name, f"無效行動：{reason}", debug, valid=False))
-            return _retry(reason, action.get("suggestion", ""))
 
         if "action" in action.get("consumes", []) and resources.get("action", 0) <= 0:
             reason = "本回合動作已用完"
-            self._emit(StatusMessage(f"{char.name} {reason}"))
-            return _retry(reason, "改用移動或結束回合")
+            self._emit(ActionResult(char.name, f"{char.name}：{reason}", debug, valid=False))
+            return ""
 
         result = execute_action(action, ws)
         if result.get("type") == "ERROR":
             reason = result["message"]
             self._emit(ActionResult(char.name, f"{char.name}：{reason}", debug, valid=False))
-            return _retry(reason)
+            return ""
 
-        summary = format_result(decision.description, result, char.name)
+        description = _describe_action(action)
+        summary = format_result(description, result, char.name)
         self._emit(ActionResult(char.name, summary, debug, valid=True))
         ws.log_event("system", summary)
-        if cid == "aria":
-            ws.event_log.append(f"{char.name}：{decision.description}")
         consume_resources(resources, action, result)
         return summary
 

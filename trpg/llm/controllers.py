@@ -1,121 +1,14 @@
-"""ActorController — unified interface for everything that takes a combat turn.
+"""ActorController — non-combat slot dispatch for each character.
 
-Each char_id in a GameSession is paired with one controller. The combat loop
-calls `controller.take_sub_action(char, ctx)` and acts on the returned
-ActorDecision; it does not know or care whether the controller wraps a human,
-an LLM player agent, or an LLM NPC agent.
+Each char_id in a GameSession is paired with one controller. Combat sub-action
+decisions go through a CombatPolicy (engine.combat_policy) — controllers are
+only responsible for exploration narration and conversation turns.
 
 Adding a new playable character type = write a new ActorController subclass
-and register it; the combat loop changes nothing.
+and register it; combat doesn't care.
 """
 from __future__ import annotations
 from dataclasses import dataclass
-import re
-
-from ..engine.combat import CombatContext
-
-
-_END_RE = re.compile(r'<\s*END\s*>', re.IGNORECASE)
-_FLEE_RE = re.compile(r'<\s*FLEE\s*>', re.IGNORECASE)
-# Chain-of-thought block emitted by combat_reasoning NPCs. Stripped before
-# the action text is handed to the arbiter; the raw stream still goes to the
-# UI so the human can watch the NPC reason in real time.
-# Matches either a closed <think>...</think> block OR an unclosed <think>...
-# that runs to end-of-output (happens when num_predict caps the response
-# mid-thought — without this fallback, the arbiter would parse fragments of
-# the reasoning text as the action and execute hallucinated commits).
-_THINK_RE = re.compile(r'<\s*think\s*>.*?(?:<\s*/\s*think\s*>|\Z)',
-                       re.IGNORECASE | re.DOTALL)
-
-
-def _strip_marker(text: str, pat: re.Pattern) -> tuple[str, bool]:
-    matched = bool(pat.search(text))
-    cleaned = pat.sub("", text).strip()
-    return cleaned, matched
-
-
-def _build_menu(ctx: CombatContext) -> tuple[str, str]:
-    """Build (resources_line, menu_text) for the combat nudge.
-
-    The menu adapts to remaining resources: exhausted options are dropped so
-    the actor sees fewer choices when there's less to do, and the header
-    flips to a "you should probably end" hint when everything is spent.
-    Without this, LLMs that already used their action loop on 0-distance
-    moves until _MAX_SUB_ACTIONS caps them out.
-    """
-    res = ctx.resources or {}
-    action_left = res.get("action", 0)
-    movement_left = res.get("movement", 0.0)
-    has_movement = movement_left > 1e-6
-
-    action_status = "可用" if action_left > 0 else "已用完"
-    resources_line = (
-        f"剩餘資源：動作 {action_status}、移動 {movement_left:.1f}m"
-        f"（每回合 1 個動作，移動可分次走完）\n"
-    )
-
-    items: list[str] = []
-    if action_left > 0:
-        items.append("- 攻擊（消耗動作）：「我用 [武器] 攻擊 [敵人]」")
-        if ctx.spells_str:
-            items.append(
-                "- 施法（消耗動作）：「我對 [目標] 施展 [法術]」"
-                "或「我把 [法術] 扔到 [座標]m 處」\n"
-                "  （AOE 法術記得避開隊友和自己——可指定一個遠離盟友的座標當圓心）"
-            )
-        items.append("- 閃避（消耗動作）：「我閃避」「我專注防禦」")
-        items.append("- 躲藏（消耗動作）：「我躲到 X 後面」")
-    if has_movement:
-        items.append(
-            "- 移動（消耗移動）：「我朝 [角色] 衝鋒/移動」（自動停在對方位置不過頭）"
-            f"或「我衝上去」「我後退」（剩 {movement_left:.1f}m）"
-        )
-    items.append("- 結束本回合：單獨輸出 <END>")
-
-    if action_left == 0 and not has_movement:
-        header = "**本回合資源已用完**，請直接輸出 <END> 結束回合：\n"
-    elif action_left == 0:
-        header = (
-            "**動作已用完**，本回合只剩移動或結束。"
-            "沒有迫切移動需求就直接 <END>：\n"
-        )
-    elif not has_movement:
-        header = "**移動已用完**，本回合只剩動作或結束：\n"
-    else:
-        header = "從下列**選一個** sub-action 輸出（不要組合）：\n"
-
-    return resources_line, header + "\n".join(items)
-
-
-_REASONING_INSTRUCTION = """
-## 戰鬥推理（先想、後做）
-輸出動作前，先用 <think>...</think> 包住分析，
-然後另起一行才是實際 sub-action。<END> / <FLEE> 標記放在動作行尾，不要寫在 <think> 裡。
-
-<think> 需仔細思考以下內容：
-- 自己、關鍵敵人、盟友的座標與距離
-- 想用的招式 vs 射程/AOE 半徑——誰會被打到（含自己人）
-- 至少評估一個替代方案（不同目標、不同位置、或換招）
-- 結論：選哪個，為什麼
-
-範例：
-<think>
-我 6m，索爾 0m，葛茲 1.5m，盟友丙 6m。
-火球半徑 6m → 自爆區 0~12m，我在裡面。
-若放 -1m：傷索爾/凱恩，自己距 7m 安全，丙距 7m 安全。
-若放 6m：我自爆死，不值。
-選 -1m。
-</think>
-我把火球術扔到 -1m 處。
-"""
-
-
-@dataclass
-class ActorDecision:
-    description: str = ""   # natural language for arbiter; "" = end-only, no action
-    ended: bool = False     # turn ends after this sub-action
-    fled: bool = False      # actor flees combat entirely (NPC only)
-    quit: bool = False      # quit the game (Human only)
 
 
 @dataclass
@@ -133,106 +26,39 @@ class ConversationOutput:
 
 
 class ActorController:
-    """Base class. All controllers implement take_sub_action; the non-combat
-    methods default to "this actor doesn't participate in that slot" so a
-    follower-style controller can omit them and stay silent automatically."""
+    """Base class for non-combat slots. Defaults are no-ops so a follower-style
+    controller can omit them and stay silent automatically."""
 
-    # ── Combat (always implemented by participating actors) ─────────────────
-    def take_sub_action(self, char, ctx: CombatContext) -> ActorDecision:
-        raise NotImplementedError
-
-    def on_invalid_action(self, reason: str, suggestion: str) -> ActorDecision | None:
-        """Called when arbiter rejects the controller's description.
-        Return a fresh ActorDecision to retry, or None to drop this sub-action."""
-        return None
-
-    # ── Exploration / conversation (overridden by PC-style controllers) ─────
     def take_exploration_turn(self, char, *, gm_text: str = "",
                               prior_remarks: dict[str, str] | None = None
                               ) -> ExplorationOutput:
-        """Returns an ExplorationOutput. Default is a no-op (silent) — used by
-        non-PC controllers (followers, enemy NPCs)."""
         return ExplorationOutput()
 
     def take_conversation_turn(self, char, npc_char, attitude_label: str
                                ) -> ConversationOutput:
-        """Returns a ConversationOutput. Default is silent — used by non-PC
-        controllers."""
         return ConversationOutput(silent=True)
 
-    # ── NPC-side conversation methods (only LLMNpcController implements) ────
+    # ── NPC-side conversation (only LLMNpcController implements) ────────────
     def take_npc_opening(self, char) -> str:
-        """Generate the NPC's opening line when a conversation starts. Default
-        empty string — only LLMNpcController implements this."""
         return ""
 
     def take_npc_response(self, char) -> str:
-        """Generate the NPC's reply after the PCs spoke. Default empty."""
         return ""
 
 
 # ── Human ────────────────────────────────────────────────────────────────────
 
 class HumanController(ActorController):
-    """Reads from a stdin/queue callback and emits CombatPrompt events.
+    """Reads from a stdin/queue callback for exploration / conversation slots.
 
-    Construction:
-      char_id     — which character this controls (for emit context)
-      get_input   — () -> str | None; blocking input read. None = quit signal.
-      emit_event  — (event) -> None; pushes UI events (CombatPrompt etc.).
-      end_inputs  — set of strings that mean "end my turn" (e.g. {"結束", "end"})
+    Combat is auto-resolved by the CombatPolicy assigned to this character —
+    HumanController is no longer involved in combat sub-action decisions.
     """
-    def __init__(self, char_id: str, get_input, emit_event, end_inputs: set[str]):
+    def __init__(self, char_id: str, get_input, emit_event):
         self.char_id = char_id
         self.get_input = get_input
         self.emit_event = emit_event
-        self.end_inputs = end_inputs
-        self._last_char = None
-        self._last_ctx: CombatContext | None = None
 
-    def _emit_combat_prompt(self, char, ctx: CombatContext) -> None:
-        from ..game import CombatPrompt, format_aria_combat_info
-        self.emit_event(CombatPrompt(
-            aria=char, enemies=ctx.enemies,
-            info_text=format_aria_combat_info(char, ctx),
-        ))
-
-    def take_sub_action(self, char, ctx: CombatContext) -> ActorDecision:
-        self._last_char = char
-        self._last_ctx = ctx
-        self._emit_combat_prompt(char, ctx)
-
-        raw = self.get_input()
-        if raw is None:
-            return ActorDecision(quit=True)
-        text = raw.strip()
-        if not text:
-            return ActorDecision()    # empty: caller re-prompts on next iteration
-        if text.lower() in self.end_inputs:
-            return ActorDecision(ended=True)
-        if text.lower() == "quit":
-            return ActorDecision(quit=True)
-        return ActorDecision(description=text)
-
-    def on_invalid_action(self, reason: str, suggestion: str) -> ActorDecision | None:
-        # Re-emit the combat prompt so the UI knows it's the human's turn
-        # again — without this the game thread blocks on get_input() but the
-        # frontend has no signal that input is wanted.
-        if self._last_char is not None and self._last_ctx is not None:
-            self._emit_combat_prompt(self._last_char, self._last_ctx)
-        raw = self.get_input()
-        if raw is None:
-            return ActorDecision(quit=True)
-        text = raw.strip()
-        if not text:
-            return None
-        if text.lower() in self.end_inputs:
-            return ActorDecision(ended=True)
-        if text.lower() == "quit":
-            return ActorDecision(quit=True)
-        return ActorDecision(description=text)
-
-    # ── Non-combat (UI-driven) ──────────────────────────────────────────────
     def take_exploration_turn(self, char, *, gm_text: str = "",
                               prior_remarks: dict[str, str] | None = None
                               ) -> ExplorationOutput:
@@ -250,8 +76,6 @@ class HumanController(ActorController):
                 return ExplorationOutput(quit=True)
             if text:
                 return ExplorationOutput(text=text)
-            # empty input — re-prompt by looping (caller's UI typically
-            # handles the re-prompt itself, but block here defensively)
 
     def take_conversation_turn(self, char, npc_char, attitude_label: str
                                ) -> ConversationOutput:
@@ -274,71 +98,14 @@ class HumanController(ActorController):
 
 # ── LLM-driven controllers ───────────────────────────────────────────────────
 
-# LLM controllers cap retries so a misbehaving model can't loop forever on
-# the same rejected sub-action. Caller (game.py _execute_sub_action) hands the
-# rejection reason to on_invalid_action; the controller regenerates with that
-# reason injected into the next prompt so the model can pick something else.
-_LLM_RETRIES_PER_SUB_ACTION = 1
-
-
 class LLMPlayerController(ActorController):
-    """Wraps a PlayerAgent. Builds a Thor-style combat nudge from CombatContext
-    and lets the agent generate a sub-action description; strips <END> marker."""
+    """Wraps a PlayerAgent for exploration narration + conversation lines.
+    Combat is handled by an attached CombatPolicy, not by this controller."""
 
     def __init__(self, agent, emit_event):
         self.agent = agent
         self.emit_event = emit_event
-        self._last_char = None
-        self._last_ctx: CombatContext | None = None
-        self._retries_left = 0
 
-    def _build_nudge(self, char, ctx: CombatContext) -> str:
-        combat_tactics = (self.agent.combat_tactics.rstrip() + "\n\n"
-                          if self.agent.combat_tactics else "")
-        spells_line = f"可用法術：{ctx.spells_str}\n" if ctx.spells_str else ""
-        resources_line, menu_text = _build_menu(ctx)
-        return (
-            f"{combat_tactics}"
-            f"【戰鬥回合 {ctx.round_num}】\n"
-            f"HP：{char.hp}/{char.max_hp}\n"
-            f"你的座標：{ctx.actor_position:.1f}m\n"
-            f"武器：{ctx.weapons_str}\n"
-            f"{spells_line}"
-            f"{resources_line}"
-            f"盟友：{ctx.allies_str}\n"
-            f"敵人：{ctx.enemies_str}\n"
-            f"{menu_text}"
-        )
-
-    def _generate(self, char, ctx: CombatContext, error_feedback: str) -> ActorDecision:
-        from ..game import StreamChunk
-        nudge = self._build_nudge(char, ctx)
-        if error_feedback:
-            nudge += f"\n\n## 系統訊息\n上次行動被拒：{error_feedback}\n請改選不同的 sub-action。"
-        actor = char.name
-        desc = self.agent.generate(
-            nudge=nudge,
-            on_chunk=lambda c, thinking=False: self.emit_event(
-                StreamChunk("pc_combat", c, actor=actor)
-            ),
-        )
-        desc, ended = _strip_marker(desc, _END_RE)
-        return ActorDecision(description=desc, ended=ended)
-
-    def take_sub_action(self, char, ctx: CombatContext) -> ActorDecision:
-        self._last_char = char
-        self._last_ctx = ctx
-        self._retries_left = _LLM_RETRIES_PER_SUB_ACTION
-        return self._generate(char, ctx, error_feedback="")
-
-    def on_invalid_action(self, reason: str, suggestion: str) -> ActorDecision | None:
-        if self._retries_left <= 0 or self._last_char is None or self._last_ctx is None:
-            return None
-        self._retries_left -= 1
-        feedback = reason + (f"（{suggestion}）" if suggestion else "")
-        return self._generate(self._last_char, self._last_ctx, error_feedback=feedback)
-
-    # ── Non-combat ──────────────────────────────────────────────────────────
     def take_exploration_turn(self, char, *, gm_text: str = "",
                               prior_remarks: dict[str, str] | None = None
                               ) -> ExplorationOutput:
@@ -370,91 +137,17 @@ class LLMPlayerController(ActorController):
 
 
 class LLMNpcController(ActorController):
-    """Wraps an NpcAgent in combat mode. Builds the combat nudge here (tactics
-    + situation + action menu) and calls agent.generate(combat=True, nudge=...).
-    Parses <FLEE>/<END> markers off the response. Mirrors LLMPlayerController."""
+    """Wraps an NpcAgent for conversation-side dialogue. Combat is handled by
+    the actor's CombatPolicy, not this controller."""
 
     def __init__(self, agent, emit_event):
         self.agent = agent
         self.emit_event = emit_event
-        self._last_char = None
-        self._last_ctx: CombatContext | None = None
-        self._retries_left = 0
 
-    def _build_nudge(self, char, ctx: CombatContext) -> str:
-        combat_tactics = (self.agent.combat_tactics.rstrip() + "\n\n"
-                          if self.agent.combat_tactics else "")
-        spells_line = f"可用法術：{ctx.spells_str}\n" if ctx.spells_str else ""
-        reasoning_section = (
-            _REASONING_INSTRUCTION
-            if getattr(self.agent, "combat_reasoning", False) else ""
-        )
-        resources_line, menu_text = _build_menu(ctx)
-        return (
-            f"{combat_tactics}"
-            f"【戰鬥回合 {ctx.round_num}】\n"
-            f"HP：{char.hp}/{char.max_hp}\n"
-            f"你的座標：{ctx.actor_position:.1f}m\n"
-            f"武器：{ctx.weapons_str}\n"
-            f"{spells_line}"
-            f"{resources_line}"
-            f"盟友：{ctx.allies_str}\n"
-            f"敵人：{ctx.enemies_str}\n"
-            f"{menu_text}\n"
-            f"逃跑：訊息結尾加 <FLEE>，立刻離開戰場。"
-            f"{reasoning_section}"
-        )
-
-    def _generate(self, char, ctx: CombatContext, error_feedback: str) -> ActorDecision:
-        from ..game import StreamChunk
-        nudge = self._build_nudge(char, ctx)
-        if error_feedback:
-            nudge += f"\n\n## 系統訊息\n上次行動被拒：{error_feedback}\n請改選不同的 sub-action。"
-        actor = char.name
-        desc = self.agent.generate(
-            nudge=nudge, combat=True,
-            on_chunk=lambda c, thinking=False: self.emit_event(
-                StreamChunk("npc", c, actor=actor)
-            ),
-        )
-        # Strip <think>...</think> CoT block first — only the post-think text is
-        # an actual action description for the arbiter. The live stream above
-        # has already shown the full think+action to the UI for observability.
-        # The regex also catches truncated <think>... blocks that ran past
-        # num_predict (no closing tag), to prevent reasoning fragments from
-        # leaking into the action.
-        desc = _THINK_RE.sub("", desc).strip()
-        # If strip leaves nothing, the model either output a bare think block
-        # or got cut off mid-reasoning. Safest fallback: end turn — better
-        # than letting an empty/garbled description hit the arbiter.
-        if not desc:
-            return ActorDecision(ended=True)
-        # <FLEE> overrides everything (leave combat); otherwise check <END>.
-        desc, fled = _strip_marker(desc, _FLEE_RE)
-        if fled:
-            return ActorDecision(fled=True)
-        desc, ended = _strip_marker(desc, _END_RE)
-        return ActorDecision(description=desc, ended=ended)
-
-    def take_sub_action(self, char, ctx: CombatContext) -> ActorDecision:
-        self._last_char = char
-        self._last_ctx = ctx
-        self._retries_left = _LLM_RETRIES_PER_SUB_ACTION
-        return self._generate(char, ctx, error_feedback="")
-
-    def on_invalid_action(self, reason: str, suggestion: str) -> ActorDecision | None:
-        if self._retries_left <= 0 or self._last_char is None or self._last_ctx is None:
-            return None
-        self._retries_left -= 1
-        feedback = reason + (f"（{suggestion}）" if suggestion else "")
-        return self._generate(self._last_char, self._last_ctx, error_feedback=feedback)
-
-    # ── Conversation (NPC side) ─────────────────────────────────────────────
     def take_npc_opening(self, char) -> str:
         from ..game import StreamChunk
         nudge = (f"## 現在請\n以 {char.name} 的身份，根據以上歷史和當前態度，"
                  "用第一人稱繁體中文簡短回應走近的冒險者（開場第一句）。")
-        # Opening = first interaction; no prior signal to map to [+/-].
         self.agent._skip_marker = True
         return self.agent.generate(
             nudge=nudge,

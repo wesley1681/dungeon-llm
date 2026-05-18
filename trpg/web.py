@@ -14,7 +14,6 @@ from .scenarios.dungeon import (
 from .llm.gm_agent import GMAgent
 from .llm.tag_agent import TagAgent
 from .llm.player_agent import PlayerAgent
-from .llm.arbiter import ArbiterAgent
 from .game import (
     GameSession,
     TagResult, StreamChunk, ActionResult,
@@ -28,7 +27,7 @@ from .cli import (
     GM_THINK, GM_SHOW_THINKING, GM_OPTIONS,
     TAG_OPTIONS,
     THOR_THINK, THOR_SHOW_THINKING, THOR_OPTIONS,
-    DEBUG_ARBITER,
+    DEBUG_COMBAT_ACTION,
 )
 
 
@@ -80,7 +79,6 @@ def _init_game() -> dict:
                                   world_state=world_state,
                                   think=THOR_THINK, show_thinking=THOR_SHOW_THINKING,
                                   options=THOR_OPTIONS),
-        arbiter     = ArbiterAgent(model=MODEL),
         npc_agents  = build_npc_agents(world_state, MODEL,
                                        "http://localhost:11434", "ollama"),
     )
@@ -193,7 +191,7 @@ def _consume_until_prompt(state, gm_msgs, thor_msgs, aria_msgs):
 
         # ── ActionResult ──────────────────────────────────────────────────────
         elif isinstance(event, ActionResult):
-            debug_str = f"\n\n`[判定器] {event.debug}`" if DEBUG_ARBITER else ""
+            debug_str = f"\n\n`[動作] {event.debug}`" if DEBUG_COMBAT_ACTION else ""
             result_line = f"\n\n`{event.summary}`{debug_str}"
             # Append to whatever the last open slot is (npc / pc_combat message)
             if gm_msgs and last_source and last_source.startswith("npc"):
