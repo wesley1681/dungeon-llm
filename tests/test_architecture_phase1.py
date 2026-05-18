@@ -113,3 +113,62 @@ def test_builder_without_char_uses_fallback():
     action = ab.builder("f", None, None)
     assert "dice" in action
     assert "1d10" in action["dice"]
+
+
+from unittest.mock import patch
+from trpg.engine.world_state import WorldState
+from trpg.engine.combat import execute_action
+from trpg.engine.vec2 import Vec2
+from trpg.engine.items import WEAPON_DEFS
+
+
+def _combat_world(attacker_attacks: int = 1):
+    from trpg.engine.character import CombatState
+    A = Character(name="A", race="", class_="", level=5,
+                  stats=Stats(STR=14), hp=30, max_hp=30, ac=10, is_npc=False,
+                  weapons=[WEAPON_DEFS["長劍"]])
+    A.attacks_per_action = attacker_attacks
+    B = Character(name="B", race="", class_="", level=1,
+                  stats=Stats(), hp=20, max_hp=20, ac=10, is_npc=True, attitude=0)
+    A.position = Vec2(5, 5)
+    B.position = Vec2(6, 5)
+    ws = WorldState(characters={"a": A, "b": B}, scene="", dungeon_map=None)
+    ws.party_ids = ["a"]
+    ws.combat = CombatState(initiative_order=["a", "b"])
+    return ws, A, B
+
+
+def test_single_attack_returns_attack_type():
+    ws, A, B = _combat_world(attacker_attacks=1)
+    with patch("trpg.engine.combat.roll_d20", return_value=20):
+        res = execute_action(
+            {"type": "ATTACK", "attacker": "a", "target": "b",
+             "weapon": "長劍", "consumes": ["action"]}, ws
+        )
+    assert res["type"] == "ATTACK"
+
+
+def test_extra_attack_returns_multi_attack_type():
+    ws, A, B = _combat_world(attacker_attacks=2)
+    B.hp = 50  # ensure target survives both hits
+    B.max_hp = 50
+    with patch("trpg.engine.combat.roll_d20", return_value=20), \
+         patch("trpg.engine.combat.roll", return_value=4):
+        res = execute_action(
+            {"type": "ATTACK", "attacker": "a", "target": "b",
+             "weapon": "長劍", "consumes": ["action"]}, ws
+        )
+    assert res["type"] == "MULTI_ATTACK"
+    assert len(res["attacks"]) == 2
+
+
+def test_extra_attack_character_field_default_is_1():
+    c = Character(name="x", race="", class_="", level=1,
+                  stats=Stats(), hp=10, max_hp=10, ac=10)
+    assert c.attacks_per_action == 1
+
+
+def test_crit_range_default_is_20():
+    c = Character(name="x", race="", class_="", level=1,
+                  stats=Stats(), hp=10, max_hp=10, ac=10)
+    assert c.crit_range == 20

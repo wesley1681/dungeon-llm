@@ -136,18 +136,31 @@ def effective_ac(char: Character) -> int:
 
 
 def resolve_attack(attacker: Character, target: Character,
-                   weapon=None, mode: str = "normal") -> tuple[bool, int]:
+                   weapon=None, mode: str = "normal",
+                   breakdown: dict | None = None) -> tuple[bool, int]:
     """Returns (hit, total_roll). mode: 'normal' / 'advantage' / 'disadvantage'.
 
     Iterates attacker + target Modifiers to apply hook-based mode adjustments
-    (equipment passives, status effects like Dodging, etc.)."""
+    (equipment passives, status effects like Dodging, etc.).
+
+    Pass `breakdown` to receive the roll components as a side-channel: keys
+    `d20`, `stat_mod_kind`, `stat_mod`, `prof`, `modifiers` (list of
+    `(name, delta)`), and `total`. Used by the display layer to show e.g.
+    `[d20(7)+STR(2)+prof(2)+blessed(3)]` so players can verify buffs landed.
+    """
     if weapon is None:
         weapon = attacker.get_weapon()
     if "精巧" in (weapon.properties if weapon else []):
-        stat_mod = max(attacker.stats.modifier("STR"), attacker.stats.modifier("DEX"))
+        if attacker.stats.modifier("DEX") > attacker.stats.modifier("STR"):
+            stat_mod_kind = "DEX"
+        else:
+            stat_mod_kind = "STR"
+        stat_mod = attacker.stats.modifier(stat_mod_kind)
     elif weapon and weapon.range_type == "遠程":
+        stat_mod_kind = "DEX"
         stat_mod = attacker.stats.modifier("DEX")
     else:
+        stat_mod_kind = "STR"
         stat_mod = attacker.stats.modifier("STR")
 
     for m in attacker.iter_modifiers():
@@ -155,21 +168,49 @@ def resolve_attack(attacker: Character, target: Character,
     for m in target.iter_modifiers():
         mode = m.on_incoming_attack(target, attacker, weapon, mode)
 
-    attack_roll = roll_d20(mode)
-    total = attack_roll + stat_mod + attacker.proficiency_bonus
-    # Numeric riders on the d20 total (e.g. Bless +1d4).
+    d20 = roll_d20(mode)
+    total = d20 + stat_mod + attacker.proficiency_bonus
+    # Numeric riders on the d20 total (e.g. Bless +1d4). Track each modifier's
+    # delta so the display layer can attribute the bonus.
+    mod_contribs: list[tuple[str, int]] = []
     for m in attacker.iter_modifiers():
+        prev = total
         total = m.on_outgoing_attack_total(attacker, target, weapon, total)
+        if total != prev:
+            mod_contribs.append((getattr(m, "name", type(m).__name__), total - prev))
+
+    if breakdown is not None:
+        breakdown["d20"]           = d20
+        breakdown["stat_mod_kind"] = stat_mod_kind
+        breakdown["stat_mod"]      = stat_mod
+        breakdown["prof"]          = attacker.proficiency_bonus
+        breakdown["modifiers"]     = mod_contribs
+        breakdown["mode"]          = mode
+        breakdown["total"]         = total
+
     return total >= effective_ac(target), total
 
 
+def _end_concentration(caster_id: str, world_state) -> None:
+    """Remove all status effects whose source_id matches caster_id from every
+    character in the world. Called when a concentration spell ends so the
+    effect (e.g. paralyzed from hold_person) is cleaned up immediately."""
+    from .status import StatusEffect
+    for char in world_state.characters.values():
+        char.status_effects[:] = [
+            fx for fx in char.status_effects
+            if not (isinstance(fx, StatusEffect) and fx.source_id == caster_id)
+        ]
+
+
 def apply_damage(target: Character, amount, dtype: str = "untyped",
-                 attacker=None) -> int:
+                 attacker=None, world_state=None) -> int:
     """Apply damage to target. `amount` is either a dice notation string
     (e.g. '1d6+2') or a pre-rolled int. Filters through target's Modifiers.
 
     If `target` is concentrating on a spell, a CON save vs DC max(10, dmg//2)
-    fires; failure clears `target.concentrating_on`.
+    fires; failure clears `target.concentrating_on` and, if `world_state` is
+    provided, also removes any status effects sourced from that caster.
 
     Returns the actual damage dealt after modifiers.
     """
@@ -178,22 +219,38 @@ def apply_damage(target: Character, amount, dtype: str = "untyped",
     for m in target.iter_modifiers():
         amount = m.on_incoming_damage(target, attacker, amount, dtype)
     amount = max(0, amount)
+
+    # Damage while dying (PC at 0 HP): count as a death save failure directly.
+    # A critical hit counts as 2 failures. No HP change (already 0).
+    if target.is_dying():
+        is_crit = attacker is not None and getattr(attacker, "_last_attack_crit", False)
+        failures = 2 if is_crit else 1
+        target.death_saves["failures"] = target.death_saves.get("failures", 0) + failures
+        return amount
+
     target.hp = max(0, target.hp - amount)
 
-    # Concentration check — 5e rule: when a concentrating creature takes
-    # damage, it makes a CON save vs DC = max(10, ⌊damage/2⌋). Failure ends
-    # the spell. We just clear the flag; engine consumers can react.
     if amount > 0 and target.concentrating_on:
         dc = max(10, amount // 2)
         success, _ = make_saving_throw(target, "CON", dc)
         if not success:
             target.concentrating_on = ""
+            if world_state is not None:
+                caster_id = next(
+                    (cid for cid, c in world_state.characters.items() if c is target),
+                    None,
+                )
+                if caster_id:
+                    _end_concentration(caster_id, world_state)
 
     return amount
 
 
 def apply_heal(target: Character, dice_notation: str) -> int:
     amount = roll(dice_notation)
+    # Healing a dying PC: restore HP and reset death saves.
+    if target.is_dying():
+        target.reset_death_saves()
     target.hp = min(target.max_hp, target.hp + amount)
     return amount
 
@@ -214,15 +271,44 @@ def tick_terrain_damage(char: Character, battlefield) -> int:
     return apply_damage(char, DANGEROUS_TERRAIN_DAMAGE, dtype="environment")
 
 
-def make_saving_throw(character: Character, stat: str, dc: int) -> tuple[bool, int]:
-    roll_result = roll("1d20")
-    modifier = character.stats.modifier(stat)
-    if stat in character.proficiencies:
-        modifier += character.proficiency_bonus
-    # Numeric riders on the save (e.g. Bless +1d4).
+def make_saving_throw(character: Character, stat: str, dc: int,
+                      breakdown: dict | None = None) -> tuple[bool, int]:
+    """Roll a saving throw vs `dc`. Returns (success, total).
+
+    `breakdown` side-channel: when supplied, populated with d20 / stat_mod /
+    prof / modifier contributions so the display layer can show e.g.
+    `[d20(11)+CON(1)+blessed(3)]`."""
+    # Auto-fail check: some conditions (paralyzed, stunned) make specific saves
+    # automatically fail regardless of the roll.
     for m in character.iter_modifiers():
+        if m.on_auto_fail_save(character, stat):
+            total = -999
+            if breakdown is not None:
+                breakdown["d20"] = 0
+                breakdown["stat"] = stat
+                breakdown["stat_mod"] = 0
+                breakdown["prof"] = 0
+                breakdown["modifiers"] = [(getattr(m, "name", type(m).__name__), -999)]
+                breakdown["total"] = total
+            return False, total
+    d20 = roll("1d20")
+    stat_mod = character.stats.modifier(stat)
+    prof = character.proficiency_bonus if stat in character.proficiencies else 0
+    modifier = stat_mod + prof
+    mod_contribs: list[tuple[str, int]] = []
+    for m in character.iter_modifiers():
+        prev = modifier
         modifier = m.on_saving_throw(character, stat, modifier)
-    total = roll_result + modifier
+        if modifier != prev:
+            mod_contribs.append((getattr(m, "name", type(m).__name__), modifier - prev))
+    total = d20 + modifier
+    if breakdown is not None:
+        breakdown["d20"]       = d20
+        breakdown["stat"]      = stat
+        breakdown["stat_mod"]  = stat_mod
+        breakdown["prof"]      = prof
+        breakdown["modifiers"] = mod_contribs
+        breakdown["total"]     = total
     return total >= dc, total
 
 
@@ -300,6 +386,101 @@ def _try_react_to_auto_damage(defender: Character, world_state: WorldState
     return False, "", 0
 
 
+def _resolve_single_attack(attacker: Character, target: Character, action: dict,
+                            world_state: WorldState, dmg_mod: int,
+                            mode: str) -> dict:
+    """Resolve one weapon attack roll + damage. Returns an ATTACK-shaped result dict."""
+    weapon = attacker.get_weapon(action.get("weapon", ""))
+    attack_bd: dict = {}
+    hit, roll_total = resolve_attack(attacker, target, weapon, mode=mode,
+                                     breakdown=attack_bd)
+    target_ac = effective_ac(target)
+
+    reaction_blocked, reaction_name, reaction_slot = (False, "", 0)
+    if hit:
+        reaction_blocked, reaction_name, reaction_slot = _try_react_to_attack(
+            target, attacker, roll_total, world_state
+        )
+        if reaction_blocked:
+            target_ac = effective_ac(target)
+            if roll_total < target_ac:
+                hit = False
+
+    result = {
+        "type":           "ATTACK",
+        "attacker_name":  attacker.name,
+        "target_name":    target.name,
+        "weapon_name":    weapon.name,
+        "roll":           roll_total,
+        "roll_breakdown": attack_bd,
+        "target_ac":      target_ac,
+        "hit":            hit,
+        "advantage_mode": mode,
+    }
+    if reaction_blocked:
+        result["reaction"]      = reaction_name
+        result["reaction_slot"] = reaction_slot
+
+    if hit:
+        auto_crit = (
+            target.has_status("paralyzed")
+            and distance_m(attacker, target) <= 1.5 + 1e-6
+        )
+        d20_result = attack_bd.get("d20", 20)
+        is_crit = d20_result >= attacker.crit_range
+        if auto_crit or is_crit:
+            base_dmg = roll(weapon.damage_dice) + roll(weapon.damage_dice)
+        else:
+            base_dmg = roll(weapon.damage_dice)
+
+        raw = max(1, base_dmg + dmg_mod)
+        dmg_mod_contribs: list[tuple[str, int]] = []
+        for m in attacker.iter_modifiers():
+            prev = raw
+            raw = m.on_outgoing_damage(attacker, target, raw, weapon.damage_type)
+            if raw != prev:
+                dmg_mod_contribs.append(
+                    (getattr(m, "name", type(m).__name__), raw - prev)
+                )
+        damage = apply_damage(target, raw, dtype=weapon.damage_type,
+                              attacker=attacker, world_state=world_state)
+        result.update({
+            "damage":           damage,
+            "damage_dice":      weapon.damage_dice,
+            "damage_mod":       dmg_mod,
+            "damage_base_roll": base_dmg,
+            "damage_modifiers": dmg_mod_contribs,
+            "target_hp":        target.hp,
+            "target_max_hp":    target.max_hp,
+            "target_alive":     target.is_alive(),
+        })
+        if auto_crit:
+            result["auto_crit"] = True
+
+        rider_dc     = action.get("rider_save_dc")
+        rider_status = action.get("rider_status", "")
+        if rider_dc and rider_status and target.is_alive():
+            rider_stat = action.get("rider_save_stat", "STR")
+            rider_bd: dict = {}
+            success, save_roll = make_saving_throw(
+                target, rider_stat, int(rider_dc), breakdown=rider_bd,
+            )
+            result["rider_save_roll"]      = save_roll
+            result["rider_save_stat"]      = rider_stat
+            result["rider_save_success"]   = success
+            result["rider_save_breakdown"] = rider_bd
+            if not success:
+                from .status import StatusEffect
+                round_num = world_state.combat.round_number if world_state.combat else 0
+                target.add_status(StatusEffect(
+                    name=rider_status, expires_on="self_turn_end",
+                    rounds_remaining=1, applied_round=round_num,
+                ))
+                result["rider_status_applied"] = rider_status
+
+    return result
+
+
 def execute_action(action: dict, world_state: WorldState) -> dict:
     """Execute a parsed action JSON from the arbiter. Returns a result summary dict."""
     t = action.get("type")
@@ -308,26 +489,34 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
     if t == "ATTACK":
         attacker = _lookup_char(action.get("attacker", ""), world_state)
         target   = _lookup_char(action.get("target",   ""), world_state)
-        if not attacker or not target:
-            return {"type": "ERROR", "message": "找不到攻擊者或目標"}
+        if not attacker:
+            return {"type": "ERROR", "message": "找不到攻擊者"}
+        if not target:
+            return {"type": "ERROR", "message": "找不到目標"}
         if not target.is_alive():
-            return {"type": "ERROR", "message": f"{target.name} 已倒下，無法攻擊"}
+            return {"type": "ERROR", "message": f"{target.name} 已倒下"}
 
         weapon = attacker.get_weapon(action.get("weapon", ""))
-
-        # Distance / range gate (with LoS if a battlefield is set)
         battlefield = world_state.combat.battlefield if world_state.combat else None
         in_range, reason, range_mode = attack_range_check(attacker, target, weapon, battlefield)
         if not in_range:
             return {"type": "ERROR", "message": reason}
 
-        # Consume ammo for ranged weapons
+        # Charmed condition: cannot attack the charmer
+        from .status import StatusEffect as _SE
+        attacker_id = next(
+            (cid for cid, c in world_state.characters.items() if c is attacker), None
+        )
+        for fx in target.status_effects:
+            if isinstance(fx, _SE) and fx.name == "charmed" and fx.source_id == attacker_id:
+                return {"type": "ERROR",
+                        "message": f"{target.name} 被魅惑，無法攻擊 {attacker.name}"}
+
         if weapon.ammo:
             if not attacker.has_ammo(weapon.ammo):
                 return {"type": "ERROR", "message": f"{attacker.name} 沒有 {weapon.ammo} 了"}
             attacker.consume(weapon.ammo)
 
-        # Ability modifier used for both attack and damage (finesse takes higher of STR/DEX)
         if "精巧" in weapon.properties:
             dmg_mod = max(attacker.stats.modifier("STR"), attacker.stats.modifier("DEX"))
         elif weapon.range_type == "遠程":
@@ -335,10 +524,6 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
         else:
             dmg_mod = attacker.stats.modifier("STR")
 
-        # Advantage / disadvantage compose: target dodging → disadvantage;
-        # range_mode also contributes; reckless rider adds advantage on a
-        # melee attack and applies the Reckless status to the attacker
-        # (incoming attacks against them have advantage until their next turn).
         target_dodging = target.has_status("dodging")
         mode = combine_advantage(range_mode, "disadvantage" if target_dodging else "normal")
         if action.get("reckless") and weapon.range_type == "近戰":
@@ -347,68 +532,29 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
             round_num = world_state.combat.round_number if world_state.combat else 0
             attacker.add_status(Reckless(applied_round=round_num))
 
-        hit, roll_total = resolve_attack(attacker, target, weapon, mode=mode)
-        target_ac = effective_ac(target)
-        # Reaction interception: target may cast Shield etc. to flip the hit.
-        reaction_blocked, reaction_name, reaction_slot = (False, "", 0)
-        if hit:
-            reaction_blocked, reaction_name, reaction_slot = _try_react_to_attack(
-                target, attacker, roll_total, world_state
-            )
-            if reaction_blocked:
-                # Re-evaluate AC after the reaction (Shield adds Shielded status)
-                target_ac = effective_ac(target)
-                if roll_total < target_ac:
-                    hit = False
-        result = {
-            "type":          "ATTACK",
+        n_attacks = attacker.attacks_per_action
+        attack_results = []
+        for _ in range(n_attacks):
+            if not target.is_alive():
+                break
+            single = _resolve_single_attack(attacker, target, action,
+                                            world_state, dmg_mod, mode)
+            attack_results.append(single)
+
+        if n_attacks == 1:
+            return attack_results[0]
+
+        total_damage = sum(r.get("damage", 0) for r in attack_results)
+        return {
+            "type":          "MULTI_ATTACK",
             "attacker_name": attacker.name,
             "target_name":   target.name,
-            "weapon_name":   weapon.name,
-            "roll":          roll_total,
-            "target_ac":     target_ac,
-            "hit":           hit,
-            "advantage_mode": mode,
+            "attacks":       attack_results,
+            "total_damage":  total_damage,
+            "target_hp":     target.hp,
+            "target_max_hp": target.max_hp,
+            "target_alive":  target.is_alive(),
         }
-        if reaction_blocked:
-            result["reaction"] = reaction_name
-            result["reaction_slot"] = reaction_slot
-        if hit:
-            base_dmg = roll(weapon.damage_dice)
-            raw = max(1, base_dmg + dmg_mod)
-            for m in attacker.iter_modifiers():
-                raw = m.on_outgoing_damage(attacker, target, raw, weapon.damage_type)
-            damage = apply_damage(target, raw, dtype=weapon.damage_type, attacker=attacker)
-            result.update({
-                "damage":        damage,
-                "damage_dice":   weapon.damage_dice,
-                "damage_mod":    dmg_mod,
-                "target_hp":     target.hp,
-                "target_max_hp": target.max_hp,
-                "target_alive":  target.is_alive(),
-            })
-
-            # Save-rider: on-hit, target makes a save vs DC; failure attaches
-            # a status (Trip Attack → prone, Disarming Attack → disarmed, etc.)
-            rider_dc = action.get("rider_save_dc")
-            rider_status = action.get("rider_status", "")
-            if rider_dc and rider_status and target.is_alive():
-                rider_stat = action.get("rider_save_stat", "STR")
-                success, save_roll = make_saving_throw(target, rider_stat, int(rider_dc))
-                result["rider_save_roll"] = save_roll
-                result["rider_save_stat"] = rider_stat
-                result["rider_save_success"] = success
-                if not success:
-                    from .status import StatusEffect
-                    round_num = world_state.combat.round_number if world_state.combat else 0
-                    target.add_status(StatusEffect(
-                        name=rider_status,
-                        expires_on="self_turn_end",
-                        rounds_remaining=1,
-                        applied_round=round_num,
-                    ))
-                    result["rider_status_applied"] = rider_status
-        return result
 
     # ── AOE ───────────────────────────────────────────────────────────────────
     if t == "AOE":
@@ -569,7 +715,8 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
             total_dmg = 0
             for _ in range(hits):
                 rolled = roll(damage_per)
-                total_dmg += apply_damage(target, rolled, dtype=dtype, attacker=attacker)
+                total_dmg += apply_damage(target, rolled, dtype=dtype,
+                                          attacker=attacker, world_state=world_state)
             target_results.append({
                 "target_name":   target.name,
                 "darts":         hits,
@@ -641,6 +788,12 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
             caster.spell_slots[slot_level] -= 1
         spell_name = action.get("spell_name", mod_name)
         if action.get("requires_concentration"):
+            if caster.concentrating_on:
+                caster_id = next(
+                    (cid for cid, c in world_state.characters.items() if c is caster), None
+                )
+                if caster_id:
+                    _end_concentration(caster_id, world_state)
             caster.concentrating_on = spell_name
 
         return {
@@ -735,18 +888,34 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
                 if battlefield.is_blocked(new_pos):
                     return {"type": "ERROR",
                             "message": f"目的座標 ({new_pos.x:.1f}, {new_pos.y:.1f}) 被障礙物佔據"}
+            # Consume spell slot if the teleport requires one (e.g. Misty Step = level 2).
+            slot_level = int(action.get("slot_level", 0))
+            if slot_level > 0:
+                if char.spell_slots.get(slot_level, 0) <= 0:
+                    return {"type": "ERROR",
+                            "message": f"{char.name} 沒有 {slot_level} 環法術位"}
+                char.spell_slots[slot_level] -= 1
             char.position = new_pos
             return {
                 "type":              "MOVE",
                 "character":         char.name,
                 "from_pos":          old_pos,
                 "to_pos":            new_pos,
-                "distance":          0.0,          # no movement budget consumed
+                "distance":          0.0,
                 "physical_distance": dist,
                 "terrain_mult":      1.0,
                 "teleport":          True,
+                "slot_level":        slot_level,
                 "description":       action.get("description", "瞬移"),
             }
+
+        # Some conditions (restrained, stunned) reduce movement to 0.
+        speed_mult = 1.0
+        for m in char.iter_modifiers():
+            speed_mult *= m.on_speed_multiplier(char)
+        if speed_mult <= 0.0:
+            return {"type": "ERROR", "message": f"{char.name} 目前無法移動"}
+        effective_budget = MOVE_BUDGET_M * speed_mult
 
         # Resolve destination from one of four formats, in priority order:
         #   1. target (creature_id) — move toward that character along the
@@ -756,6 +925,11 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
         #      centroid, fixed distance
         #   3. target_position ([x, y]) — absolute coordinate
         #   4. delta ([dx, dy]) — raw 2D delta
+        # Creature-target moves stop CLOSE_GAP_M short of the target so that
+        # combatants don't pile onto the exact same cell. 1m leaves them
+        # inside standard 1.5m melee reach without sharing coordinates —
+        # which would otherwise inflate AOE / make positional rules ambiguous.
+        CLOSE_GAP_M = 1.0
         new_pos: Vec2 | None = None
         target_key = action.get("target")
         if target_key:
@@ -764,14 +938,17 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
                 return {"type": "ERROR", "message": f"找不到移動目標：{target_key}"}
             dest = target_char.position
             delta = dest - old_pos
-            if delta.length() <= MOVE_BUDGET_M + 1e-6:
-                new_pos = dest
+            dist = delta.length()
+            if dist <= CLOSE_GAP_M + 1e-6:
+                # Already at/inside the gap — don't move at all.
+                new_pos = old_pos
             else:
-                new_pos = old_pos + delta.normalized() * MOVE_BUDGET_M
+                travel = min(dist - CLOSE_GAP_M, effective_budget)
+                new_pos = old_pos + delta.normalized() * travel
         elif "direction" in action:
             direction = str(action["direction"]).lower()
-            distance = abs(float(action.get("distance", MOVE_BUDGET_M)))
-            distance = min(distance, MOVE_BUDGET_M)
+            distance = abs(float(action.get("distance", effective_budget)))
+            distance = min(distance, effective_budget)
             actor_in_party = (char_id is not None and world_state.is_party_ally(char_id))
             opponents = []
             for oid, other in world_state.characters.items():
@@ -828,17 +1005,68 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
             return {"type": "ERROR",
                     "message": f"目的座標 ({new_pos.x:.1f}, {new_pos.y:.1f}) 超出戰場邊界"}
 
+        # ── Opportunity attacks ───────────────────────────────────────────────
+        # If a creature moves out of an enemy's melee reach (1.5m), that enemy
+        # gets a free attack as a reaction (if reaction not already used).
+        # Triggered only when the mover started in reach and ends out of reach;
+        # the Disengage action (not yet implemented) would suppress this.
+        oa_results: list[dict] = []
+        disengaging = char.has_status("disengaging")
+        if phys_dist > 1e-6 and not action.get("teleport") and not disengaging and world_state.combat:
+            is_party = (char_id is not None and world_state.is_party_ally(char_id))
+            for oid, other in world_state.characters.items():
+                if oid == char_id or not other.is_alive():
+                    continue
+                other_in_party = world_state.is_party_ally(oid)
+                if other_in_party == is_party:
+                    continue   # same side
+                if other.reaction_used:
+                    continue
+                oweapon = other.get_weapon() if other.weapons else None
+                if oweapon is None:
+                    continue
+                reach = oweapon.range_normal or 1.5
+                was_in_reach = old_pos.distance_to(other.position) <= reach + 1e-6
+                now_out = new_pos.distance_to(other.position) > reach + 1e-6
+                if was_in_reach and now_out:
+                    other.reaction_used = True
+                    oa_hit, oa_roll = resolve_attack(other, char, oweapon)
+                    oa_dmg = 0
+                    if oa_hit:
+                        oa_base = roll(oweapon.damage_dice)
+                        if "精巧" in oweapon.properties:
+                            oa_mod = max(other.stats.modifier("STR"),
+                                         other.stats.modifier("DEX"))
+                        elif oweapon.range_type == "遠程":
+                            oa_mod = other.stats.modifier("DEX")
+                        else:
+                            oa_mod = other.stats.modifier("STR")
+                        oa_raw = max(1, oa_base + oa_mod)
+                        oa_dmg = apply_damage(char, oa_raw,
+                                              dtype=oweapon.damage_type,
+                                              attacker=other,
+                                              world_state=world_state)
+                    oa_results.append({
+                        "attacker": other.name, "target": char.name,
+                        "weapon":   oweapon.name,
+                        "roll":     oa_roll, "hit": oa_hit, "damage": oa_dmg,
+                        "target_hp": char.hp, "target_max_hp": char.max_hp,
+                    })
+
         char.position = new_pos
-        return {
+        result = {
             "type":              "MOVE",
             "character":         char.name,
             "from_pos":          old_pos,
             "to_pos":            new_pos,
-            "distance":          effective_cost,   # what the movement budget pays
-            "physical_distance": phys_dist,         # actual displacement (for UI)
+            "distance":          effective_cost,
+            "physical_distance": phys_dist,
             "terrain_mult":      mult,
             "description":       action.get("description", "移動"),
         }
+        if oa_results:
+            result["opportunity_attacks"] = oa_results
+        return result
 
     # ── DODGE ─────────────────────────────────────────────────────────────────
     if t == "DODGE":
@@ -852,6 +1080,21 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
             "type":      "DODGE",
             "character": char.name,
         }
+
+    # ── DISENGAGE ─────────────────────────────────────────────────────────────
+    # Spend an action to safely leave melee. Until start of your next turn,
+    # your movement won't provoke opportunity attacks.
+    if t == "DISENGAGE":
+        from .status import StatusEffect
+        char = _lookup_char(action.get("character", ""), world_state)
+        if not char:
+            return {"type": "ERROR", "message": "找不到角色"}
+        round_num = world_state.combat.round_number if world_state.combat else 0
+        char.add_status(StatusEffect(
+            name="disengaging", expires_on="self_turn_start",
+            applied_round=round_num,
+        ))
+        return {"type": "DISENGAGE", "character": char.name}
 
     # ── HIDE ──────────────────────────────────────────────────────────────────
     if t == "HIDE":
@@ -943,49 +1186,88 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
         # Save DC = 8 + prof_bonus + spellcasting_ability_modifier
         save_dc = 8 + caster.proficiency_bonus + caster.stats.modifier(caster.spellcasting_ability)
 
-        # Find all alive characters within aoe_radius_m of center, scoped to current room.
-        room = world_state.dungeon_map.current_room if world_state.dungeon_map else None
-        if room is not None:
-            scope_ids = set(room.npc_ids)
-            for cid, c in world_state.characters.items():
-                if world_state.is_party_ally(cid):
-                    scope_ids.add(cid)
-        else:
-            scope_ids = set(world_state.characters.keys())
-
+        # Resolve affected creatures.
+        #   AOE spell (aoe_radius_m > 0): every alive creature within radius
+        #     of the centre, scoped to the current room.
+        #   Single-target spell (aoe_radius_m == 0): only the named creature.
+        #     Coordinate-only casts (target_position with aoe=0) have no
+        #     meaningful target and are rejected upstream by the builder.
         affected_ids: list[str] = []
-        for cid in scope_ids:
-            c = world_state.characters.get(cid)
-            if not c or not c.is_alive():
-                continue
-            if c.position.distance_to(center_pos) <= spell.aoe_radius_m + 1e-6:
-                affected_ids.append(cid)
+        if spell.aoe_radius_m > 0:
+            room = world_state.dungeon_map.current_room if world_state.dungeon_map else None
+            if room is not None:
+                scope_ids = set(room.npc_ids)
+                for cid, c in world_state.characters.items():
+                    if world_state.is_party_ally(cid):
+                        scope_ids.add(cid)
+            else:
+                scope_ids = set(world_state.characters.keys())
+            for cid in scope_ids:
+                c = world_state.characters.get(cid)
+                if not c or not c.is_alive():
+                    continue
+                if c.position.distance_to(center_pos) <= spell.aoe_radius_m + 1e-6:
+                    affected_ids.append(cid)
+        else:
+            # Single-target: resolve the explicit creature target.
+            target_key = action.get("target", "")
+            if target_key and target_key != "self":
+                target_char = _lookup_char(target_key, world_state)
+                tid = next((cid for cid, c in world_state.characters.items()
+                            if c is target_char), None) if target_char else None
+                if tid and target_char.is_alive():
+                    affected_ids.append(tid)
+            elif target_key == "self":
+                # Self-targeted (rare for damage spells) — caster is the single target.
+                caster_id = next((cid for cid, c in world_state.characters.items()
+                                  if c is caster), None)
+                if caster_id:
+                    affected_ids.append(caster_id)
 
         # Roll saves, apply damage + on-fail status
         target_results = []
         round_num = world_state.combat.round_number if world_state.combat else 0
         for cid in affected_ids:
             target = world_state.characters[cid]
-            success, save_roll = make_saving_throw(target, spell.save_ability, save_dc)
+            save_bd: dict = {}
+            success, save_roll = make_saving_throw(
+                target, spell.save_ability, save_dc, breakdown=save_bd,
+            )
             full_dmg = roll(spell.damage_dice) if spell.damage_dice else 0
-            actual_dmg = full_dmg // 2 if success else full_dmg
+            if success:
+                actual_dmg = 0 if spell.save_for_no_damage else full_dmg // 2
+            else:
+                actual_dmg = full_dmg
             if actual_dmg > 0:
-                apply_damage(target, actual_dmg, dtype=spell.damage_type, attacker=caster)
+                apply_damage(target, actual_dmg, dtype=spell.damage_type,
+                             attacker=caster, world_state=world_state)
             status_applied = ""
             if not success and spell.applies_status_on_fail:
-                from .status import StatusEffect
-                target.add_status(StatusEffect(
-                    name=spell.applies_status_on_fail,
-                    expires_on="never",
-                    rounds_remaining=spell.status_rounds,
-                    save_each=f"{spell.save_ability} DC{save_dc}",
-                    applied_round=round_num,
-                    source_id=action.get("caster", ""),
-                ))
-                status_applied = spell.applies_status_on_fail
+                from .status import MODIFIER_CLASSES, StatusEffect
+                status_name = spell.applies_status_on_fail
+                caster_id = action.get("caster", "")
+                cls = MODIFIER_CLASSES.get(status_name)
+                if cls is not None:
+                    try:
+                        fx = cls(applied_round=round_num, source_id=caster_id)
+                    except TypeError:
+                        fx = cls(applied_round=round_num)
+                    # Preserve save_each and rounds_remaining from spell definition.
+                    fx.save_each = f"{spell.save_ability} DC{save_dc}"
+                    fx.rounds_remaining = spell.status_rounds
+                else:
+                    fx = StatusEffect(
+                        name=status_name, expires_on="never",
+                        rounds_remaining=spell.status_rounds,
+                        save_each=f"{spell.save_ability} DC{save_dc}",
+                        applied_round=round_num, source_id=caster_id,
+                    )
+                target.add_status(fx)
+                status_applied = status_name
             target_results.append({
                 "target_name":    target.name,
                 "save_roll":      save_roll,
+                "save_breakdown": save_bd,
                 "save_success":   success,
                 "damage":         actual_dmg,
                 "status_applied": status_applied,
@@ -998,8 +1280,15 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
         if slot_level > 0:
             caster.spell_slots[slot_level] = caster.spell_slots.get(slot_level, 0) - 1
 
-        # Concentration: replace any prior concentration spell with this one.
+        # Concentration: replace any prior concentration spell with this one,
+        # cleaning up any effects from the old spell first.
         if spell.requires_concentration:
+            if caster.concentrating_on:
+                caster_id = next(
+                    (cid for cid, c in world_state.characters.items() if c is caster), None
+                )
+                if caster_id:
+                    _end_concentration(caster_id, world_state)
             caster.concentrating_on = spell_name
 
         return {
@@ -1053,6 +1342,8 @@ def _format_intent(action: dict) -> str:
         target = action.get("target", "?")
         weapon = action.get("weapon", "")
         return f"攻擊 {target}（{weapon}）" if weapon else f"攻擊 {target}"
+    if t == "MULTI_ATTACK":
+        return f"多重攻擊 {action.get('target', '?')}（{action.get('weapon', '武器')}）"
     if t == "MOVE":
         if "target" in action:
             return f"朝 {action['target']} 移動"
@@ -1101,6 +1392,41 @@ def _format_intent(action: dict) -> str:
     return t or "未知行動"
 
 
+def _format_roll_breakdown(bd: dict | None) -> str:
+    """Render an attack/save breakdown as `[d20(7)+STR(2)+prof(2)+blessed(3)] `,
+    or empty string when nothing interesting to show (no breakdown supplied).
+    Trailing space is included so callers can drop it straight before `vs AC`.
+    """
+    if not bd:
+        return ""
+    parts: list[str] = [f"d20({bd['d20']})"]
+    stat_kind = bd.get("stat_mod_kind") or bd.get("stat")
+    if bd.get("stat_mod"):
+        parts.append(f"{stat_kind}({bd['stat_mod']:+d})")
+    if bd.get("prof"):
+        parts.append(f"prof({bd['prof']:+d})")
+    for name, delta in bd.get("modifiers", []) or []:
+        parts.append(f"{name}({delta:+d})")
+    return "[" + "+".join(parts).replace("+-", "-") + "] "
+
+
+def _format_damage_breakdown(base_roll, dmg_mod: int,
+                             mod_contribs: list | None) -> str:
+    """Render `[d?(N)+STR(2)+raging(2)]` when status modifiers contributed,
+    otherwise empty (the existing `(1d8+2)` notation is enough for the
+    plain case)."""
+    if not mod_contribs:
+        return ""
+    parts: list[str] = []
+    if base_roll is not None:
+        parts.append(f"dice({base_roll})")
+    if dmg_mod:
+        parts.append(f"mod({dmg_mod:+d})")
+    for name, delta in mod_contribs:
+        parts.append(f"{name}({delta:+d})")
+    return " [" + "+".join(parts).replace("+-", "-") + "]"
+
+
 def format_result(action: dict, result: dict, actor_name: str = "") -> str:
     """Convert (action, execute_action result) into a text summary for the GM."""
     label = f"【{actor_name}】" if actor_name else "【玩家】"
@@ -1116,7 +1442,9 @@ def format_result(action: dict, result: dict, actor_name: str = "") -> str:
         elif mode == "disadvantage":
             mode_str = "（劣勢）"
         lines.append(
-            f"使用 {result['weapon_name']}{mode_str}，攻擊骰 {result['roll']} vs AC {result['target_ac']}：{hit_str}"
+            f"使用 {result['weapon_name']}{mode_str}，攻擊骰 {result['roll']} "
+            f"{_format_roll_breakdown(result.get('roll_breakdown'))}"
+            f"vs AC {result['target_ac']}：{hit_str}"
         )
         if result.get("reaction"):
             slot_str = f"（消耗 {result['reaction_slot']} 環）" if result.get("reaction_slot") else ""
@@ -1126,19 +1454,46 @@ def format_result(action: dict, result: dict, actor_name: str = "") -> str:
             dmg_mod  = result.get("damage_mod", 0)
             mod_str  = f"+{dmg_mod}" if dmg_mod > 0 else (str(dmg_mod) if dmg_mod < 0 else "")
             dice_str = f"{result['damage_dice']}{mod_str}"
+            dmg_extras = _format_damage_breakdown(
+                result.get("damage_base_roll"), dmg_mod, result.get("damage_modifiers"),
+            )
             lines.append(
-                f"造成 {result['damage']} 點傷害（{dice_str}），"
+                f"造成 {result['damage']} 點傷害（{dice_str}）{dmg_extras}，"
                 f"{result['target_name']} HP {result['target_hp']}/{result['target_max_hp']}（{alive}）"
             )
             if "rider_save_roll" in result:
                 save_outcome = "豁免成功" if result["rider_save_success"] else "豁免失敗"
+                rider_bd_str = _format_roll_breakdown(result.get("rider_save_breakdown"))
                 rider_line = (
-                    f"  附加：{result['rider_save_stat']} 豁免 {result['rider_save_roll']}："
-                    f"{save_outcome}"
+                    f"  附加：{result['rider_save_stat']} 豁免 {result['rider_save_roll']} "
+                    f"{rider_bd_str}：{save_outcome}"
                 )
                 if result.get("rider_status_applied"):
                     rider_line += f"，獲得狀態 [{result['rider_status_applied']}]"
                 lines.append(rider_line)
+
+    elif t == "MULTI_ATTACK":
+        for i, atk in enumerate(result.get("attacks", []), start=1):
+            hit_str  = "命中" if atk["hit"] else "未命中"
+            mode_str = {"advantage": "（優勢）", "disadvantage": "（劣勢）"}.get(
+                atk.get("advantage_mode", "normal"), ""
+            )
+            bd_str = _format_roll_breakdown(atk.get("roll_breakdown"))
+            line = (f"  [{i}] {atk['weapon_name']}{mode_str} "
+                    f"攻擊骰 {atk['roll']} {bd_str}vs AC {atk['target_ac']}：{hit_str}")
+            if atk.get("hit"):
+                dmg_mod  = atk.get("damage_mod", 0)
+                mod_str  = f"+{dmg_mod}" if dmg_mod > 0 else (str(dmg_mod) if dmg_mod < 0 else "")
+                dmg_ext  = _format_damage_breakdown(
+                    atk.get("damage_base_roll"), dmg_mod, atk.get("damage_modifiers")
+                )
+                line += f"，{atk['damage']} 傷（{atk['damage_dice']}{mod_str}）{dmg_ext}"
+            lines.append(line)
+        alive_str = "存活" if result.get("target_alive") else "倒下"
+        lines.append(
+            f"  合計 {result['total_damage']} 傷，"
+            f"{result['target_name']} HP {result['target_hp']}/{result['target_max_hp']}（{alive_str}）"
+        )
 
     elif t == "AOE":
         lines.append(
@@ -1165,6 +1520,7 @@ def format_result(action: dict, result: dict, actor_name: str = "") -> str:
         )
         for tr in result.get("target_results", []):
             save_str  = "豁免成功" if tr["save_success"] else "豁免失敗"
+            save_bd_str = _format_roll_breakdown(tr.get("save_breakdown"))
             alive_str = "存活" if tr["target_alive"] else "倒下"
             extras = []
             if tr["damage"] > 0:
@@ -1173,7 +1529,8 @@ def format_result(action: dict, result: dict, actor_name: str = "") -> str:
                 extras.append(f"獲得狀態 [{tr['status_applied']}]")
             extras_str = "，".join(extras) or "無效"
             lines.append(
-                f"  {tr['target_name']}：{save_str}，{extras_str}，"
+                f"  {tr['target_name']}：{save_str} {tr['save_roll']} {save_bd_str}"
+                f"，{extras_str}，"
                 f"HP {tr['target_hp']}/{tr['target_max_hp']}（{alive_str}）"
             )
 
@@ -1242,9 +1599,19 @@ def format_result(action: dict, result: dict, actor_name: str = "") -> str:
             )
         else:
             lines.append(f"移動：{result['description']}")
+        for oa in result.get("opportunity_attacks", []):
+            hit_str = "命中" if oa["hit"] else "未命中"
+            dmg_str = f"，造成 {oa['damage']} 傷害，HP {oa['target_hp']}/{oa['target_max_hp']}" if oa["hit"] else ""
+            lines.append(
+                f"  ↳ 藉機攻擊：{oa['attacker']} 使用 {oa['weapon']} 攻擊 {oa['target']}"
+                f"（{oa['roll']} vs AC）：{hit_str}{dmg_str}"
+            )
 
     elif t == "DODGE":
         lines.append(f"{result['character']} 採取閃避姿態（下次被攻擊前，攻擊者擲劣勢）")
+
+    elif t == "DISENGAGE":
+        lines.append(f"{result['character']} 脫身（本回合移動不會觸發藉機攻擊）")
 
     elif t == "HIDE":
         outcome = "成功隱身" if result["success"] else "躲藏失敗"
