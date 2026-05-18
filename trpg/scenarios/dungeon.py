@@ -87,6 +87,8 @@ def build_world_state() -> WorldState:
         ],
         is_npc=False,
     )
+    aria.archetype_id = ""   # Multi-class test character; use "" so all
+                              # base-class (archetype_id="") abilities are included.
 
     thor = Character(
         name="索爾", race="人類", class_="戰士", level=3,

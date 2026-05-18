@@ -1,9 +1,10 @@
 import pytest
 from trpg.engine.character import Character, Stats
 from trpg.engine.abilities import CLASS_ABILITIES
-from trpg.engine.skill import available_skills
+from trpg.engine.skill import available_skills, SKILL_FEATURE_DIM
 from trpg.engine.items import WEAPON_DEFS
 from trpg.engine.vec2 import Vec2
+from trpg.scenarios.dungeon import build_world_state
 
 
 def test_archetype_id_default_empty():
@@ -117,3 +118,30 @@ def test_available_skills_reactions_excluded():
     skill_ids = [s.skill_id for s in skills]
     assert "magic_missile" in skill_ids
     assert "shield_spell" not in skill_ids   # is_reaction=True → excluded
+
+
+def test_aria_available_skills_include_class_abilities():
+    ws = build_world_state()
+    aria = ws.characters["aria"]
+    skills = available_skills(aria)
+    skill_ids = [s.skill_id for s in skills]
+    # These base-class abilities (archetype_id="") should appear
+    base_abilities = {"second_wind", "action_surge", "magic_missile",
+                      "hold_person", "misty_step", "cure_wounds",
+                      "sacred_flame", "bless", "rage", "reckless_attack"}
+    present = base_abilities & set(skill_ids)
+    assert len(present) >= 5, (
+        f"Expected >=5 base class abilities, got {present}"
+    )
+    # shield_spell must NOT be in the list (it's a reaction, not in known_abilities)
+    assert "shield_spell" not in skill_ids
+
+
+def test_aria_skills_all_correct_feature_dim():
+    ws = build_world_state()
+    aria = ws.characters["aria"]
+    for skill in available_skills(aria):
+        vec = skill.features.as_vector()
+        assert len(vec) == SKILL_FEATURE_DIM, (
+            f"Skill '{skill.skill_id}' has vector dim {len(vec)}, expected {SKILL_FEATURE_DIM}"
+        )
