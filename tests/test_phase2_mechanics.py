@@ -135,7 +135,7 @@ def test_lay_on_hands_cannot_exceed_pool():
     assert "不足" in res["message"]
 
 
-from trpg.engine.status import Evasion
+from trpg.engine.status import Evasion, HuntersMark
 
 
 def test_evasion_status_exists():
@@ -180,3 +180,99 @@ def test_sculpt_spells_excludes_allies_from_aoe():
         }, ws)
     assert ally.hp == ally_hp_before, "sculpt_spells should protect ally"
     assert enemy.hp < 30, "enemy should still take damage"
+
+
+# ── Task 5: Aura of Protection ────────────────────────────────────────────────
+
+def test_aura_of_protection_default_zero():
+    c = Character(name="x", race="", class_="", level=1,
+                  stats=Stats(), hp=10, max_hp=10, ac=10)
+    assert c.aura_of_protection_bonus == 0
+
+
+def _aura_world():
+    from trpg.engine.character import CombatState
+    paladin = Character(name="P", race="", class_="聖騎士", level=6,
+                        stats=Stats(CHA=16), hp=40, max_hp=40, ac=18, is_npc=False)
+    paladin.aura_of_protection_bonus = 3  # CHA 16 → mod +3
+    ally = Character(name="A", race="", class_="", level=1,
+                     stats=Stats(CON=10), hp=20, max_hp=20, ac=12, is_npc=False)
+    paladin.position = Vec2(5, 5)
+    ally.position = Vec2(5.5, 5)  # 0.5m — within 3m aura
+    ws = WorldState(characters={"p": paladin, "a": ally}, scene="", dungeon_map=None)
+    ws.party_ids = ["p", "a"]
+    ws.combat = CombatState(initiative_order=["p", "a"])
+    return ws, paladin, ally
+
+
+def test_aura_adds_cha_mod_to_ally_saves():
+    ws, paladin, ally = _aura_world()
+    from trpg.engine.combat import make_saving_throw
+    with patch("trpg.engine.combat.roll", return_value=10):
+        # CON mod=0, no prof. Without aura: total=10. With aura (+3): total=13.
+        success, total = make_saving_throw(ally, "CON", 12, world_state=ws)
+    assert total == 13
+
+
+def test_aura_does_not_apply_when_paladin_out_of_range():
+    ws, paladin, ally = _aura_world()
+    paladin.position = Vec2(20, 20)  # far away
+    from trpg.engine.combat import make_saving_throw
+    with patch("trpg.engine.combat.roll", return_value=10):
+        success, total = make_saving_throw(ally, "CON", 12, world_state=ws)
+    assert total == 10
+
+
+# ── Task 6: Hunter's Mark ─────────────────────────────────────────────────────
+
+def test_hunters_mark_status_exists():
+    hm = HuntersMark(source_id="ranger1", applied_round=1)
+    assert hm.name == "hunters_mark"
+    assert hm.source_id == "ranger1"
+
+
+def _hunters_world():
+    from trpg.engine.character import CombatState
+    ranger = Character(name="R", race="", class_="遊俠", level=3,
+                       stats=Stats(STR=14), hp=25, max_hp=25, ac=14, is_npc=False,
+                       weapons=[WEAPON_DEFS["長劍"]])
+    quarry = Character(name="Q", race="", class_="", level=1,
+                       stats=Stats(), hp=100, max_hp=100, ac=10,
+                       is_npc=True, attitude=0)
+    ranger.position = Vec2(5, 5)
+    quarry.position = Vec2(6, 5)
+    ws = WorldState(characters={"r": ranger, "q": quarry}, scene="", dungeon_map=None)
+    ws.party_ids = ["r"]
+    ws.combat = CombatState(initiative_order=["r", "q"])
+    # Mark the quarry
+    quarry.add_status(HuntersMark(source_id="r", applied_round=1))
+    ranger.concentrating_on = "hunters_mark"
+    return ws, ranger, quarry
+
+
+def test_hunters_mark_adds_1d6_on_hit():
+    ws, ranger, quarry = _hunters_world()
+    with patch("trpg.engine.combat.roll_d20", return_value=15), \
+         patch("trpg.engine.combat.roll", side_effect=[5, 4]):
+        # roll calls: weapon 1d8 (5), then 1d6 hunter's mark (4)
+        res = execute_action(
+            {"type": "ATTACK", "attacker": "r", "target": "q",
+             "weapon": "長劍", "consumes": ["action"]}, ws
+        )
+    assert res.get("hunters_mark_damage", 0) == 4
+
+
+def test_hunters_mark_does_not_fire_on_unmarked_target():
+    ws, ranger, quarry = _hunters_world()
+    other = Character(name="O", race="", class_="", level=1,
+                      stats=Stats(), hp=100, max_hp=100, ac=10,
+                      is_npc=True, attitude=0)
+    other.position = Vec2(6.5, 5)
+    ws.characters["o"] = other
+    with patch("trpg.engine.combat.roll_d20", return_value=15), \
+         patch("trpg.engine.combat.roll", return_value=4):
+        res = execute_action(
+            {"type": "ATTACK", "attacker": "r", "target": "o",
+             "weapon": "長劍", "consumes": ["action"]}, ws
+        )
+    assert res.get("hunters_mark_damage", 0) == 0

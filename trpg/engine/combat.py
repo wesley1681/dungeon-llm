@@ -300,7 +300,8 @@ def tick_terrain_damage(char: Character, battlefield) -> int:
 
 
 def make_saving_throw(character: Character, stat: str, dc: int,
-                      breakdown: dict | None = None) -> tuple[bool, int]:
+                      breakdown: dict | None = None,
+                      world_state=None) -> tuple[bool, int]:
     """Roll a saving throw vs `dc`. Returns (success, total).
 
     `breakdown` side-channel: when supplied, populated with d20 / stat_mod /
@@ -329,6 +330,20 @@ def make_saving_throw(character: Character, stat: str, dc: int,
         modifier = m.on_saving_throw(character, stat, modifier)
         if modifier != prev:
             mod_contribs.append((getattr(m, "name", type(m).__name__), modifier - prev))
+    # Aura of Protection: any living ally with aura_of_protection_bonus > 0
+    # within 3m adds their bonus to this character's saves.
+    if world_state is not None:
+        for oid, other in world_state.characters.items():
+            if other is character or not other.is_alive():
+                continue
+            if not world_state.is_party_ally(oid):
+                continue
+            aura = getattr(other, "aura_of_protection_bonus", 0)
+            if aura > 0 and other.position.distance_to(character.position) <= 3.0 + 1e-6:
+                prev = modifier
+                modifier += aura
+                mod_contribs.append(("aura_protection", modifier - prev))
+                break  # only one paladin's aura applies
     total = d20 + modifier
     if breakdown is not None:
         breakdown["d20"]       = d20
@@ -512,6 +527,24 @@ def _resolve_single_attack(attacker: Character, target: Character, action: dict,
                 result["target_hp"] = target.hp
                 result["target_alive"] = target.is_alive()
 
+        # Hunter's Mark: +1d6 when the attacker is the declared source of the mark.
+        from .status import StatusEffect as _SE3
+        attacker_id_hm = next(
+            (cid for cid, c in world_state.characters.items() if c is attacker),
+            None,
+        )
+        for fx in target.status_effects:
+            if (isinstance(fx, _SE3) and fx.name == "hunters_mark"
+                    and fx.source_id == attacker_id_hm):
+                hm_dmg = roll("1d6")
+                apply_damage(target, hm_dmg, dtype="穿刺",
+                             attacker=attacker, world_state=world_state)
+                result["hunters_mark_damage"] = hm_dmg
+                result["damage"] = result.get("damage", 0) + hm_dmg
+                result["target_hp"] = target.hp
+                result["target_alive"] = target.is_alive()
+                break
+
         if auto_crit:
             result["auto_crit"] = True
 
@@ -522,6 +555,7 @@ def _resolve_single_attack(attacker: Character, target: Character, action: dict,
             rider_bd: dict = {}
             success, save_roll = make_saving_throw(
                 target, rider_stat, int(rider_dc), breakdown=rider_bd,
+                world_state=world_state,
             )
             result["rider_save_roll"]      = save_roll
             result["rider_save_stat"]      = rider_stat
@@ -1329,6 +1363,7 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
             save_bd: dict = {}
             success, save_roll = make_saving_throw(
                 target, spell.save_ability, save_dc, breakdown=save_bd,
+                world_state=world_state,
             )
             if spell.damage_dice:
                 full_dmg = (
