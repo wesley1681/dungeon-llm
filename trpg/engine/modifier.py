@@ -29,11 +29,19 @@ class Modifier:
     def on_incoming_attack(self, defender, attacker, weapon, mode: str) -> str:
         return mode
 
+    def on_outgoing_attack_total(self, attacker, target, weapon, total: int) -> int:
+        """Modify the numeric d20 total *after* the roll (e.g. Bless's +1d4)."""
+        return total
+
     def on_outgoing_damage(self, attacker, target, amount: int, dtype: str) -> int:
         return amount
 
     def on_incoming_damage(self, target, attacker, amount: int, dtype: str) -> int:
         return amount
+
+    def on_saving_throw(self, char, stat: str, modifier: int) -> int:
+        """Modify the bonus added to a saving throw (e.g. Bless's +1d4)."""
+        return modifier
 
     def on_critical_hit(self, attacker, target, weapon) -> None:
         pass

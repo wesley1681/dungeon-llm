@@ -147,6 +147,9 @@ def resolve_attack(attacker: Character, target: Character,
 
     attack_roll = roll_d20(mode)
     total = attack_roll + stat_mod + attacker.proficiency_bonus
+    # Numeric riders on the d20 total (e.g. Bless +1d4).
+    for m in attacker.iter_modifiers():
+        total = m.on_outgoing_attack_total(attacker, target, weapon, total)
     return total >= target.ac, total
 
 
@@ -206,6 +209,9 @@ def make_saving_throw(character: Character, stat: str, dc: int) -> tuple[bool, i
     modifier = character.stats.modifier(stat)
     if stat in character.proficiencies:
         modifier += character.proficiency_bonus
+    # Numeric riders on the save (e.g. Bless +1d4).
+    for m in character.iter_modifiers():
+        modifier = m.on_saving_throw(character, stat, modifier)
     total = roll_result + modifier
     return total >= dc, total
 
@@ -253,9 +259,17 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
         else:
             dmg_mod = attacker.stats.modifier("STR")
 
-        # Advantage / disadvantage compose: target dodging → disadvantage; range_mode also contributes
+        # Advantage / disadvantage compose: target dodging → disadvantage;
+        # range_mode also contributes; reckless rider adds advantage on a
+        # melee attack and applies the Reckless status to the attacker
+        # (incoming attacks against them have advantage until their next turn).
         target_dodging = target.has_status("dodging")
         mode = combine_advantage(range_mode, "disadvantage" if target_dodging else "normal")
+        if action.get("reckless") and weapon.range_type == "近戰":
+            mode = combine_advantage(mode, "advantage")
+            from .status import Reckless
+            round_num = world_state.combat.round_number if world_state.combat else 0
+            attacker.add_status(Reckless(applied_round=round_num))
 
         hit, roll_total = resolve_attack(attacker, target, weapon, mode=mode)
         result = {
@@ -282,6 +296,27 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
                 "target_max_hp": target.max_hp,
                 "target_alive":  target.is_alive(),
             })
+
+            # Save-rider: on-hit, target makes a save vs DC; failure attaches
+            # a status (Trip Attack → prone, Disarming Attack → disarmed, etc.)
+            rider_dc = action.get("rider_save_dc")
+            rider_status = action.get("rider_status", "")
+            if rider_dc and rider_status and target.is_alive():
+                rider_stat = action.get("rider_save_stat", "STR")
+                success, save_roll = make_saving_throw(target, rider_stat, int(rider_dc))
+                result["rider_save_roll"] = save_roll
+                result["rider_save_stat"] = rider_stat
+                result["rider_save_success"] = success
+                if not success:
+                    from .status import StatusEffect
+                    round_num = world_state.combat.round_number if world_state.combat else 0
+                    target.add_status(StatusEffect(
+                        name=rider_status,
+                        expires_on="self_turn_end",
+                        rounds_remaining=1,
+                        applied_round=round_num,
+                    ))
+                    result["rider_status_applied"] = rider_status
         return result
 
     # ── AOE ───────────────────────────────────────────────────────────────────
@@ -374,6 +409,140 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
             "slot_level":    slot_level,
             "target_hp":     target.hp,
             "target_max_hp": target.max_hp,
+        }
+
+    # ── ACTION_SURGE ──────────────────────────────────────────────────────────
+    # Grants the actor an extra action this turn. consume_resources reads the
+    # `grants` dict on the result and adds back into the resource budget.
+    if t == "ACTION_SURGE":
+        char = _lookup_char(action.get("character", ""), world_state)
+        if not char:
+            return {"type": "ERROR", "message": "找不到角色"}
+        return {
+            "type":      "ACTION_SURGE",
+            "character": char.name,
+            "grants":    {"action": 1},
+        }
+
+    # ── AUTO_DAMAGE ───────────────────────────────────────────────────────────
+    # Auto-hit multi-target damage (Magic Missile and friends). targets is a
+    # list of {"id": <cid>, "darts": int} entries; each dart rolls
+    # `damage_per` and applies to that target. Range-gated + LoS-gated like
+    # SPELL. Consumes a slot if slot_level > 0.
+    if t == "AUTO_DAMAGE":
+        attacker = _lookup_char(action.get("attacker", ""), world_state)
+        if not attacker:
+            return {"type": "ERROR", "message": "找不到攻擊者"}
+        slot_level = int(action.get("slot_level", 0))
+        if slot_level > 0 and attacker.spell_slots.get(slot_level, 0) <= 0:
+            return {"type": "ERROR",
+                    "message": f"{attacker.name} 沒有 {slot_level} 環法術位"}
+
+        range_m = float(action.get("range_m", 0.0))
+        damage_per = action.get("damage_per", "1d4")
+        dtype = action.get("damage_type", "untyped")
+        battlefield = world_state.combat.battlefield if world_state.combat else None
+        targets_spec = action.get("targets", [])
+
+        target_results = []
+        for spec in targets_spec:
+            tid = spec.get("id")
+            hits = max(1, int(spec.get("darts", 1)))
+            target = _lookup_char(tid, world_state)
+            if not target or not target.is_alive():
+                continue
+            d = attacker.position.distance_to(target.position)
+            if range_m > 0 and d > range_m:
+                return {"type": "ERROR",
+                        "message": f"{target.name} 距離 {d:.1f}m 超出射程 {range_m:.0f}m"}
+            if battlefield is not None and not battlefield.has_line_of_sight(
+                    attacker.position, target.position):
+                return {"type": "ERROR",
+                        "message": f"視線被遮擋，無法擊中 {target.name}"}
+            total_dmg = 0
+            for _ in range(hits):
+                rolled = roll(damage_per)
+                total_dmg += apply_damage(target, rolled, dtype=dtype, attacker=attacker)
+            target_results.append({
+                "target_name":   target.name,
+                "darts":         hits,
+                "damage":        total_dmg,
+                "target_hp":     target.hp,
+                "target_max_hp": target.max_hp,
+                "target_alive":  target.is_alive(),
+            })
+
+        if slot_level > 0:
+            attacker.spell_slots[slot_level] -= 1
+
+        return {
+            "type":           "AUTO_DAMAGE",
+            "attacker_name":  attacker.name,
+            "damage_per":     damage_per,
+            "damage_type":    dtype,
+            "slot_level":     slot_level,
+            "target_results": target_results,
+        }
+
+    # ── APPLY_MOD ─────────────────────────────────────────────────────────────
+    # Apply a named Modifier (from status.MODIFIER_CLASSES) to one or more
+    # targets. Generic path for Bless, Rage, Hunter's Mark, etc.
+    if t == "APPLY_MOD":
+        from .status import MODIFIER_CLASSES
+        caster = _lookup_char(action.get("caster", ""), world_state)
+        if not caster:
+            return {"type": "ERROR", "message": "找不到施法者"}
+        mod_name = action.get("modifier", "")
+        mod_cls = MODIFIER_CLASSES.get(mod_name)
+        if not mod_cls:
+            return {"type": "ERROR", "message": f"未知 modifier：{mod_name}"}
+
+        slot_level = int(action.get("slot_level", 0))
+        if slot_level > 0 and caster.spell_slots.get(slot_level, 0) <= 0:
+            return {"type": "ERROR",
+                    "message": f"{caster.name} 沒有 {slot_level} 環法術位"}
+
+        target_ids = action.get("targets", [])
+        max_targets = int(action.get("max_targets", len(target_ids) or 1))
+        target_ids = target_ids[:max_targets]
+        range_m = float(action.get("range_m", 0.0))
+
+        targets = []
+        for tid in target_ids:
+            target = _lookup_char(tid, world_state)
+            if not target or not target.is_alive():
+                continue
+            if range_m > 0:
+                d = caster.position.distance_to(target.position)
+                if d > range_m + 1e-6:
+                    return {"type": "ERROR",
+                            "message": f"{target.name} 距離 {d:.1f}m 超出 {range_m:.0f}m"}
+            targets.append(target)
+
+        round_num = world_state.combat.round_number if world_state.combat else 0
+        try:
+            sample = mod_cls(applied_round=round_num,
+                             source_id=action.get("caster", ""))
+        except TypeError:
+            sample = mod_cls(applied_round=round_num)
+        target_names = []
+        for target in targets:
+            target.add_status(sample.__class__(applied_round=round_num))
+            target_names.append(target.name)
+
+        if slot_level > 0:
+            caster.spell_slots[slot_level] -= 1
+        spell_name = action.get("spell_name", mod_name)
+        if action.get("requires_concentration"):
+            caster.concentrating_on = spell_name
+
+        return {
+            "type":             "APPLY_MOD",
+            "caster_name":      caster.name,
+            "spell_name":       spell_name,
+            "modifier":         mod_name,
+            "targets_affected": target_names,
+            "slot_level":       slot_level,
         }
 
     # ── USE_ITEM ──────────────────────────────────────────────────────────────
@@ -743,13 +912,17 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
 
 
 def consume_resources(resources: dict, action: dict, result: dict) -> None:
-    """Decrement per-turn resource budget based on action.consumes declaration.
+    """Decrement per-turn resource budget based on action.consumes declaration,
+    then apply any `grants` produced by the action's result.
 
     Resource slots understood:
       'action'        — sets to 0 (one action per turn)
       'bonus_action'  — sets to 0
       'movement'      — subtracts result.get('distance', 0)
     Unknown slots are silently ignored (reserved for future expansion).
+
+    The `grants` dict on the result lets actions REFUND or ADD resources —
+    e.g. Action Surge returns {"action": 1} so the actor gets a second action.
     """
     for slot in action.get("consumes", []):
         if slot == "action":
@@ -758,6 +931,8 @@ def consume_resources(resources: dict, action: dict, result: dict) -> None:
             resources["bonus_action"] = 0
         elif slot == "movement":
             resources["movement"] = max(0.0, resources.get("movement", 0.0) - result.get("distance", 0))
+    for slot, amount in (result.get("grants") or {}).items():
+        resources[slot] = resources.get(slot, 0) + amount
 
 
 def _format_intent(action: dict) -> str:
@@ -799,6 +974,19 @@ def _format_intent(action: dict) -> str:
         return f"使用 {action.get('item', '?')}"
     if t == "HEAL":
         return f"治療 {action.get('target', '?')}"
+    if t == "ACTION_SURGE":
+        return "動作激增（+1 動作）"
+    if t == "AUTO_DAMAGE":
+        targets = action.get("targets", [])
+        if len(targets) == 1:
+            return f"自動命中 → {targets[0].get('id', '?')}"
+        return f"自動命中（{len(targets)} 個目標）"
+    if t == "APPLY_MOD":
+        targets = action.get("targets", [])
+        spell = action.get("spell_name") or action.get("modifier", "?")
+        if len(targets) == 1:
+            return f"施展 {spell} → {targets[0]}"
+        return f"施展 {spell} → {len(targets)} 個目標"
     if t == "AOE":
         return f"投擲 {action.get('item', '?')}"
     if t == "ROLL":
@@ -832,6 +1020,15 @@ def format_result(action: dict, result: dict, actor_name: str = "") -> str:
                 f"造成 {result['damage']} 點傷害（{dice_str}），"
                 f"{result['target_name']} HP {result['target_hp']}/{result['target_max_hp']}（{alive}）"
             )
+            if "rider_save_roll" in result:
+                save_outcome = "豁免成功" if result["rider_save_success"] else "豁免失敗"
+                rider_line = (
+                    f"  附加：{result['rider_save_stat']} 豁免 {result['rider_save_roll']}："
+                    f"{save_outcome}"
+                )
+                if result.get("rider_status_applied"):
+                    rider_line += f"，獲得狀態 [{result['rider_status_applied']}]"
+                lines.append(rider_line)
 
     elif t == "AOE":
         lines.append(
@@ -875,6 +1072,29 @@ def format_result(action: dict, result: dict, actor_name: str = "") -> str:
         lines.append(
             f"{result['caster_name']} 治療 {result['target_name']}（{result['dice']}{slot_part}）：恢復 {result['amount']} HP "
             f"({result['target_hp']}/{result['target_max_hp']})"
+        )
+
+    elif t == "ACTION_SURGE":
+        lines.append(f"{result['character']} 激增動作：本回合再獲得 1 個動作")
+
+    elif t == "AUTO_DAMAGE":
+        slot_str = f"{result['slot_level']} 環" if result['slot_level'] > 0 else "戲法"
+        lines.append(
+            f"自動命中（{slot_str}，每發 {result['damage_per']} {result['damage_type']}傷）"
+        )
+        for tr in result.get("target_results", []):
+            alive_str = "存活" if tr["target_alive"] else "倒下"
+            lines.append(
+                f"  {tr['target_name']}：{tr['darts']} 發共 {tr['damage']} 傷，"
+                f"HP {tr['target_hp']}/{tr['target_max_hp']}（{alive_str}）"
+            )
+
+    elif t == "APPLY_MOD":
+        slot_str = f"，{result['slot_level']} 環" if result['slot_level'] > 0 else ""
+        affected = "、".join(result.get("targets_affected", [])) or "無人"
+        lines.append(
+            f"施展「{result['spell_name']}」（[{result['modifier']}] modifier{slot_str}）"
+            f"→ 影響 {affected}"
         )
 
     elif t == "USE_ITEM":

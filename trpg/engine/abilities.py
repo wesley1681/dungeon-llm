@@ -86,9 +86,11 @@ _register(ClassAbility(
         remaining_uses=1.0,
         target_type=TargetType.SELF,
     ),
-    engine_ready=False,
-    engine_todo="engine doesn't yet handle action-economy meta-effects "
-                "(grants_actions); needs resources['action'] += 1 on use",
+    engine_ready=True,
+    builder=lambda actor, target, coord: {
+        "type": "ACTION_SURGE", "character": actor,
+    },
+    engine_todo="short-rest uses_per pool not yet tracked; agent can spam",
 ))
 
 _register(ClassAbility(
@@ -97,19 +99,23 @@ _register(ClassAbility(
     class_id="fighter",
     description="武器攻擊 + 命中後 STR 豁免，失敗則 prone。消耗 1 個戰技骰。",
     features=SkillFeatures(
-        expected_damage=7.5,         # weapon 1d8 + STR mod
-        attack_vs_ac=5.0,             # weapon attack bonus
-        save_dc=14.0,                  # superiority save DC
+        expected_damage=7.5,
+        attack_vs_ac=5.0,
+        save_dc=14.0,
         save_stat=SaveStat.STR,
         cost_action=1.0,
-        remaining_uses=4.0,           # battle master superiority dice
+        remaining_uses=4.0,
         target_type=TargetType.SINGLE_ENEMY,
         applies_status=_status_multihot("prone"),
         status_duration=1.0,
     ),
-    engine_ready=False,
-    engine_todo="engine ATTACK doesn't yet support a follow-up save-or-status "
-                "rider; would need a hybrid ATTACK+SAVE handler",
+    engine_ready=True,
+    builder=lambda actor, target, coord: {
+        "type": "ATTACK", "attacker": actor, "target": target, "weapon": "長劍",
+        "rider_save_dc": 14, "rider_save_stat": "STR", "rider_status": "prone",
+        "consumes": ["action"],
+    },
+    engine_todo="weapon name hard-coded to 長劍; superiority die pool not tracked",
 ))
 
 
@@ -121,7 +127,7 @@ _register(ClassAbility(
     class_id="wizard",
     description="3 道力場箭自動命中所選敵人（最多 3 個），每箭 1d4+1。",
     features=SkillFeatures(
-        expected_damage=10.5,      # 3 × (1d4+1) ≈ 10.5
+        expected_damage=10.5,
         auto_hit=True,
         range_m=36.0,
         cost_action=1.0,
@@ -129,10 +135,16 @@ _register(ClassAbility(
         target_type=TargetType.MULTI_ENEMY,
         max_targets=3,
     ),
-    engine_ready=False,
-    engine_todo="engine has no auto-hit path; needs new AUTO_DAMAGE action "
-                "type or extension of ATTACK to skip the roll. Also needs "
-                "multi-target dispatch (distribute darts across N enemies).",
+    engine_ready=True,
+    builder=lambda actor, target, coord: {
+        "type": "AUTO_DAMAGE", "attacker": actor,
+        "targets": [{"id": target, "darts": 3}],   # simple builder: all 3 to one
+        "damage_per": "1d4+1", "damage_type": "力場",
+        "range_m": 36.0, "slot_level": 1,
+        "consumes": ["action"],
+    },
+    engine_todo="builder always sends all 3 darts to one target; multi-target "
+                "split (1+1+1, 2+1, …) requires a richer builder signature",
 ))
 
 _register(ClassAbility(
@@ -257,14 +269,21 @@ _register(ClassAbility(
         requires_concentration=True,
         target_type=TargetType.MULTI_ALLY,
         max_targets=3,
-        conferred_attack_mod=2.5,     # 1d4 expectation
+        conferred_attack_mod=2.5,
         conferred_save_mod=2.5,
         status_duration=10.0,
     ),
-    engine_ready=False,
-    engine_todo="needs multi-target dispatch (caster picks K of N allies) and "
-                "a modifier-status install path (the 'blessed' Modifier "
-                "subclass that adds +1d4 to outgoing attack/save rolls).",
+    engine_ready=True,
+    # `target` is a comma-separated list of ally ids ("aria,thor"); the
+    # builder splits it for the engine's multi-target dispatch.
+    builder=lambda actor, target, coord: {
+        "type": "APPLY_MOD", "caster": actor,
+        "modifier": "blessed", "spell_name": "祝福術",
+        "targets": (target.split(",") if isinstance(target, str) else list(target or [])),
+        "max_targets": 3, "range_m": 9.0,
+        "slot_level": 1, "requires_concentration": True,
+        "consumes": ["action"],
+    },
 ))
 
 
@@ -277,35 +296,43 @@ _register(ClassAbility(
     description="bonus action：melee 傷害 +2、物理傷害抗性、CON 豁免優勢，10 回合。",
     features=SkillFeatures(
         cost_bonus=1.0,
-        remaining_uses=3.0,           # rage uses per long rest at low levels
+        remaining_uses=3.0,
         target_type=TargetType.SELF,
         conferred_damage_mod=2.0,
         damage_resistance=0.5,
         status_duration=10.0,
     ),
-    engine_ready=False,
-    engine_todo="needs a 'raging' Modifier subclass that hooks "
-                "on_outgoing_damage (+2 to melee) and on_incoming_damage "
-                "(× 0.5 for physical types). Composite status — single "
-                "applies_status slot isn't enough; the mod fields carry the "
-                "specifics.",
+    engine_ready=True,
+    builder=lambda actor, target, coord: {
+        "type": "APPLY_MOD", "caster": actor,
+        "modifier": "raging", "spell_name": "狂暴",
+        "targets": [actor], "max_targets": 1, "range_m": 0.0,
+        "consumes": ["bonus_action"],
+    },
+    engine_todo="rage daily uses not tracked; CON-save-advantage not modelled",
 ))
 
 _register(ClassAbility(
     skill_id="reckless_attack",
     display_name="魯莽攻擊",
     class_id="barbarian",
-    description="本回合 melee 攻擊有優勢，但所有對你的攻擊也擁有優勢，到下回合。",
+    description="declared on a melee weapon attack — this attack has advantage, "
+                "and all incoming attacks have advantage until your next turn.",
     features=SkillFeatures(
-        target_type=TargetType.SELF,
-        # Advantage ≈ +5 statistically; we model as +5 attack mod confer,
-        # plus a 'reckless' debuff slot that lets incoming attackers benefit.
-        conferred_attack_mod=5.0,
-        conferred_ac_mod=-5.0,        # negative AC mod ≈ enemies have advantage
+        expected_damage=7.5,           # 1d8 + STR mod (uses the long sword)
+        attack_vs_ac=5.0,
+        cost_action=1.0,
+        target_type=TargetType.SINGLE_ENEMY,
+        conferred_attack_mod=5.0,      # advantage ≈ +5 statistically
+        conferred_ac_mod=-5.0,         # incoming attacks have advantage
         status_duration=1.0,
     ),
-    engine_ready=False,
-    engine_todo="declared as a rider on a weapon attack rather than a "
-                "standalone action — engine needs to support 'attack with "
-                "rider flag' or convert to a self-buff that lasts 1 turn.",
+    engine_ready=True,
+    builder=lambda actor, target, coord: {
+        "type": "ATTACK", "attacker": actor, "target": target,
+        "weapon": "長劍", "reckless": True,
+        "consumes": ["action"],
+    },
+    engine_todo="weapon hard-coded to 長劍; works correctly for any melee "
+                "weapon since the reckless flag is weapon-agnostic",
 ))
