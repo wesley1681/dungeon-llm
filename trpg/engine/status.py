@@ -204,6 +204,22 @@ class Charmed(StatusEffect):
     # if target.has_status("charmed") and the charmed.source_id == attacker_id → reject.
 
 
+class Evasion(StatusEffect):
+    """Rogue L7 passive. DEX saves vs area effects:
+    success = 0 damage (instead of normal half-damage).
+    failure = half damage (instead of full damage).
+    """
+    def __init__(self, applied_round: int = 0, source_id: str = ""):
+        super().__init__(name="evasion", expires_on="never",
+                         applied_round=applied_round, source_id=source_id)
+
+    def on_incoming_save_damage(self, char, stat: str, success: bool,
+                                amount: int) -> int:
+        if success:
+            return 0
+        return amount // 2
+
+
 # ── Registry ─────────────────────────────────────────────────────────────────
 # Looked up by APPLY_MOD action handler. Append-only when adding new buff /
 # debuff statuses that need to be applied through the generic action.
@@ -222,6 +238,7 @@ MODIFIER_CLASSES: dict[str, type] = {
     "restrained": Restrained,
     "frightened": Frightened,
     "charmed":    Charmed,
+    "evasion":    Evasion,
 }
 
 # Statuses that exist only for the duration of one combat — buffs/debuffs the
@@ -232,7 +249,7 @@ MODIFIER_CLASSES: dict[str, type] = {
 COMBAT_ONLY_STATUSES: frozenset[str] = frozenset({
     "dodging", "hidden", "reckless", "blessed", "raging", "shielded",
     "prone", "paralyzed", "stunned", "poisoned", "restrained",
-    "frightened", "charmed", "disengaging",
+    "frightened", "charmed", "disengaging", "evasion",
 })
 
 

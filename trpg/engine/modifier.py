@@ -54,3 +54,8 @@ class Modifier:
 
     def on_critical_hit(self, attacker, target, weapon) -> None:
         pass
+
+    def on_incoming_save_damage(self, char, stat: str, success: bool, amount: int) -> int:
+        """Modify damage dealt by a saving-throw spell (success=True means save passed).
+        Evasion: success → 0 damage; failure → half damage."""
+        return amount

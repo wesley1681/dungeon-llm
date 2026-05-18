@@ -1314,6 +1314,13 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
                 if caster_id:
                     affected_ids.append(caster_id)
 
+        # Sculpt Spells (Evocation Wizard L2): party allies excluded from AOE.
+        if spell.aoe_radius_m > 0 and caster.sculpt_spells:
+            affected_ids = [
+                cid for cid in affected_ids
+                if not world_state.is_party_ally(cid)
+            ]
+
         # Roll saves, apply damage + on-fail status
         target_results = []
         round_num = world_state.combat.round_number if world_state.combat else 0
@@ -1335,6 +1342,11 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
                 actual_dmg = 0 if spell.save_for_no_damage else full_dmg // 2
             else:
                 actual_dmg = full_dmg
+            # Evasion and similar modifiers can override save damage result.
+            for _m in target.iter_modifiers():
+                actual_dmg = _m.on_incoming_save_damage(
+                    target, spell.save_ability, success, actual_dmg
+                )
             if actual_dmg > 0:
                 apply_damage(target, actual_dmg, dtype=spell.damage_type,
                              attacker=caster, world_state=world_state)

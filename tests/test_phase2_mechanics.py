@@ -133,3 +133,50 @@ def test_lay_on_hands_cannot_exceed_pool():
     )
     assert res["type"] == "ERROR"
     assert "不足" in res["message"]
+
+
+from trpg.engine.status import Evasion
+
+
+def test_evasion_status_exists():
+    e = Evasion(applied_round=1)
+    assert e.name == "evasion"
+
+
+def test_evasion_registered_in_modifier_classes():
+    from trpg.engine.status import MODIFIER_CLASSES
+    assert "evasion" in MODIFIER_CLASSES
+
+
+def test_sculpt_spells_default_false():
+    c = Character(name="x", race="", class_="", level=1,
+                  stats=Stats(), hp=10, max_hp=10, ac=10)
+    assert c.sculpt_spells is False
+
+
+def test_sculpt_spells_excludes_allies_from_aoe():
+    caster = Character(name="S", race="", class_="法師", level=7,
+                       stats=Stats(INT=14), hp=20, max_hp=20, ac=12, is_npc=False,
+                       spells=["火球術"], spellcasting_ability="INT",
+                       spell_slots={3: 2})
+    caster.sculpt_spells = True
+    ally = Character(name="R", race="", class_="", level=7,
+                     stats=Stats(DEX=18), hp=40, max_hp=40, ac=14, is_npc=False)
+    enemy = Character(name="E", race="", class_="", level=1,
+                      stats=Stats(DEX=8), hp=30, max_hp=30, ac=10,
+                      is_npc=True, attitude=0)
+    caster.position = Vec2(0, 0)
+    ally.position = Vec2(10, 10)
+    enemy.position = Vec2(10, 10)
+    ws = WorldState(characters={"s": caster, "r": ally, "e": enemy},
+                    scene="", dungeon_map=None)
+    ws.party_ids = ["s", "r"]
+    ws.combat = CombatState(initiative_order=["s", "r", "e"])
+    ally_hp_before = ally.hp
+    with patch("trpg.engine.combat.roll", return_value=4):
+        res = execute_action({
+            "type": "SPELL", "caster": "s", "spell_name": "火球術",
+            "target_position": [10.0, 10.0], "consumes": ["action"]
+        }, ws)
+    assert ally.hp == ally_hp_before, "sculpt_spells should protect ally"
+    assert enemy.hp < 30, "enemy should still take damage"

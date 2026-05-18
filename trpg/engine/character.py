@@ -63,6 +63,7 @@ class Character:
     crit_range: int = 20          # Champion archetype: set to 19 to crit on 19-20
     sneak_attack_dice: str = ""   # e.g. "2d6" for L3 Rogue; "" = not a rogue
     lay_on_hands_pool: int = 0    # Paladin healing pool = 5 × level; 0 = non-paladin
+    sculpt_spells: bool = False   # Evocation Wizard L2: AOE spells skip chosen allies
     # 死亡豁免計數。只對 PC 有意義；NPC 在 HP=0 時立刻死亡。
     # {"successes": int, "failures": int}
     death_saves: dict = field(default_factory=lambda: {"successes": 0, "failures": 0})
