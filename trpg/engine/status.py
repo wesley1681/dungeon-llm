@@ -220,25 +220,34 @@ class Evasion(StatusEffect):
         return amount // 2
 
 
+class HuntersMark(StatusEffect):
+    """Ranger Hunter's Mark. Attached to the marked creature.
+    The attacker whose source_id matches deals +1d6 extra damage on each hit."""
+    def __init__(self, applied_round: int = 0, source_id: str = ""):
+        super().__init__(name="hunters_mark", expires_on="never",
+                         applied_round=applied_round, source_id=source_id)
+
+
 # ── Registry ─────────────────────────────────────────────────────────────────
 # Looked up by APPLY_MOD action handler. Append-only when adding new buff /
 # debuff statuses that need to be applied through the generic action.
 
 MODIFIER_CLASSES: dict[str, type] = {
-    "dodging":    Dodging,
-    "hidden":     Hidden,
-    "reckless":   Reckless,
-    "blessed":    Blessed,
-    "raging":     Raging,
-    "shielded":   Shielded,
-    "prone":      Prone,
-    "paralyzed":  Paralyzed,
-    "stunned":    Stunned,
-    "poisoned":   Poisoned,
-    "restrained": Restrained,
-    "frightened": Frightened,
-    "charmed":    Charmed,
-    "evasion":    Evasion,
+    "dodging":      Dodging,
+    "hidden":       Hidden,
+    "reckless":     Reckless,
+    "blessed":      Blessed,
+    "raging":       Raging,
+    "shielded":     Shielded,
+    "prone":        Prone,
+    "paralyzed":    Paralyzed,
+    "stunned":      Stunned,
+    "poisoned":     Poisoned,
+    "restrained":   Restrained,
+    "frightened":   Frightened,
+    "charmed":      Charmed,
+    "evasion":      Evasion,
+    "hunters_mark": HuntersMark,
 }
 
 # Statuses that exist only for the duration of one combat — buffs/debuffs the
@@ -249,7 +258,7 @@ MODIFIER_CLASSES: dict[str, type] = {
 COMBAT_ONLY_STATUSES: frozenset[str] = frozenset({
     "dodging", "hidden", "reckless", "blessed", "raging", "shielded",
     "prone", "paralyzed", "stunned", "poisoned", "restrained",
-    "frightened", "charmed", "disengaging", "evasion",
+    "frightened", "charmed", "disengaging", "evasion", "hunters_mark",
 })
 
 

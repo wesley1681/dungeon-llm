@@ -382,3 +382,28 @@ _register(ClassAbility(
     refresh_on="short_rest", max_uses=1,
     min_level=2, archetype_id="",
 ))
+
+_register(ClassAbility(
+    skill_id="hunters_mark",
+    display_name="獵人印記",
+    class_id="ranger",
+    description="bonus action：標記一個敵人，每次命中 +1d6 傷害，專注，消耗 1 環。",
+    features=SkillFeatures(
+        expected_damage=3.5,
+        range_m=27.0,
+        cost_bonus=1.0,
+        cost_slot_level=1.0,
+        requires_concentration=True,
+        target_type=TargetType.SINGLE_ENEMY,
+    ),
+    engine_ready=True,
+    min_level=2, archetype_id="",
+    refresh_on="never", max_uses=0,
+    builder=lambda actor, target, coord, char=None: {
+        "type": "APPLY_MOD", "caster": actor,
+        "modifier": "hunters_mark", "spell_name": "獵人印記",
+        "targets": [target], "max_targets": 1, "range_m": 27.0,
+        "slot_level": 1, "requires_concentration": True,
+        "consumes": ["bonus_action"],
+    },
+))
