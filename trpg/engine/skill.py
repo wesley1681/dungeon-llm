@@ -409,15 +409,41 @@ def end_turn_skill() -> Skill:
     return Skill("end", "結束", feats, lambda a, t, c: None)
 
 
+def _from_class_ability(ab, char) -> Skill:
+    """Build a Skill from a ClassAbility, binding the live character to the
+    builder so the Skill.builder signature stays (actor_id, target_id, coord)."""
+    materialized = ab.features.materialize(char, ab.skill_id)
+    _char = char
+
+    def builder(actor_id: str, target_id, coord):
+        if ab.builder is None:
+            return None
+        return ab.builder(actor_id, target_id, coord, char=_char)
+
+    return Skill(
+        skill_id=ab.skill_id,
+        display_name=ab.display_name,
+        features=materialized,
+        builder=builder,
+    )
+
+
 # ── Enumeration ──────────────────────────────────────────────────────────────
 
 def available_skills(char, world_state=None) -> list[Skill]:
     """List everything `char` can invoke this turn. Order is stable across
     calls so the policy's skill_idx stays consistent within an episode.
 
-    Order: [END, MOVE, weapons..., spells..., DODGE, HIDE]
+    Order: [END, MOVE, weapons..., spells..., class_abilities..., DODGE, HIDE]
+
+    ClassAbility filtering:
+      - engine_ready=True and not is_reaction
+      - char.level >= ab.min_level
+      - ab.archetype_id == "" or ab.archetype_id == char.archetype_id
+      - max_uses == 0 (unlimited) or remaining uses > 0
     """
     from .spells import SPELLS
+    from .abilities import CLASS_ABILITIES
 
     out: list[Skill] = [end_turn_skill(), move_skill(char)]
 
@@ -429,6 +455,23 @@ def available_skills(char, world_state=None) -> list[Skill]:
             spell = SPELLS.get(name)
             if spell is not None:
                 out.append(from_spell(spell, char))
+
+    # Class abilities from known_abilities, filtered to what's usable now.
+    for skill_id in (char.known_abilities or []):
+        ab = CLASS_ABILITIES.get(skill_id)
+        if ab is None:
+            continue
+        if not ab.engine_ready or ab.is_reaction:
+            continue
+        if char.level < ab.min_level:
+            continue
+        if ab.archetype_id and ab.archetype_id != char.archetype_id:
+            continue
+        if ab.max_uses > 0:
+            remaining = char.ability_uses.get(skill_id, ab.max_uses)
+            if remaining <= 0:
+                continue
+        out.append(_from_class_ability(ab, char))
 
     out.append(dodge_skill(char))
     out.append(hide_skill(char))
