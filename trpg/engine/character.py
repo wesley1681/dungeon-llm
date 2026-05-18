@@ -61,6 +61,9 @@ class Character:
     ability_uses: dict = field(default_factory=dict)
     attacks_per_action: int = 1   # 1 = normal; 2 = Extra Attack (L5 Fighter/Barbarian etc.)
     crit_range: int = 20          # Champion archetype: set to 19 to crit on 19-20
+    archetype_id: str = ""        # subclass label matching ClassAbility.archetype_id;
+                                  # "" = base class or unspecified. Used to filter
+                                  # which known_abilities appear in RL observations.
     sneak_attack_dice: str = ""   # e.g. "2d6" for L3 Rogue; "" = not a rogue
     lay_on_hands_pool: int = 0    # Paladin healing pool = 5 × level; 0 = non-paladin
     sculpt_spells: bool = False   # Evocation Wizard L2: AOE spells skip chosen allies
