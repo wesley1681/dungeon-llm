@@ -320,7 +320,11 @@ def make_saving_throw(character: Character, stat: str, dc: int,
                 breakdown["modifiers"] = [(getattr(m, "name", type(m).__name__), -999)]
                 breakdown["total"] = total
             return False, total
-    d20 = roll("1d20")
+    if character.pending_portent is not None:
+        d20 = character.pending_portent
+        character.pending_portent = None
+    else:
+        d20 = roll("1d20")
     stat_mod = character.stats.modifier(stat)
     prof = character.proficiency_bonus if stat in character.proficiencies else 0
     modifier = stat_mod + prof
@@ -1218,6 +1222,27 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
             "pool_left":     caster.lay_on_hands_pool,
             "target_hp":     target.hp,
             "target_max_hp": target.max_hp,
+        }
+
+    # ── PORTENT ───────────────────────────────────────────────────────────────
+    if t == "PORTENT":
+        caster  = _lookup_char(action.get("caster",  ""), world_state)
+        target  = _lookup_char(action.get("target",  ""), world_state)
+        die_val = int(action.get("die_value", 0))
+        if not caster:
+            return {"type": "ERROR", "message": "找不到施法者"}
+        if not target:
+            return {"type": "ERROR", "message": "找不到目標"}
+        if die_val not in caster.portent_dice:
+            return {"type": "ERROR",
+                    "message": f"預言骰 {die_val} 不在你的儲存列表 {caster.portent_dice} 中"}
+        caster.portent_dice.remove(die_val)
+        target.pending_portent = die_val
+        return {
+            "type":      "PORTENT",
+            "caster":    caster.name,
+            "target":    target.name,
+            "die_value": die_val,
         }
 
     # ── HIDE ──────────────────────────────────────────────────────────────────

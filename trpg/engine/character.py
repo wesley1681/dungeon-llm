@@ -65,6 +65,8 @@ class Character:
     lay_on_hands_pool: int = 0    # Paladin healing pool = 5 × level; 0 = non-paladin
     sculpt_spells: bool = False   # Evocation Wizard L2: AOE spells skip chosen allies
     aura_of_protection_bonus: int = 0  # Paladin L6: CHA mod added to all nearby ally saves
+    portent_dice: list = field(default_factory=list)  # stored d20 values (Divination Wizard)
+    pending_portent: int | None = None                 # overrides target's next save roll
     # 死亡豁免計數。只對 PC 有意義；NPC 在 HP=0 時立刻死亡。
     # {"successes": int, "failures": int}
     death_saves: dict = field(default_factory=lambda: {"successes": 0, "failures": 0})

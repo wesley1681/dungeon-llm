@@ -276,3 +276,113 @@ def test_hunters_mark_does_not_fire_on_unmarked_target():
              "weapon": "長劍", "consumes": ["action"]}, ws
         )
     assert res.get("hunters_mark_damage", 0) == 0
+
+
+# ── Task 7: Portent (Divination Wizard) ──────────────────────────────────────
+
+def test_portent_dice_default_empty():
+    c = Character(name="x", race="", class_="", level=1,
+                  stats=Stats(), hp=10, max_hp=10, ac=10)
+    assert c.portent_dice == []
+    assert c.pending_portent is None
+
+
+def _portent_wizard():
+    from trpg.engine.character import CombatState
+    wiz = Character(name="W", race="", class_="法師", level=2,
+                    stats=Stats(INT=16), hp=12, max_hp=12, ac=12, is_npc=False,
+                    spells=["定身術", "神聖光輝"],
+                    spellcasting_ability="INT", spell_slots={1: 4, 2: 3})
+    goblin = Character(name="G", race="", class_="", level=1,
+                       stats=Stats(WIS=8), hp=7, max_hp=7, ac=13,
+                       is_npc=True, attitude=0)
+    wiz.position = Vec2(0, 0)
+    goblin.position = Vec2(5, 0)
+    ws = WorldState(characters={"w": wiz, "g": goblin}, scene="", dungeon_map=None)
+    ws.party_ids = ["w"]
+    ws.combat = CombatState(initiative_order=["w", "g"])
+    return ws, wiz, goblin
+
+
+def test_portent_substitutes_save_roll():
+    """Portent die 1 on goblin → goblin auto-fails DC 13 hold_person save."""
+    ws, wiz, goblin = _portent_wizard()
+    # pending_portent is set on the target (goblin), not the wizard
+    goblin.pending_portent = 1  # override: goblin rolls 1 on its next save
+    # WIS mod = -1, DC = 8+2+3=13. Save total = 1+(-1) = 0 < 13 → fail → paralyzed
+    res = execute_action(
+        {"type": "SPELL", "caster": "w", "spell_name": "定身術",
+         "target": "g", "consumes": ["action"]}, ws
+    )
+    assert goblin.has_status("paralyzed")
+    assert goblin.pending_portent is None   # cleared after use
+
+
+def test_portent_pending_portent_clears_after_use():
+    ws, wiz, goblin = _portent_wizard()
+    goblin.pending_portent = 19  # high value → goblin succeeds most saves
+    with patch("trpg.engine.combat.roll", return_value=5):
+        execute_action(
+            {"type": "SPELL", "caster": "w", "spell_name": "定身術",
+             "target": "g", "consumes": ["action"]}, ws
+        )
+    assert goblin.pending_portent is None
+
+
+def test_portent_action_applies_die_to_target():
+    ws, wiz, goblin = _portent_wizard()
+    wiz.portent_dice = [3, 18]
+    res = execute_action(
+        {"type": "PORTENT", "caster": "w", "target": "g", "die_value": 3}, ws
+    )
+    assert res["type"] == "PORTENT"
+    assert goblin.pending_portent == 3
+    assert 3 not in wiz.portent_dice   # die consumed from caster's list
+
+
+# ── Task 8: Counterspell reaction ────────────────────────────────────────────
+
+def _counterspell_world():
+    from trpg.engine.character import CombatState
+    enemy_caster = Character(name="EC", race="", class_="法師", level=5,
+                             stats=Stats(INT=16), hp=20, max_hp=20, ac=12,
+                             is_npc=True, attitude=0,
+                             spells=["火球術"], spellcasting_ability="INT",
+                             spell_slots={3: 1})
+    defender = Character(name="D", race="", class_="法師", level=5,
+                         stats=Stats(INT=14), hp=20, max_hp=20, ac=12, is_npc=False,
+                         spells=[], spellcasting_ability="INT",
+                         spell_slots={3: 2},
+                         reactions=["counterspell"])
+    party_member = Character(name="PM", race="", class_="", level=1,
+                             stats=Stats(), hp=20, max_hp=20, ac=12, is_npc=False)
+    enemy_caster.position = Vec2(0, 0)
+    defender.position = Vec2(5, 0)
+    party_member.position = Vec2(5.5, 0)
+    ws = WorldState(characters={"ec": enemy_caster, "d": defender, "pm": party_member},
+                    scene="", dungeon_map=None)
+    ws.party_ids = ["d", "pm"]
+    ws.combat = CombatState(initiative_order=["ec", "d", "pm"])
+    return ws, enemy_caster, defender
+
+
+def test_counterspell_cancels_enemy_spell():
+    ws, enemy_caster, defender = _counterspell_world()
+    res = execute_action(
+        {"type": "SPELL", "caster": "ec", "spell_name": "火球術",
+         "target_position": [5.0, 0.0], "consumes": ["action"]}, ws
+    )
+    assert res["type"] == "COUNTERSPELLED"
+    assert defender.reaction_used is True
+    assert defender.spell_slots[3] == 1  # consumed one 3rd-level slot
+
+
+def test_counterspell_does_not_fire_when_reaction_used():
+    ws, enemy_caster, defender = _counterspell_world()
+    defender.reaction_used = True
+    with patch("trpg.engine.combat.roll", return_value=3):
+        res = execute_action(
+            {"type": "SPELL", "caster": "ec", "spell_name": "火球術",
+             "target_position": [5.0, 0.0], "consumes": ["action"]}, ws
+        )
+    assert res["type"] == "SPELL"

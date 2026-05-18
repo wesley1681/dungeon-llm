@@ -311,6 +311,22 @@ def _parse_command(text: str, actor_id: str, world_state) -> dict:
             actor.ability_uses[skill_id] = actor.ability_uses.get(skill_id, ab.max_uses) - 1
         return action
 
+    if cmd in ("預言", "portent"):
+        if len(parts) < 3:
+            raise ValueError("用法：預言 <骰值> <目標>")
+        try:
+            die_val = int(parts[1])
+        except ValueError:
+            raise ValueError(f"無效的骰值：{parts[1]}")
+        tgt = _resolve_id(parts[2], world_state) or parts[2]
+        return {
+            "type":      "PORTENT",
+            "caster":    actor_id,
+            "target":    tgt,
+            "die_value": die_val,
+            "consumes":  [],
+        }
+
     raise ValueError(f"無法解析指令：{text}")
 
 
