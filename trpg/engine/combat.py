@@ -482,6 +482,36 @@ def _resolve_single_attack(attacker: Character, target: Character, action: dict,
             "target_max_hp":    target.max_hp,
             "target_alive":     target.is_alive(),
         })
+
+        # Sneak Attack: fires once per turn when an ally is adjacent to the
+        # target (within 1.5m) OR target has a condition that gives disadvantage.
+        sneak_dmg = 0
+        if attacker.sneak_attack_dice:
+            ally_adjacent = False
+            for oid, other in world_state.characters.items():
+                if other is attacker or other is target:
+                    continue
+                if world_state.is_party_ally(oid) and other.is_alive():
+                    if other.position.distance_to(target.position) <= 1.5 + 1e-6:
+                        ally_adjacent = True
+                        break
+            target_disadvantaged = (
+                target.has_status("restrained") or
+                target.has_status("prone") or
+                target.has_status("poisoned")
+            )
+            if ally_adjacent or target_disadvantaged:
+                dice_parts = attacker.sneak_attack_dice.split("d")
+                n_dice = int(dice_parts[0]) if len(dice_parts) >= 1 else 1
+                die_size = dice_parts[1] if len(dice_parts) >= 2 else "6"
+                sneak_dmg = sum(roll(f"1d{die_size}") for _ in range(n_dice))
+                apply_damage(target, sneak_dmg, dtype="穿刺",
+                             attacker=attacker, world_state=world_state)
+                result["sneak_attack_damage"] = sneak_dmg
+                result["damage"] = result.get("damage", 0) + sneak_dmg
+                result["target_hp"] = target.hp
+                result["target_alive"] = target.is_alive()
+
         if auto_crit:
             result["auto_crit"] = True
 

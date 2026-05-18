@@ -61,6 +61,7 @@ class Character:
     ability_uses: dict = field(default_factory=dict)
     attacks_per_action: int = 1   # 1 = normal; 2 = Extra Attack (L5 Fighter/Barbarian etc.)
     crit_range: int = 20          # Champion archetype: set to 19 to crit on 19-20
+    sneak_attack_dice: str = ""   # e.g. "2d6" for L3 Rogue; "" = not a rogue
     # 死亡豁免計數。只對 PC 有意義；NPC 在 HP=0 時立刻死亡。
     # {"successes": int, "failures": int}
     death_saves: dict = field(default_factory=lambda: {"successes": 0, "failures": 0})
