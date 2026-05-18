@@ -24,3 +24,9 @@ docs/
 # IDE
 .vscode/
 .idea/
+
+# Eval scratchpad
+eval/_subagent_prompts/
+/compare.txt
+/plan_summary.txt
+*.log
