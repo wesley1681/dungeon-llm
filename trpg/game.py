@@ -15,7 +15,7 @@ from .engine.combat import (
     execute_action, format_result, make_saving_throw,
     consume_resources, MOVE_BUDGET_M, build_combat_context,
 )
-from .engine.combat_policy import CombatPolicy, HeuristicCombatPolicy
+from .engine.combat_policy import CombatPolicy, HeuristicCombatPolicy, HumanInputPolicy
 from .engine.quests import check_quest_progress, objective_progress_str
 from .engine.status import tick_status_effects
 from .llm.tag_parser import execute_all_tags, set_npc_agent_registry
@@ -105,41 +105,6 @@ _STOP = object()
 _MAX_SUB_ACTIONS = 5
 
 
-def _describe_action(action: dict) -> str:
-    """Synthesize the player-description string format_result expects.
-
-    Combat decisions are made by CombatPolicy and arrive as structured dicts;
-    this rebuilds a short natural-language label so the narrator's headline
-    line ("【索爾的行動】我用長劍攻擊地精") still reads correctly.
-    """
-    t = action.get("type", "")
-    if t == "ATTACK":
-        return f"我用 {action.get('weapon', '武器')} 攻擊 {action.get('target', '敵人')}"
-    if t == "MOVE":
-        if action.get("target"):
-            return f"我朝 {action['target']} 移動"
-        tp = action.get("target_position")
-        if tp is not None:
-            return f"我移動到 ({tp[0]:.1f}, {tp[1]:.1f})"
-        d = action.get("direction")
-        if d == "advance":
-            return "我前進"
-        if d == "retreat":
-            return "我後退"
-        return "我移動"
-    if t == "SPELL":
-        return f"我施展 {action.get('spell_name', '法術')}"
-    if t == "DODGE":
-        return "我閃避"
-    if t == "HIDE":
-        return "我躲藏"
-    if t == "USE_ITEM":
-        return f"我使用 {action.get('item', '道具')}"
-    if t == "AOE":
-        return f"我投擲 {action.get('item', '物品')}"
-    return f"我執行 {t}"
-
-
 def format_aria_combat_info(aria, ctx) -> str:
     """Pre-format the combat status block shown to the human player.
 
@@ -190,19 +155,26 @@ class GameSession:
         self.npc_agents  = npc_agents or {}
         set_npc_agent_registry(self.npc_agents)
 
-        # Combat decisions go through a policy per character. Anyone without an
-        # explicit policy falls back to the scripted heuristic — this is the
-        # placeholder until a trained RL policy plugs in. Aria (human PC) also
-        # uses the heuristic for now; we'll swap in a structured-input policy
-        # once the UI exposes action choices instead of free text.
-        self.policies: dict[str, CombatPolicy] = dict(policies or {})
-        default_policy = HeuristicCombatPolicy()
-        for cid in world_state.characters:
-            self.policies.setdefault(cid, default_policy)
-
         self._events    : queue.Queue = queue.Queue()
         self._player_in : queue.Queue = queue.Queue()
         self._stop_flag = threading.Event()
+
+        # Combat decisions go through a policy per character. Aria gets the
+        # human-input policy by default (regex parser, no LLM). Everyone else
+        # defaults to the scripted heuristic — the trained RL policy will plug
+        # in by passing a custom `policies` dict.
+        self.policies: dict[str, CombatPolicy] = dict(policies or {})
+        heuristic = HeuristicCombatPolicy()
+        human_policy = HumanInputPolicy(
+            char_id="aria",
+            prompt_fn=self._combat_prompt,
+            error_fn=self._combat_error,
+        )
+        for cid in world_state.characters:
+            if cid == "aria":
+                self.policies.setdefault(cid, human_policy)
+            else:
+                self.policies.setdefault(cid, heuristic)
 
         from .llm.controllers import HumanController, LLMPlayerController, LLMNpcController
         self.controllers = {
@@ -245,6 +217,18 @@ class GameSession:
         if val is _STOP or self._stop_flag.is_set():
             return None
         return val
+
+    def _combat_prompt(self, actor, ctx) -> str | None:
+        """HumanInputPolicy callback: emit CombatPrompt + block for input."""
+        self._emit(CombatPrompt(
+            aria=actor, enemies=ctx.enemies,
+            info_text=format_aria_combat_info(actor, ctx),
+        ))
+        return self._get_input()
+
+    def _combat_error(self, message: str) -> None:
+        """HumanInputPolicy callback: relay parse errors to the UI."""
+        self._emit(StatusMessage(f"指令無效：{message}"))
 
     def _alive_enemies(self) -> dict[str, str]:
         ws = self.world_state
@@ -537,8 +521,7 @@ class GameSession:
             self._emit(ActionResult(char.name, f"{char.name}：{reason}", debug, valid=False))
             return ""
 
-        description = _describe_action(action)
-        summary = format_result(description, result, char.name)
+        summary = format_result(action, result, char.name)
         self._emit(ActionResult(char.name, summary, debug, valid=True))
         ws.log_event("system", summary)
         consume_resources(resources, action, result)

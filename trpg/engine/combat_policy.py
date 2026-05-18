@@ -5,15 +5,19 @@ consumes) directly. No LLM is invoked in this layer. The LLM's only combat role
 is post-hoc narration once the action has resolved.
 
 Implementations included here:
-  - EndTurnPolicy   trivial stub; ends the turn immediately
-  - HeuristicCombatPolicy  rule-based baseline used as the default until a
-                           trained RL policy plugs in. Also doubles as a
-                           scripted opponent for RL training environments.
+  - EndTurnPolicy            trivial stub; ends the turn immediately
+  - HeuristicCombatPolicy    rule-based baseline used as the default until a
+                             trained RL policy plugs in; also doubles as the
+                             scripted opponent for RL training.
+  - HumanInputPolicy         reads structured command text from a UI callback
+                             and parses it into an action dict via regex.
+                             No LLM in the parsing path.
 
 The RL controller will land as a separate subclass that wraps a trained model.
 """
 from __future__ import annotations
 from dataclasses import dataclass
+from typing import Callable
 
 from .character import Character
 
@@ -104,3 +108,169 @@ class HeuristicCombatPolicy(CombatPolicy):
             })
 
         return CombatDecision(ended=True)
+
+
+# ── Human input policy ───────────────────────────────────────────────────────
+
+_END_WORDS  = {"end", "結束", "結束回合", "我這回合到這"}
+_FLEE_WORDS = {"flee", "逃跑", "<flee>"}
+_DODGE_WORDS = {"dodge", "閃避", "專注防禦"}
+_HIDE_WORDS  = {"hide", "躲藏", "躲"}
+
+
+def _resolve_id(key: str, world_state) -> str | None:
+    """Match a UI-typed identifier against character id then display name."""
+    if key in world_state.characters:
+        return key
+    for cid, c in world_state.characters.items():
+        if c.name == key:
+            return cid
+    return None
+
+
+def _parse_command(text: str, actor_id: str, world_state) -> dict:
+    """Parse one line of human input into an engine action dict.
+
+    Grammar (whitespace-separated, case-insensitive on keywords; targets and
+    spell/weapon names are case-sensitive):
+
+      attack <target>                ATTACK with default weapon
+      attack <target> <weapon>       ATTACK with named weapon
+      move <x> <y>                   MOVE to absolute (x, y)
+      move +<dx> +<dy>               MOVE by delta
+      move <target>                  MOVE toward creature
+      spell <name> <x> <y>           SPELL at coord
+      spell <name> <target>          SPELL on creature
+      dodge / 閃避                   DODGE
+      hide / 躲藏                    HIDE
+
+    Raises ValueError with a user-facing message on parse failure.
+    """
+    parts = text.strip().split()
+    if not parts:
+        raise ValueError("空指令")
+    cmd = parts[0].lower()
+
+    if cmd in ("attack", "攻擊"):
+        if len(parts) < 2:
+            raise ValueError("用法：攻擊 <目標> [武器]")
+        target_id = _resolve_id(parts[1], world_state)
+        if target_id is None:
+            raise ValueError(f"找不到目標：{parts[1]}")
+        actor = world_state.characters.get(actor_id)
+        weapon = parts[2] if len(parts) >= 3 else (
+            actor.get_weapon().name if (actor and actor.weapons) else ""
+        )
+        return {
+            "type":     "ATTACK",
+            "attacker": actor_id,
+            "target":   target_id,
+            "weapon":   weapon,
+            "consumes": ["action"],
+        }
+
+    if cmd in ("move", "移動"):
+        if len(parts) == 2:
+            target_id = _resolve_id(parts[1], world_state)
+            if target_id is None:
+                raise ValueError(f"用法：移動 <x> <y> 或 移動 <目標>（找不到 {parts[1]}）")
+            return {
+                "type":      "MOVE",
+                "character": actor_id,
+                "target":    target_id,
+                "consumes":  ["movement"],
+            }
+        if len(parts) >= 3:
+            ax, ay = parts[1], parts[2]
+            is_delta = any(s.startswith(("+", "-")) for s in (ax, ay))
+            try:
+                x = float(ax)
+                y = float(ay)
+            except ValueError:
+                raise ValueError(f"無效座標：{ax} {ay}")
+            key = "delta" if is_delta else "target_position"
+            return {
+                "type":      "MOVE",
+                "character": actor_id,
+                key:         [x, y],
+                "consumes":  ["movement"],
+            }
+        raise ValueError("用法：移動 <x> <y> 或 移動 <目標>")
+
+    if cmd in ("spell", "施法"):
+        if len(parts) < 3:
+            raise ValueError("用法：施法 <咒名> <目標 或 x y>")
+        spell_name = parts[1]
+        if len(parts) >= 4:
+            try:
+                x = float(parts[2])
+                y = float(parts[3])
+                return {
+                    "type":            "SPELL",
+                    "caster":          actor_id,
+                    "spell_name":      spell_name,
+                    "target_position": [x, y],
+                    "consumes":        ["action"],
+                }
+            except ValueError:
+                pass   # not numeric — fall through to target-id interpretation
+        target_id = _resolve_id(parts[2], world_state)
+        if target_id is None:
+            raise ValueError(f"找不到法術目標：{parts[2]}")
+        return {
+            "type":       "SPELL",
+            "caster":     actor_id,
+            "spell_name": spell_name,
+            "target":     target_id,
+            "consumes":   ["action"],
+        }
+
+    if cmd in _DODGE_WORDS:
+        return {"type": "DODGE", "character": actor_id, "consumes": ["action"]}
+    if cmd in _HIDE_WORDS:
+        return {"type": "HIDE", "character": actor_id, "consumes": ["action"]}
+
+    raise ValueError(f"無法解析指令：{text}")
+
+
+class HumanInputPolicy(CombatPolicy):
+    """Bridges a UI input stream into the CombatPolicy interface.
+
+    Construction takes two callbacks so the policy is decoupled from event
+    types in game.py (no circular import):
+
+      prompt_fn(actor, ctx) -> str | None
+        emit a combat prompt to the UI, block until the user submits one
+        line, return that line. None signals quit.
+      error_fn(message) -> None
+        relay a parse-error message back to the UI when input is malformed.
+    """
+
+    def __init__(self, char_id: str,
+                 prompt_fn: Callable,
+                 error_fn: Callable[[str], None]):
+        self.char_id = char_id
+        self.prompt_fn = prompt_fn
+        self.error_fn = error_fn
+
+    def decide(self, actor_id, actor, world_state, resources, round_num):
+        from .combat import build_combat_context   # local: avoid import cycle
+        ctx = build_combat_context(actor_id, actor, world_state, resources, round_num)
+        while True:
+            raw = self.prompt_fn(actor, ctx)
+            if raw is None:
+                return CombatDecision(ended=True)
+            text = raw.strip()
+            if not text:
+                continue
+            low = text.lower()
+            if low in _END_WORDS:
+                return CombatDecision(ended=True)
+            if low in _FLEE_WORDS:
+                return CombatDecision(fled=True)
+            try:
+                action = _parse_command(text, actor_id, world_state)
+            except ValueError as e:
+                self.error_fn(str(e))
+                continue
+            return CombatDecision(action=action)

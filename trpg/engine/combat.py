@@ -629,10 +629,54 @@ def consume_resources(resources: dict, action: dict, result: dict) -> None:
             resources["movement"] = max(0.0, resources.get("movement", 0.0) - result.get("distance", 0))
 
 
-def format_result(player_description: str, result: dict, actor_name: str = "") -> str:
-    """Convert execute_action result into a text summary for the GM."""
-    label = f"【{actor_name}的行動】" if actor_name else "【玩家行動】"
-    lines = [f"{label}{player_description}"]
+def _format_intent(action: dict) -> str:
+    """Render a one-line action label from a structured action dict.
+
+    This replaces the old "fake-natural-language description" string the
+    arbiter used to round-trip. Direct field rendering — no LLM, no synth.
+    """
+    t = action.get("type", "")
+    if t == "ATTACK":
+        target = action.get("target", "?")
+        weapon = action.get("weapon", "")
+        return f"攻擊 {target}（{weapon}）" if weapon else f"攻擊 {target}"
+    if t == "MOVE":
+        if "target" in action:
+            return f"朝 {action['target']} 移動"
+        if "target_position" in action:
+            tp = action["target_position"]
+            return f"移動至 ({tp[0]:.1f}, {tp[1]:.1f})"
+        if "delta" in action:
+            d = action["delta"]
+            return f"移動 Δ({d[0]:+.1f}, {d[1]:+.1f})"
+        if "direction" in action:
+            return "前進" if action["direction"] == "advance" else "後退"
+        return "移動"
+    if t == "SPELL":
+        name = action.get("spell_name", "?")
+        if "target_position" in action:
+            tp = action["target_position"]
+            return f"施展 {name} → ({tp[0]:.1f}, {tp[1]:.1f})"
+        if "target" in action:
+            return f"施展 {name} → {action['target']}"
+        return f"施展 {name}"
+    if t == "DODGE":
+        return "閃避"
+    if t == "HIDE":
+        return "躲藏"
+    if t == "USE_ITEM":
+        return f"使用 {action.get('item', '?')}"
+    if t == "AOE":
+        return f"投擲 {action.get('item', '?')}"
+    if t == "ROLL":
+        return f"檢定 {action.get('stat', '?')}"
+    return t or "未知行動"
+
+
+def format_result(action: dict, result: dict, actor_name: str = "") -> str:
+    """Convert (action, execute_action result) into a text summary for the GM."""
+    label = f"【{actor_name}】" if actor_name else "【玩家】"
+    lines = [f"{label}{_format_intent(action)}"]
     t = result.get("type")
 
     if t == "ATTACK":
