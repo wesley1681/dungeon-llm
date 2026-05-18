@@ -213,6 +213,13 @@ class SkillFeatures:
         if mult > 1.0 and self.cost_slot_level == 0.0 and self.expected_damage > 0:
             f.expected_damage = self.expected_damage * mult
 
+        # Expected healing: templates embed a +3 placeholder spellcasting mod.
+        # Replace with the character's actual spellcasting modifier.
+        _PLACEHOLDER_MOD = 3.0
+        if self.expected_healing > 0 and char.spellcasting_ability:
+            actual_spell_mod = float(char.stats.modifier(char.spellcasting_ability))
+            f.expected_healing = self.expected_healing + (actual_spell_mod - _PLACEHOLDER_MOD)
+
         return f
 
 
