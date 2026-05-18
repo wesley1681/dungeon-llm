@@ -90,3 +90,46 @@ def test_channel_divinity_resets_on_short_rest():
     c.ability_uses["channel_divinity"] = 0
     rest_character(c, "short")
     assert c.ability_uses.get("channel_divinity") == 1
+
+
+def test_lay_on_hands_pool_default_zero():
+    c = Character(name="x", race="", class_="", level=1,
+                  stats=Stats(), hp=10, max_hp=10, ac=10)
+    assert c.lay_on_hands_pool == 0
+
+
+def _paladin_world():
+    from trpg.engine.character import CombatState
+    pal = Character(name="P", race="", class_="聖騎士", level=3,
+                    stats=Stats(STR=16), hp=25, max_hp=25, ac=18, is_npc=False,
+                    weapons=[WEAPON_DEFS["長劍"]])
+    pal.lay_on_hands_pool = 15  # 5 × level 3
+    ally = Character(name="A", race="", class_="", level=1,
+                     stats=Stats(), hp=5, max_hp=20, ac=12, is_npc=False)
+    pal.position = Vec2(5, 5)
+    ally.position = Vec2(5.5, 5)
+    ws = WorldState(characters={"p": pal, "a": ally}, scene="", dungeon_map=None)
+    ws.party_ids = ["p", "a"]
+    ws.combat = CombatState(initiative_order=["p", "a"])
+    return ws, pal, ally
+
+
+def test_lay_on_hands_heals_target_from_pool():
+    ws, pal, ally = _paladin_world()
+    res = execute_action(
+        {"type": "LAY_ON_HANDS", "caster": "p", "target": "a",
+         "amount": 10, "consumes": ["action"]}, ws
+    )
+    assert res["type"] == "LAY_ON_HANDS"
+    assert ally.hp == 15
+    assert pal.lay_on_hands_pool == 5  # 15 - 10 = 5
+
+
+def test_lay_on_hands_cannot_exceed_pool():
+    ws, pal, ally = _paladin_world()
+    res = execute_action(
+        {"type": "LAY_ON_HANDS", "caster": "p", "target": "a",
+         "amount": 20, "consumes": ["action"]}, ws
+    )
+    assert res["type"] == "ERROR"
+    assert "不足" in res["message"]

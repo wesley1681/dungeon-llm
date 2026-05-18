@@ -1154,6 +1154,38 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
         ))
         return {"type": "DISENGAGE", "character": char.name}
 
+    # ── LAY_ON_HANDS ──────────────────────────────────────────────────────────
+    if t == "LAY_ON_HANDS":
+        caster = _lookup_char(action.get("caster", ""), world_state)
+        target = _lookup_char(action.get("target", ""), world_state)
+        if not caster:
+            return {"type": "ERROR", "message": "找不到施術者"}
+        if not target:
+            return {"type": "ERROR", "message": "找不到目標"}
+        amount = int(action.get("amount", 0))
+        if amount <= 0:
+            return {"type": "ERROR", "message": "治療量必須大於 0"}
+        if caster.lay_on_hands_pool < amount:
+            return {"type": "ERROR",
+                    "message": f"{caster.name} 聖療之手資源不足（剩餘 {caster.lay_on_hands_pool} HP）"}
+        d = caster.position.distance_to(target.position)
+        if d > 1.5 + 1e-6:
+            return {"type": "ERROR",
+                    "message": f"聖療之手需要近身接觸（目前距離 {d:.1f}m）"}
+        caster.lay_on_hands_pool -= amount
+        if target.is_dying():
+            target.reset_death_saves()
+        target.hp = min(target.max_hp, target.hp + amount)
+        return {
+            "type":          "LAY_ON_HANDS",
+            "caster":        caster.name,
+            "target":        target.name,
+            "healed":        amount,
+            "pool_left":     caster.lay_on_hands_pool,
+            "target_hp":     target.hp,
+            "target_max_hp": target.max_hp,
+        }
+
     # ── HIDE ──────────────────────────────────────────────────────────────────
     if t == "HIDE":
         from .status import Hidden
@@ -1450,6 +1482,8 @@ def _format_intent(action: dict) -> str:
         if len(targets) == 1:
             return f"施展 {spell} → {targets[0]}"
         return f"施展 {spell} → {len(targets)} 個目標"
+    if t == "LAY_ON_HANDS":
+        return f"聖療之手（{action.get('amount', '?')} HP）→ {action.get('target', '?')}"
     if t == "AOE":
         return f"投擲 {action.get('item', '?')}"
     if t == "ROLL":
@@ -1677,6 +1711,13 @@ def format_result(action: dict, result: dict, actor_name: str = "") -> str:
 
     elif t == "DISENGAGE":
         lines.append(f"{result['character']} 脫身（本回合移動不會觸發藉機攻擊）")
+
+    elif t == "LAY_ON_HANDS":
+        lines.append(
+            f"聖療之手：{result['caster']} 治療 {result['target']} {result['healed']} HP "
+            f"（剩餘資源 {result['pool_left']}），"
+            f"HP {result['target_hp']}/{result['target_max_hp']}"
+        )
 
     elif t == "HIDE":
         outcome = "成功隱身" if result["success"] else "躲藏失敗"
