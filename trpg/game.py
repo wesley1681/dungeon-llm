@@ -134,12 +134,14 @@ def format_aria_combat_info(aria, ctx) -> str:
         items = enemies_block.split("、")
         enemies_block = "\n".join(f"  - {it}" for it in items)
 
+    conc_line = f"專注：{aria.concentrating_on}\n" if aria.concentrating_on else ""
     return (
         f"你的座標：({aria.position.x:.1f}, {aria.position.y:.1f})m\n"
         f"剩餘資源：動作 {action_status}、移動 {move_left:.1f}m\n"
+        f"{conc_line}"
         f"你的武器：{weapons_line}\n"
         f"敵人：\n{enemies_block}\n"
-        f"可選：攻擊、移動、閃避、用道具；輸入「結束」或「end」結束本回合"
+        f"可選：攻擊、移動、閃避、躲藏、脫身、用道具、招式 <id> [args]；輸入「結束」或「end」結束本回合"
     )
 
 
@@ -241,10 +243,10 @@ class GameSession:
                 if c.is_npc and c.is_alive() and c.attitude == 0}
 
     def _alive_human_pcs(self) -> dict[str, str]:
-        """Strict human-controlled PCs only — used for the 'did the party wipe?'
-        GameOver check. Follower NPC death does NOT trigger GameOver."""
+        """PCs that are not yet permanently dead (hp > 0 OR still making death
+        saves). GameOver only when ALL PCs are is_dead()."""
         return {cid: c.name for cid, c in self.world_state.characters.items()
-                if not c.is_npc and c.is_alive()}
+                if not c.is_npc and not c.is_dead()}
 
     def _alive_party(self) -> dict[str, str]:
         """All alive party members (human PCs + follower NPCs).
@@ -326,8 +328,8 @@ class GameSession:
 
         # ── Death check ───────────────────────────────────────────────────────
         for char in ws.characters.values():
-            if not char.is_npc and not char.is_alive():
-                self._emit(GameOver(f"{char.name} 倒下了！遊戲結束。"))
+            if not char.is_npc and char.is_dead():
+                self._emit(GameOver(f"{char.name} 死亡！遊戲結束。"))
                 return True, False
 
         # ── PC turns ──────────────────────────────────────────────────────────
@@ -409,9 +411,39 @@ class GameSession:
                 if self._stop_flag.is_set():
                     return log
                 char = ws.characters.get(cid)
-                if not char or not char.is_alive():
+                if char is None or char.is_dead():
                     continue
 
+                # ── Dying PC: death saving throw ──────────────────────────────
+                if char.is_dying():
+                    d20 = roll("1d20")
+                    saves = char.death_saves
+                    if d20 == 20:
+                        # Natural 20: stabilize at 1 HP
+                        char.hp = 1
+                        char.reset_death_saves()
+                        note = f"{char.name} 死亡豁免 d20={d20}：奇蹟回生（HP 1）"
+                    elif d20 == 1:
+                        saves["failures"] = saves.get("failures", 0) + 2
+                        note = f"{char.name} 死亡豁免 d20={d20}：大失敗，累計失敗 {saves['failures']}"
+                    elif d20 >= 10:
+                        saves["successes"] = saves.get("successes", 0) + 1
+                        if saves["successes"] >= 3:
+                            saves["successes"] = 0
+                            note = f"{char.name} 死亡豁免 d20={d20}：成功（第3次）——穩定化"
+                        else:
+                            note = f"{char.name} 死亡豁免 d20={d20}：成功，累計 {saves['successes']}/3"
+                    else:
+                        saves["failures"] = saves.get("failures", 0) + 1
+                        if saves["failures"] >= 3:
+                            note = f"{char.name} 死亡豁免 d20={d20}：第3次失敗——{char.name} 死亡"
+                        else:
+                            note = f"{char.name} 死亡豁免 d20={d20}：失敗，累計 {saves['failures']}/3"
+                    self._emit(ActionResult(char.name, note, "DEATH_SAVE", valid=True))
+                    ws.log_event("system", note)
+                    continue
+
+                # ── Normal turn ───────────────────────────────────────────────
                 # Phase: start of this character's turn
                 tick_status_effects(char, "self_turn_start", combat.round_number)
                 char.reaction_used = False
@@ -420,7 +452,7 @@ class GameSession:
                     note = f"{char.name} 因危險地形受到 {terrain_dmg} 點傷害（HP {char.hp}/{char.max_hp}）"
                     self._emit(ActionResult(char.name, note, "TERRAIN", valid=True))
                     ws.log_event("system", note)
-                    if not char.is_alive():
+                    if char.is_dead():
                         continue
 
                 # Per-turn resource budget. Sub-actions decrement these.

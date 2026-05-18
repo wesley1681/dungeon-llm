@@ -60,13 +60,12 @@ def build_world_state() -> WorldState:
     # ── 玩家角色 ────────────────────────────────────────────────────────────────
     aria = Character(
         name="凱恩", race="人類", class_="盜賊", level=3,
-        stats=Stats(STR=100, DEX=16, CON=12, INT=13, WIS=11, CHA=50),
+        stats=Stats(STR=14, DEX=16, CON=12, INT=14, WIS=12, CHA=10),
         hp=22, max_hp=22, ac=14,
         weapons=[
             WEAPON_DEFS["短劍"],
             WEAPON_DEFS["匕首"],
             WEAPON_DEFS["長劍"],            # 供 trip_attack / reckless_attack 用
-            Weapon("神話長劍", "4d6+10", "斬擊", "近戰"),
         ],
         consumables=[
             Consumable("火把", 3, "light",  ""),

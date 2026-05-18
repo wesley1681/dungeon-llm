@@ -74,8 +74,25 @@ class HumanController(ActorController):
             text = raw.strip()
             if text.lower() == "quit":
                 return ExplorationOutput(quit=True)
+            # REST commands: intercept before TagAgent so they don't confuse
+            # the LLM. Apply immediately and prompt again for next action.
+            rest_lower = text.lower()
+            if rest_lower in ("短休", "short rest", "短休息", "rest short"):
+                self._do_rest(char, "short")
+                continue
+            if rest_lower in ("長休", "long rest", "長休息", "rest long"):
+                self._do_rest(char, "long")
+                continue
             if text:
                 return ExplorationOutput(text=text)
+
+    def _do_rest(self, char, rest_type: str) -> None:
+        from ..engine.character import rest_character
+        from ..game import StatusMessage
+        result = rest_character(char, rest_type)
+        label = "短休" if rest_type == "short" else "長休"
+        recovered = "、".join(result.get("recovered", [])) or "（無可回復資源）"
+        self.emit_event(StatusMessage(f"{label}完成。恢復：{recovered}"))
 
     def take_conversation_turn(self, char, npc_char, attitude_label: str
                                ) -> ConversationOutput:

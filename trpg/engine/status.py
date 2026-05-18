@@ -104,18 +104,136 @@ class Raging(StatusEffect):
         return amount // 2 if dtype in self._PHYSICAL else amount
 
 
+# ── Condition effects (5e rule book) ─────────────────────────────────────────
+# All of these are applied via the SPELL handler's `applies_status_on_fail`
+# or directly via APPLY_MOD. Duration/source tracked on the base dataclass.
+
+class Prone(StatusEffect):
+    """Fallen. Melee attacks against prone targets have advantage; ranged have
+    disadvantage. The prone creature's own attack rolls are at disadvantage.
+    Standing up costs half the creature's normal speed."""
+    def __init__(self, applied_round=0, source_id=""):
+        super().__init__(name="prone", expires_on="never",
+                         applied_round=applied_round, source_id=source_id)
+    def on_incoming_attack(self, defender, attacker, weapon, mode: str) -> str:
+        if weapon and weapon.range_type == "近戰":
+            return combine_advantage(mode, "advantage")
+        return combine_advantage(mode, "disadvantage")
+    def on_outgoing_attack(self, attacker, target, weapon, mode: str) -> str:
+        return combine_advantage(mode, "disadvantage")
+    def on_speed_multiplier(self, char) -> float:
+        return 0.5   # standing up costs half movement; implemented as half speed
+
+
+class Paralyzed(StatusEffect):
+    """Cannot move, speak, or take actions. Auto-fails STR/DEX saves.
+    Attacks vs the paralyzed target have advantage. Melee hits within 5ft
+    (1.5m) are auto-crits (handled in ATTACK handler via this hook)."""
+    _AUTO_FAIL = ("STR", "DEX")
+    def __init__(self, applied_round=0, source_id=""):
+        super().__init__(name="paralyzed", expires_on="never",
+                         applied_round=applied_round, source_id=source_id)
+    def on_incoming_attack(self, defender, attacker, weapon, mode: str) -> str:
+        return combine_advantage(mode, "advantage")
+    def on_auto_fail_save(self, char, stat: str) -> bool:
+        return stat.upper() in self._AUTO_FAIL
+    def on_speed_multiplier(self, char) -> float:
+        return 0.0
+
+
+class Stunned(StatusEffect):
+    """Incapacitated, cannot move, can only speak falteringly. Auto-fails STR/DEX
+    saves. Attacks vs the stunned target have advantage."""
+    _AUTO_FAIL = ("STR", "DEX")
+    def __init__(self, applied_round=0, source_id=""):
+        super().__init__(name="stunned", expires_on="never",
+                         applied_round=applied_round, source_id=source_id)
+    def on_incoming_attack(self, defender, attacker, weapon, mode: str) -> str:
+        return combine_advantage(mode, "advantage")
+    def on_auto_fail_save(self, char, stat: str) -> bool:
+        return stat.upper() in self._AUTO_FAIL
+    def on_speed_multiplier(self, char) -> float:
+        return 0.0
+
+
+class Poisoned(StatusEffect):
+    """Disadvantage on attack rolls and ability checks."""
+    def __init__(self, applied_round=0, source_id=""):
+        super().__init__(name="poisoned", expires_on="never",
+                         applied_round=applied_round, source_id=source_id)
+    def on_outgoing_attack(self, attacker, target, weapon, mode: str) -> str:
+        return combine_advantage(mode, "disadvantage")
+
+
+class Restrained(StatusEffect):
+    """Speed = 0. Attack rolls against have advantage; own attack rolls
+    have disadvantage. DEX saves at disadvantage (modelled as -5)."""
+    def __init__(self, applied_round=0, source_id=""):
+        super().__init__(name="restrained", expires_on="never",
+                         applied_round=applied_round, source_id=source_id)
+    def on_incoming_attack(self, defender, attacker, weapon, mode: str) -> str:
+        return combine_advantage(mode, "advantage")
+    def on_outgoing_attack(self, attacker, target, weapon, mode: str) -> str:
+        return combine_advantage(mode, "disadvantage")
+    def on_saving_throw(self, char, stat: str, modifier: int) -> int:
+        return modifier - 5 if stat.upper() == "DEX" else modifier
+    def on_speed_multiplier(self, char) -> float:
+        return 0.0
+
+
+class Frightened(StatusEffect):
+    """Cannot willingly move toward the source of its fear. Disadvantage on
+    attack rolls while the source is in its line of sight. (Source tracking
+    kept simple: disadvantage applies unconditionally in our model since
+    checking LoS to the source would require source_id lookup.)"""
+    def __init__(self, applied_round=0, source_id=""):
+        super().__init__(name="frightened", expires_on="never",
+                         applied_round=applied_round, source_id=source_id)
+    def on_outgoing_attack(self, attacker, target, weapon, mode: str) -> str:
+        return combine_advantage(mode, "disadvantage")
+
+
+class Charmed(StatusEffect):
+    """Cannot attack the charmer; charmer has advantage on social ability
+    checks against the charmed creature. Attack restriction enforced in the
+    ATTACK handler by checking source_id vs the target."""
+    def __init__(self, applied_round=0, source_id=""):
+        super().__init__(name="charmed", expires_on="never",
+                         applied_round=applied_round, source_id=source_id)
+    # The actual attack-block lives in combat.py's ATTACK handler:
+    # if target.has_status("charmed") and the charmed.source_id == attacker_id → reject.
+
+
 # ── Registry ─────────────────────────────────────────────────────────────────
 # Looked up by APPLY_MOD action handler. Append-only when adding new buff /
 # debuff statuses that need to be applied through the generic action.
 
 MODIFIER_CLASSES: dict[str, type] = {
-    "dodging":  Dodging,
-    "hidden":   Hidden,
-    "reckless": Reckless,
-    "blessed":  Blessed,
-    "raging":   Raging,
-    "shielded": Shielded,
+    "dodging":    Dodging,
+    "hidden":     Hidden,
+    "reckless":   Reckless,
+    "blessed":    Blessed,
+    "raging":     Raging,
+    "shielded":   Shielded,
+    "prone":      Prone,
+    "paralyzed":  Paralyzed,
+    "stunned":    Stunned,
+    "poisoned":   Poisoned,
+    "restrained": Restrained,
+    "frightened": Frightened,
+    "charmed":    Charmed,
 }
+
+# Statuses that exist only for the duration of one combat — buffs/debuffs the
+# engine attaches via the action system. They get cleared in bulk when combat
+# ends so the next encounter doesn't start with stale `raging`, `blessed` etc.
+# Persistent conditions (e.g. poisoned, charmed, frightened from external
+# sources) should be omitted here so they survive combat transitions.
+COMBAT_ONLY_STATUSES: frozenset[str] = frozenset({
+    "dodging", "hidden", "reckless", "blessed", "raging", "shielded",
+    "prone", "paralyzed", "stunned", "poisoned", "restrained",
+    "frightened", "charmed", "disengaging",
+})
 
 
 def tick_status_effects(char, phase: str, round_num: int) -> None:
@@ -133,6 +251,15 @@ def tick_status_effects(char, phase: str, round_num: int) -> None:
     dropped if duplicates ever appear.
     """
     from .combat import make_saving_throw  # avoid circular import
+
+    # Combat-end blanket cleanup: any combat-only buff/debuff is cleared so
+    # the next encounter starts fresh.
+    if phase == "combat_end":
+        char.status_effects[:] = [
+            fx for fx in char.status_effects
+            if not (isinstance(fx, StatusEffect) and fx.name in COMBAT_ONLY_STATUSES)
+        ]
+        return
 
     remaining = []
     for fx in char.status_effects:

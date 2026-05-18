@@ -30,6 +30,10 @@ class Spell:
     requires_concentration: bool = False
     applies_status_on_fail: str = "" # status name attached on failed save
     status_rounds: int = 10          # default 1-minute duration if status applies
+    # Save outcome rule for damage spells:
+    #   False (default) — successful save halves damage (Fireball, Burning Hands)
+    #   True            — successful save deals no damage (Sacred Flame, Toll the Dead)
+    save_for_no_damage: bool = False
     description: str = ""
 
 
@@ -51,7 +55,8 @@ SPELLS: dict[str, Spell] = {
         save_ability="DEX",
         damage_dice="1d8",
         damage_type="光耀",
-        description="單體目標 DEX 豁免，失敗承受 1d8 光耀傷害。",
+        save_for_no_damage=True,
+        description="單體目標 DEX 豁免，失敗承受 1d8 光耀傷害；成功無傷害。",
     ),
     "定身術": Spell(
         name="定身術",

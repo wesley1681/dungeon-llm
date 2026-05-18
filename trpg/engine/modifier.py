@@ -43,5 +43,14 @@ class Modifier:
         """Modify the bonus added to a saving throw (e.g. Bless's +1d4)."""
         return modifier
 
+    def on_auto_fail_save(self, char, stat: str) -> bool:
+        """Return True to auto-fail a saving throw for this stat (e.g. paralyzed
+        auto-fails STR and DEX saves in 5e)."""
+        return False
+
+    def on_speed_multiplier(self, char) -> float:
+        """Multiply the character's base movement speed (0.0 = immobilised)."""
+        return 1.0
+
     def on_critical_hit(self, attacker, target, weapon) -> None:
         pass
