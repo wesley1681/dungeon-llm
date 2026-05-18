@@ -549,6 +549,21 @@ def _resolve_single_attack(attacker: Character, target: Character, action: dict,
                 result["target_alive"] = target.is_alive()
                 break
 
+        # Divine Smite: Paladin expends a spell slot on hit for bonus radiant
+        # damage. 2d8 at slot 1, +1d8 per slot level above 1 (max 5d8 at slot 4+).
+        if hit:
+            smite_slot = action.get("divine_smite_slot", 0)
+            if smite_slot > 0 and attacker.spell_slots.get(smite_slot, 0) > 0:
+                attacker.spell_slots[smite_slot] -= 1
+                smite_dice = min(5, 1 + smite_slot)   # 2d8 at L1, +1d8/slot
+                smite_dmg = sum(roll("1d8") for _ in range(smite_dice))
+                apply_damage(target, smite_dmg, dtype="光耀",
+                             attacker=attacker, world_state=world_state)
+                result["divine_smite_damage"] = smite_dmg
+                result["damage"] = result.get("damage", 0) + smite_dmg
+                result["target_hp"] = target.hp
+                result["target_alive"] = target.is_alive()
+
         if auto_crit:
             result["auto_crit"] = True
 

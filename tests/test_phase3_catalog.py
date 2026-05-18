@@ -129,3 +129,64 @@ def test_paladin_vengeance_catalog():
     )
     assert CLASS_ABILITIES["bane_ven"].engine_ready is True
     assert CLASS_ABILITIES["vow_of_enmity_ven"].engine_ready is True
+
+
+from unittest.mock import patch
+from trpg.engine.character import Character, Stats, CombatState
+from trpg.engine.vec2 import Vec2
+from trpg.engine.world_state import WorldState
+from trpg.engine.items import WEAPON_DEFS
+from trpg.engine.combat import execute_action
+
+
+def test_full_catalog_count():
+    """Total CLASS_ABILITIES should be >= 45 after Phase 3."""
+    assert len(CLASS_ABILITIES) >= 45, (
+        f"Expected >=45 abilities, got {len(CLASS_ABILITIES)}"
+    )
+
+
+def test_divine_smite_applies_bonus_damage():
+    pal = Character(name="P", race="", class_="聖騎士", level=3,
+                    stats=Stats(STR=16), hp=25, max_hp=25, ac=18, is_npc=False,
+                    weapons=[WEAPON_DEFS["長劍"]], spell_slots={1: 2})
+    enemy = Character(name="E", race="", class_="", level=1,
+                      stats=Stats(), hp=100, max_hp=100, ac=10,
+                      is_npc=True, attitude=0)
+    pal.position = Vec2(5, 5)
+    enemy.position = Vec2(6, 5)
+    ws = WorldState(characters={"p": pal, "e": enemy}, scene="", dungeon_map=None)
+    ws.party_ids = ["p"]
+    ws.combat = CombatState(initiative_order=["p", "e"])
+    with patch("trpg.engine.combat.roll_d20", return_value=15), \
+         patch("trpg.engine.combat.roll", side_effect=[5, 7, 4]):
+        # rolls: 1d8 weapon (5), then 2d8 smite: 1d8 each (7, 4) = 11 total
+        res = execute_action({
+            "type": "ATTACK", "attacker": "p", "target": "e",
+            "weapon": "長劍", "divine_smite_slot": 1, "consumes": ["action"],
+        }, ws)
+    assert res["hit"] is True
+    assert res.get("divine_smite_damage", 0) == 11
+    assert pal.spell_slots[1] == 1   # one slot consumed from 2
+
+
+def test_divine_smite_does_not_fire_on_miss():
+    pal = Character(name="P", race="", class_="聖騎士", level=3,
+                    stats=Stats(STR=16), hp=25, max_hp=25, ac=18, is_npc=False,
+                    weapons=[WEAPON_DEFS["長劍"]], spell_slots={1: 2})
+    enemy = Character(name="E", race="", class_="", level=1,
+                      stats=Stats(), hp=100, max_hp=100, ac=20,
+                      is_npc=True, attitude=0)
+    pal.position = Vec2(5, 5)
+    enemy.position = Vec2(6, 5)
+    ws = WorldState(characters={"p": pal, "e": enemy}, scene="", dungeon_map=None)
+    ws.party_ids = ["p"]
+    ws.combat = CombatState(initiative_order=["p", "e"])
+    with patch("trpg.engine.combat.roll_d20", return_value=5):
+        res = execute_action({
+            "type": "ATTACK", "attacker": "p", "target": "e",
+            "weapon": "長劍", "divine_smite_slot": 1, "consumes": ["action"],
+        }, ws)
+    assert res["hit"] is False
+    assert res.get("divine_smite_damage", 0) == 0
+    assert pal.spell_slots[1] == 2   # no slot consumed on miss
