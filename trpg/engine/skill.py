@@ -82,6 +82,17 @@ SKILL_FEATURE_DIM = (
 # = 23 + 6 + 8 + 16 = 53
 
 
+def _cantrip_multiplier(caster_level: int) -> float:
+    """5e cantrip damage scales at levels 5, 11, 17."""
+    if caster_level >= 17:
+        return 4.0
+    if caster_level >= 11:
+        return 3.0
+    if caster_level >= 5:
+        return 2.0
+    return 1.0
+
+
 # ── SkillFeatures ────────────────────────────────────────────────────────────
 
 @dataclass
@@ -168,6 +179,41 @@ class SkillFeatures:
             target_oh,
             np.array(self.applies_status, dtype=np.float32),
         ])
+
+    def materialize(self, char, skill_id: str = "") -> "SkillFeatures":
+        """Return a copy with dynamic fields filled from the live character.
+
+        Called before building RL obs vectors so the agent always sees the
+        real save DC, damage, and remaining uses — not the static template
+        values from the catalog.
+        """
+        from copy import copy
+        f = copy(self)
+
+        # Save DC: 8 + proficiency_bonus + spellcasting_ability_modifier
+        if char.spellcasting_ability:
+            f.save_dc = float(
+                8 + char.proficiency_bonus
+                + char.stats.modifier(char.spellcasting_ability)
+            )
+
+        # Attack bonus vs AC (weapon attacks use STR by default)
+        f.attack_vs_ac = float(char.stats.modifier("STR") + char.proficiency_bonus)
+
+        # Remaining uses as a fraction [0.0, 1.0] for abilities with a pool.
+        if skill_id:
+            from .abilities import CLASS_ABILITIES
+            ab = CLASS_ABILITIES.get(skill_id)
+            if ab and ab.max_uses > 0:
+                current = char.ability_uses.get(skill_id, ab.max_uses)
+                f.remaining_uses = float(current) / ab.max_uses
+
+        # Cantrip damage scaling: cost_slot_level == 0.0 identifies cantrips.
+        mult = _cantrip_multiplier(char.level)
+        if mult > 1.0 and self.cost_slot_level == 0.0 and self.expected_damage > 0:
+            f.expected_damage = self.expected_damage * mult
+
+        return f
 
 
 # ── Skill (features + action builder) ────────────────────────────────────────
