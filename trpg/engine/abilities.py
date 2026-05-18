@@ -367,3 +367,18 @@ _register(ClassAbility(
     engine_todo="weapon hard-coded to 長劍; works correctly for any melee "
                 "weapon since the reckless flag is weapon-agnostic",
 ))
+
+# ── Shared resource sentinels ─────────────────────────────────────────────────
+# Meta-abilities representing shared resource pools. Listed in known_abilities
+# so rest_character() resets them via the normal refresh_on mechanism.
+
+_register(ClassAbility(
+    skill_id="channel_divinity",
+    display_name="引導神力",
+    class_id="cleric",
+    description="每短休 1 次的神力引導資源池（牧師 L2）。",
+    features=SkillFeatures(target_type=TargetType.SELF),
+    engine_ready=False,
+    refresh_on="short_rest", max_uses=1,
+    min_level=2, archetype_id="",
+))

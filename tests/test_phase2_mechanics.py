@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import patch
-from trpg.engine.character import Character, Stats, CombatState
+from trpg.engine.character import Character, Stats, CombatState, rest_character
 from trpg.engine.vec2 import Vec2
 from trpg.engine.world_state import WorldState
 from trpg.engine.items import WEAPON_DEFS
@@ -74,3 +74,19 @@ def test_sneak_attack_does_not_fire_without_sneak_dice():
              "weapon": "短劍", "consumes": ["action"]}, ws
         )
     assert res.get("sneak_attack_damage", 0) == 0
+
+
+def test_channel_divinity_uses_tracked_in_ability_uses():
+    c = Character(name="x", race="", class_="牧師", level=2,
+                  stats=Stats(), hp=20, max_hp=20, ac=12, is_npc=False)
+    c.ability_uses["channel_divinity"] = 1
+    assert c.ability_uses["channel_divinity"] == 1
+
+
+def test_channel_divinity_resets_on_short_rest():
+    c = Character(name="x", race="", class_="牧師", level=2,
+                  stats=Stats(), hp=20, max_hp=20, ac=12, is_npc=False)
+    c.known_abilities = ["channel_divinity"]
+    c.ability_uses["channel_divinity"] = 0
+    rest_character(c, "short")
+    assert c.ability_uses.get("channel_divinity") == 1
