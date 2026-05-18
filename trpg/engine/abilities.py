@@ -82,9 +82,9 @@ _register(ClassAbility(
     ),
     engine_ready=True,
     min_level=1, archetype_id="",
-    builder=lambda actor, target, coord: {
+    builder=lambda actor, target, coord, char=None: {
         "type": "HEAL", "caster": actor, "target": actor,
-        "dice": "1d10+3", "range_m": 0.0,
+        "dice": f"1d10+{char.level if char else 3}", "range_m": 0.0,
         "consumes": ["bonus_action"],
     },
 ))
@@ -102,7 +102,7 @@ _register(ClassAbility(
     ),
     engine_ready=True,
     min_level=2, archetype_id="",
-    builder=lambda actor, target, coord: {
+    builder=lambda actor, target, coord, char=None: {
         "type": "ACTION_SURGE", "character": actor,
     },
     engine_todo="short-rest uses_per pool not yet tracked; agent can spam",
@@ -127,7 +127,7 @@ _register(ClassAbility(
     ),
     engine_ready=True,
     min_level=3, archetype_id="battle_master",
-    builder=lambda actor, target, coord: {
+    builder=lambda actor, target, coord, char=None: {
         "type": "ATTACK", "attacker": actor, "target": target, "weapon": "長劍",
         "rider_save_dc": 14, "rider_save_stat": "STR", "rider_status": "prone",
         "consumes": ["action"],
@@ -154,7 +154,7 @@ _register(ClassAbility(
     ),
     engine_ready=True,
     min_level=1, archetype_id="",
-    builder=lambda actor, target, coord: (
+    builder=lambda actor, target, coord, char=None: (
         lambda targets: {
             "type": "AUTO_DAMAGE", "attacker": actor,
             "targets": [
@@ -207,7 +207,7 @@ _register(ClassAbility(
     ),
     engine_ready=True,
     min_level=3, archetype_id="",
-    builder=lambda actor, target, coord: {
+    builder=lambda actor, target, coord, char=None: {
         "type": "SPELL", "caster": actor, "spell_name": "定身術",
         "target": target, "consumes": ["action"],
     },
@@ -230,7 +230,7 @@ _register(ClassAbility(
     ),
     engine_ready=True,
     min_level=3, archetype_id="",
-    builder=lambda actor, target, coord: {
+    builder=lambda actor, target, coord, char=None: {
         "type": "MOVE", "character": actor,
         "target_position": list(coord) if coord else [0.0, 0.0],
         "teleport": True, "range_m": 9.0, "slot_level": 2,
@@ -255,7 +255,7 @@ _register(ClassAbility(
     ),
     engine_ready=True,
     min_level=1, archetype_id="",
-    builder=lambda actor, target, coord: {
+    builder=lambda actor, target, coord, char=None: {
         "type": "HEAL", "caster": actor, "target": target,
         "dice": "1d8+3", "range_m": 1.5, "slot_level": 1,
         "consumes": ["action"],
@@ -277,7 +277,7 @@ _register(ClassAbility(
     ),
     engine_ready=True,
     min_level=1, archetype_id="",
-    builder=lambda actor, target, coord: {
+    builder=lambda actor, target, coord, char=None: {
         "type": "SPELL", "caster": actor, "spell_name": "神聖光輝",
         "target": target, "consumes": ["action"],
     },
@@ -303,7 +303,7 @@ _register(ClassAbility(
     min_level=1, archetype_id="",
     # `target` is a comma-separated list of ally ids ("aria,thor"); the
     # builder splits it for the engine's multi-target dispatch.
-    builder=lambda actor, target, coord: {
+    builder=lambda actor, target, coord, char=None: {
         "type": "APPLY_MOD", "caster": actor,
         "modifier": "blessed", "spell_name": "祝福術",
         "targets": (target.split(",") if isinstance(target, str) else list(target or [])),
@@ -332,7 +332,7 @@ _register(ClassAbility(
     ),
     engine_ready=True,
     min_level=1, archetype_id="",
-    builder=lambda actor, target, coord: {
+    builder=lambda actor, target, coord, char=None: {
         "type": "APPLY_MOD", "caster": actor,
         "modifier": "raging", "spell_name": "狂暴",
         "targets": [actor], "max_targets": 1, "range_m": 0.0,
@@ -359,7 +359,7 @@ _register(ClassAbility(
     ),
     engine_ready=True,
     min_level=2, archetype_id="",
-    builder=lambda actor, target, coord: {
+    builder=lambda actor, target, coord, char=None: {
         "type": "ATTACK", "attacker": actor, "target": target,
         "weapon": "長劍", "reckless": True,
         "consumes": ["action"],

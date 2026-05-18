@@ -98,7 +98,10 @@ class HeuristicCombatPolicy(CombatPolicy):
                 "consumes": ["action"],
             })
 
-        if resources.get("movement", 0.0) > 1e-6:
+        # Only walk when actually out of reach — otherwise the MOVE handler
+        # would return a 0m no-op (combat.py keeps a 1m gap from creature
+        # targets), burning sub-actions on idle steps.
+        if d > reach + 1e-6 and resources.get("movement", 0.0) > 1e-6:
             return CombatDecision(action={
                 "type":        "MOVE",
                 "character":   actor_id,
@@ -112,10 +115,11 @@ class HeuristicCombatPolicy(CombatPolicy):
 
 # ── Human input policy ───────────────────────────────────────────────────────
 
-_END_WORDS  = {"end", "結束", "結束回合", "我這回合到這"}
-_FLEE_WORDS = {"flee", "逃跑", "<flee>"}
-_DODGE_WORDS = {"dodge", "閃避", "專注防禦"}
-_HIDE_WORDS  = {"hide", "躲藏", "躲"}
+_END_WORDS       = {"end", "結束", "結束回合", "我這回合到這"}
+_FLEE_WORDS      = {"flee", "逃跑", "<flee>"}
+_DODGE_WORDS     = {"dodge", "閃避", "專注防禦"}
+_HIDE_WORDS      = {"hide", "躲藏", "躲"}
+_DISENGAGE_WORDS = {"disengage", "脫身", "安全撤退"}
 
 
 def _resolve_id(key: str, world_state) -> str | None:
@@ -229,6 +233,8 @@ def _parse_command(text: str, actor_id: str, world_state) -> dict:
         return {"type": "DODGE", "character": actor_id, "consumes": ["action"]}
     if cmd in _HIDE_WORDS:
         return {"type": "HIDE", "character": actor_id, "consumes": ["action"]}
+    if cmd in _DISENGAGE_WORDS:
+        return {"type": "DISENGAGE", "character": actor_id, "consumes": ["action"]}
 
     # ── 招式 <skill_id> [args] ────────────────────────────────────────────
     # Invoke a ClassAbility from the catalogue. Args interpretation depends
@@ -266,6 +272,11 @@ def _parse_command(text: str, actor_id: str, world_state) -> dict:
             raise ValueError(f"{skill_id} 引擎尚未就緒")
         if actor is not None and actor.known_abilities and skill_id not in actor.known_abilities:
             raise ValueError(f"你不會 {skill_id}")
+        # Use-count gate (skip for unlimited abilities)
+        if actor is not None and ab.max_uses > 0:
+            remaining = actor.ability_uses.get(skill_id, ab.max_uses)
+            if remaining <= 0:
+                raise ValueError(f"{ab.display_name} 今日次數已用盡（短休或長休後恢復）")
 
         tt = ab.features.target_type
         args = parts[2:]
@@ -292,9 +303,12 @@ def _parse_command(text: str, actor_id: str, world_state) -> dict:
             resolved = [_resolve_id(tok, world_state) or tok for tok in tokens]
             target_arg = ",".join(resolved)
 
-        action = ab.builder(actor_id, target_arg, coord_arg)
+        action = ab.builder(actor_id, target_arg, coord_arg, char=actor)
         if action is None:
             raise ValueError(f"{skill_id}：builder 回傳 None（檢查 args 是否齊全）")
+        # Deduct one use.
+        if actor is not None and ab.max_uses > 0:
+            actor.ability_uses[skill_id] = actor.ability_uses.get(skill_id, ab.max_uses) - 1
         return action
 
     raise ValueError(f"無法解析指令：{text}")

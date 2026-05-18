@@ -82,3 +82,34 @@ def test_materialize_returns_copy_not_original():
     original_dc = ab.features.save_dc
     _ = ab.features.materialize(char, "hold_person")
     assert ab.features.save_dc == original_dc  # original unchanged
+
+
+def _make_fighter(level: int = 3) -> Character:
+    from trpg.engine.items import WEAPON_DEFS
+    return Character(
+        name="F", race="", class_="戰士", level=level,
+        stats=Stats(STR=14), hp=30, max_hp=30, ac=16,
+        weapons=[WEAPON_DEFS["長劍"]],
+        is_npc=False,
+    )
+
+
+def test_second_wind_dice_scales_with_level():
+    char = _make_fighter(level=5)
+    ab = CLASS_ABILITIES["second_wind"]
+    action = ab.builder("f", None, None, char=char)
+    assert action["dice"] == "1d10+5"
+
+
+def test_second_wind_dice_level_3():
+    char = _make_fighter(level=3)
+    ab = CLASS_ABILITIES["second_wind"]
+    action = ab.builder("f", None, None, char=char)
+    assert action["dice"] == "1d10+3"
+
+
+def test_builder_without_char_uses_fallback():
+    ab = CLASS_ABILITIES["second_wind"]
+    action = ab.builder("f", None, None)
+    assert "dice" in action
+    assert "1d10" in action["dice"]
