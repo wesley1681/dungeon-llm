@@ -45,6 +45,9 @@ class Character:
     attitude: int = 2   # 0=敵意 1=戒備 2=中立 3=友好 4=信任（僅 NPC 使用）
     hostile_reaction: str = "attack"   # 敵意時的反應："attack" 開戰 / "flee" 逃跑
     position: Vec2 = field(default_factory=Vec2)   # 戰鬥中的 2D 座標（公尺），戰鬥開始時由 setup_combat_positions reset
+    # 正在維持的專注法術（skill_id 或法術名）。每名角色最多 1 個專注效果；
+    # 受傷時要過 CON 豁免否則中斷，新的專注法術會直接覆蓋舊的。
+    concentrating_on: str = ""
 
     @property
     def proficiency_bonus(self) -> int:

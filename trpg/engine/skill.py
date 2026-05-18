@@ -41,11 +41,13 @@ class TargetType(IntEnum):
     SELF = 0
     SINGLE_ENEMY = 1
     SINGLE_ALLY = 2
-    POINT = 3      # arbitrary (x, y) on the battlefield
-    LINE = 4       # reserved
-    CONE = 5       # reserved
+    POINT = 3        # arbitrary (x, y) on the battlefield
+    LINE = 4         # reserved
+    CONE = 5         # reserved
+    MULTI_ENEMY = 6  # caster picks up to `max_targets` enemies
+    MULTI_ALLY = 7   # caster picks up to `max_targets` allies
 
-N_TARGET_TYPES = 6
+N_TARGET_TYPES = 8
 
 
 # Index = slot position in the multihot vector. Append-only.
@@ -72,12 +74,12 @@ N_STATUS_SLOTS = len(STATUS_SLOTS)   # 16 — leave room by extending the list
 
 # Total feature-vector length (downstream code can introspect this).
 SKILL_FEATURE_DIM = (
-    12                # scalar fields
+    23                # scalar fields (12 original + 11 added)
     + N_SAVE_STATS    # save_stat one-hot
     + N_TARGET_TYPES  # target_type one-hot
     + N_STATUS_SLOTS  # applies_status multi-hot
 )
-# = 12 + 6 + 6 + 16 = 40
+# = 23 + 6 + 8 + 16 = 53
 
 
 # ── SkillFeatures ────────────────────────────────────────────────────────────
@@ -95,27 +97,49 @@ class SkillFeatures:
     range_m:      float = 0.0       # caster → target / AOE centre
     aoe_radius_m: float = 0.0       # 0 = single target / no area
 
-    # Resolution (mutually exclusive — both non-zero means engine bug)
+    # Resolution (mutually exclusive in well-formed skills, but the engine
+    # supports hybrid attack+save for things like Battle Master maneuvers)
     attack_vs_ac: float = 0.0       # bonus added to d20 attack roll
     save_dc:      float = 0.0       # 0 = no save involved
-
-    save_stat: int = -1             # SaveStat enum, or -1 for "no save"
+    save_stat:    int   = -1        # SaveStat enum, or -1 for "no save"
+    auto_hit:     bool  = False     # bypass attack roll AND save (e.g. magic missile)
 
     # Cost (what slots the skill consumes — see consume_resources)
     cost_action:     float = 0.0    # 0 or 1
     cost_bonus:      float = 0.0    # 0 or 1
+    cost_reaction:   float = 0.0    # 0 or 1 — triggers on another's action
     cost_movement:   float = 0.0    # metres consumed (0 for non-move skills)
     cost_slot_level: float = 0.0    # spell slot level required (0 = no slot)
     remaining_uses:  float = 1.0    # available right now (slots left, ammo,
                                     # daily uses); 0 means can't use this turn
 
+    # Resource interactions
+    requires_concentration: bool = False   # mutex with other concentration spells
+    grants_actions:         float = 0.0    # gives the caster N extra actions
+                                            # (Action Surge, Haste). Usually 0 or 1.
+
     # Targeting
     target_type: int = TargetType.SELF
+    max_targets: int = 1   # how many entities can be picked when target_type
+                           # is MULTI_ENEMY / MULTI_ALLY; otherwise 1
+    is_teleport: bool = False   # if True + target_type == POINT, position
+                                # change ignores LoS / walls (Misty Step)
 
     # Multi-hot over STATUS_SLOTS — which conditions this skill applies
     applies_status: tuple[bool, ...] = field(
         default_factory=lambda: (False,) * N_STATUS_SLOTS
     )
+
+    # Conferred numeric modifiers — what the resulting status/buff actually
+    # does to the affected creature. Zero = no modifier on that axis.
+    # These describe the *effect* of buffs like Bless/Hunter's Mark/Rage and
+    # of debuffs that just shift numbers (Bane = −1d4 to rolls = −2.5).
+    conferred_attack_mod: float = 0.0   # ±N to target's d20 attack roll
+    conferred_ac_mod:     float = 0.0   # ±N to target's AC
+    conferred_damage_mod: float = 0.0   # ±N to target's outgoing damage
+    conferred_save_mod:   float = 0.0   # ±N to target's saving throws
+    damage_resistance:    float = 0.0   # 0..1 fraction of incoming damage
+                                         # cancelled (Rage = 0.5)
 
     def as_vector(self) -> np.ndarray:
         save_oh   = np.zeros(N_SAVE_STATS,   dtype=np.float32)
@@ -126,11 +150,19 @@ class SkillFeatures:
             target_oh[self.target_type] = 1.0
         return np.concatenate([
             np.array([
+                # original 12
                 self.expected_damage, self.expected_healing, self.status_duration,
                 self.range_m, self.aoe_radius_m,
                 self.attack_vs_ac, self.save_dc,
                 self.cost_action, self.cost_bonus, self.cost_movement,
                 self.cost_slot_level, self.remaining_uses,
+                # added 11
+                float(self.auto_hit), self.cost_reaction,
+                float(self.requires_concentration), self.grants_actions,
+                float(self.max_targets), float(self.is_teleport),
+                self.conferred_attack_mod, self.conferred_ac_mod,
+                self.conferred_damage_mod, self.conferred_save_mod,
+                self.damage_resistance,
             ], dtype=np.float32),
             save_oh,
             target_oh,

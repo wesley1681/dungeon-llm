@@ -155,6 +155,9 @@ def apply_damage(target: Character, amount, dtype: str = "untyped",
     """Apply damage to target. `amount` is either a dice notation string
     (e.g. '1d6+2') or a pre-rolled int. Filters through target's Modifiers.
 
+    If `target` is concentrating on a spell, a CON save vs DC max(10, dmg//2)
+    fires; failure clears `target.concentrating_on`.
+
     Returns the actual damage dealt after modifiers.
     """
     if isinstance(amount, str):
@@ -163,6 +166,16 @@ def apply_damage(target: Character, amount, dtype: str = "untyped",
         amount = m.on_incoming_damage(target, attacker, amount, dtype)
     amount = max(0, amount)
     target.hp = max(0, target.hp - amount)
+
+    # Concentration check — 5e rule: when a concentrating creature takes
+    # damage, it makes a CON save vs DC = max(10, ⌊damage/2⌋). Failure ends
+    # the spell. We just clear the flag; engine consumers can react.
+    if amount > 0 and target.concentrating_on:
+        dc = max(10, amount // 2)
+        success, _ = make_saving_throw(target, "CON", dc)
+        if not success:
+            target.concentrating_on = ""
+
     return amount
 
 
