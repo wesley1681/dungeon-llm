@@ -47,6 +47,13 @@ class ClassAbility:
     builder: Callable | None = None
     is_reaction: bool = False   # if True, listed for RL observation but
                                 # NEVER offered as an active-turn action choice
+    min_level: int = 1          # character level at which this ability is available
+    archetype_id: str = ""      # "" = base class; subclass label for archetype abilities
+    # Rest recovery: "short_rest" | "long_rest" | "never"
+    # Informs rest_character() how to replenish uses_remaining.
+    refresh_on: str = "short_rest"
+    # Maximum uses per refresh period (0 = unlimited / passive).
+    max_uses: int = 0
 
 
 # ── Catalog ──────────────────────────────────────────────────────────────────
@@ -66,6 +73,7 @@ _register(ClassAbility(
     display_name="二度氣息",
     class_id="fighter",
     description="bonus action 回復 1d10 + 戰士等級 HP，每短休 1 次。",
+    refresh_on="short_rest", max_uses=1,
     features=SkillFeatures(
         expected_healing=10.0,    # ~5.5 + level-3 placeholder
         cost_bonus=1.0,
@@ -73,6 +81,7 @@ _register(ClassAbility(
         target_type=TargetType.SELF,
     ),
     engine_ready=True,
+    min_level=1, archetype_id="",
     builder=lambda actor, target, coord: {
         "type": "HEAL", "caster": actor, "target": actor,
         "dice": "1d10+3", "range_m": 0.0,
@@ -85,12 +94,14 @@ _register(ClassAbility(
     display_name="動作激增",
     class_id="fighter",
     description="本回合多獲得 1 個動作，每短休 1 次。",
+    refresh_on="short_rest", max_uses=1,
     features=SkillFeatures(
         grants_actions=1.0,
         remaining_uses=1.0,
         target_type=TargetType.SELF,
     ),
     engine_ready=True,
+    min_level=2, archetype_id="",
     builder=lambda actor, target, coord: {
         "type": "ACTION_SURGE", "character": actor,
     },
@@ -102,6 +113,7 @@ _register(ClassAbility(
     display_name="絆倒攻擊",
     class_id="fighter",
     description="武器攻擊 + 命中後 STR 豁免，失敗則 prone。消耗 1 個戰技骰。",
+    refresh_on="short_rest", max_uses=4,
     features=SkillFeatures(
         expected_damage=7.5,
         attack_vs_ac=5.0,
@@ -114,6 +126,7 @@ _register(ClassAbility(
         status_duration=1.0,
     ),
     engine_ready=True,
+    min_level=3, archetype_id="battle_master",
     builder=lambda actor, target, coord: {
         "type": "ATTACK", "attacker": actor, "target": target, "weapon": "長劍",
         "rider_save_dc": 14, "rider_save_stat": "STR", "rider_status": "prone",
@@ -140,15 +153,19 @@ _register(ClassAbility(
         max_targets=3,
     ),
     engine_ready=True,
-    builder=lambda actor, target, coord: {
-        "type": "AUTO_DAMAGE", "attacker": actor,
-        "targets": [{"id": target, "darts": 3}],   # simple builder: all 3 to one
-        "damage_per": "1d4+1", "damage_type": "力場",
-        "range_m": 36.0, "slot_level": 1,
-        "consumes": ["action"],
-    },
-    engine_todo="builder always sends all 3 darts to one target; multi-target "
-                "split (1+1+1, 2+1, …) requires a richer builder signature",
+    min_level=1, archetype_id="",
+    builder=lambda actor, target, coord: (
+        lambda targets: {
+            "type": "AUTO_DAMAGE", "attacker": actor,
+            "targets": [
+                {"id": t, "darts": 1 + (max(0, 3 - len(targets)) if i == 0 else 0)}
+                for i, t in enumerate(targets)
+            ],
+            "damage_per": "1d4+1", "damage_type": "力場",
+            "range_m": 36.0, "slot_level": 1,
+            "consumes": ["action"],
+        }
+    )([t.strip() for t in (target or "").split(",") if t.strip()] or [target]),
 ))
 
 _register(ClassAbility(
@@ -167,6 +184,7 @@ _register(ClassAbility(
     ),
     engine_ready=True,
     is_reaction=True,
+    min_level=1, archetype_id="",
     engine_todo="smart-fire only triggers when +5 AC would flip a hit to miss; "
                 "Magic Missile is always blocked. No 'always cast' option yet.",
 ))
@@ -188,6 +206,7 @@ _register(ClassAbility(
         status_duration=10.0,
     ),
     engine_ready=True,
+    min_level=3, archetype_id="",
     builder=lambda actor, target, coord: {
         "type": "SPELL", "caster": actor, "spell_name": "定身術",
         "target": target, "consumes": ["action"],
@@ -210,14 +229,13 @@ _register(ClassAbility(
         is_teleport=True,
     ),
     engine_ready=True,
+    min_level=3, archetype_id="",
     builder=lambda actor, target, coord: {
         "type": "MOVE", "character": actor,
         "target_position": list(coord) if coord else [0.0, 0.0],
-        "teleport": True, "range_m": 9.0,
+        "teleport": True, "range_m": 9.0, "slot_level": 2,
         "consumes": ["bonus_action"],
     },
-    engine_todo="spell slot consumption from this builder is not yet hooked "
-                "(MOVE doesn't read cost_slot_level); needs slot decrement",
 ))
 
 
@@ -236,6 +254,7 @@ _register(ClassAbility(
         target_type=TargetType.SINGLE_ALLY,
     ),
     engine_ready=True,
+    min_level=1, archetype_id="",
     builder=lambda actor, target, coord: {
         "type": "HEAL", "caster": actor, "target": target,
         "dice": "1d8+3", "range_m": 1.5, "slot_level": 1,
@@ -257,6 +276,7 @@ _register(ClassAbility(
         target_type=TargetType.SINGLE_ENEMY,
     ),
     engine_ready=True,
+    min_level=1, archetype_id="",
     builder=lambda actor, target, coord: {
         "type": "SPELL", "caster": actor, "spell_name": "神聖光輝",
         "target": target, "consumes": ["action"],
@@ -280,6 +300,7 @@ _register(ClassAbility(
         status_duration=10.0,
     ),
     engine_ready=True,
+    min_level=1, archetype_id="",
     # `target` is a comma-separated list of ally ids ("aria,thor"); the
     # builder splits it for the engine's multi-target dispatch.
     builder=lambda actor, target, coord: {
@@ -300,6 +321,7 @@ _register(ClassAbility(
     display_name="狂暴",
     class_id="barbarian",
     description="bonus action：melee 傷害 +2、物理傷害抗性、CON 豁免優勢，10 回合。",
+    refresh_on="long_rest", max_uses=3,
     features=SkillFeatures(
         cost_bonus=1.0,
         remaining_uses=3.0,
@@ -309,6 +331,7 @@ _register(ClassAbility(
         status_duration=10.0,
     ),
     engine_ready=True,
+    min_level=1, archetype_id="",
     builder=lambda actor, target, coord: {
         "type": "APPLY_MOD", "caster": actor,
         "modifier": "raging", "spell_name": "狂暴",
@@ -321,6 +344,7 @@ _register(ClassAbility(
 _register(ClassAbility(
     skill_id="reckless_attack",
     display_name="魯莽攻擊",
+    refresh_on="never", max_uses=0,
     class_id="barbarian",
     description="declared on a melee weapon attack — this attack has advantage, "
                 "and all incoming attacks have advantage until your next turn.",
@@ -334,6 +358,7 @@ _register(ClassAbility(
         status_duration=1.0,
     ),
     engine_ready=True,
+    min_level=2, archetype_id="",
     builder=lambda actor, target, coord: {
         "type": "ATTACK", "attacker": actor, "target": target,
         "weapon": "長劍", "reckless": True,
