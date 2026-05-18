@@ -577,6 +577,42 @@ def _resolve_single_attack(attacker: Character, target: Character, action: dict,
     return result
 
 
+def _try_counterspell(caster: Character, spell_level: int,
+                      world_state: WorldState) -> tuple[bool, str, int]:
+    """Check if an opposing character can counter this spell with a reaction.
+
+    Returns (countered, counterspeller_name, slot_used).
+    Requires: "counterspell" in reactions, unused reaction, slot >= max(3, spell_level).
+    Auto-succeeds for any spell level (simplified — full 5e needs ability check for >3).
+    """
+    caster_id = next(
+        (cid for cid, c in world_state.characters.items() if c is caster), None
+    )
+    caster_in_party = world_state.is_party_ally(caster_id) if caster_id else False
+
+    for oid, other in world_state.characters.items():
+        if not other.is_alive() or other.reaction_used:
+            continue
+        other_in_party = world_state.is_party_ally(oid)
+        if other_in_party == caster_in_party:
+            continue   # same side — don't counter your own ally's spells
+        if "counterspell" not in (other.reactions or []):
+            continue
+        min_slot = max(3, spell_level)
+        available_slot = next(
+            (lvl for lvl in sorted(other.spell_slots)
+             if lvl >= min_slot and other.spell_slots[lvl] > 0),
+            None,
+        )
+        if available_slot is None:
+            continue
+        other.reaction_used = True
+        other.spell_slots[available_slot] -= 1
+        return True, other.name, available_slot
+
+    return False, "", 0
+
+
 def execute_action(action: dict, world_state: WorldState) -> dict:
     """Execute a parsed action JSON from the arbiter. Returns a result summary dict."""
     t = action.get("type")
@@ -1332,6 +1368,21 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
             return {"type": "ERROR",
                     "message": f"視線被遮擋，無法將「{spell_name}」投至 {center_name}"}
 
+        # Counterspell reaction: enemies with counterspell + slot can cancel.
+        # Cantrips (spell.level == 0) cannot be counterspelled.
+        if spell.level > 0:
+            countered, cspeller, cslot = _try_counterspell(
+                caster, int(slot_level), world_state
+            )
+            if countered:
+                return {
+                    "type":           "COUNTERSPELLED",
+                    "caster_name":    caster.name,
+                    "spell_name":     spell_name,
+                    "counterspeller": cspeller,
+                    "slot_used":      cslot,
+                }
+
         # Save DC = 8 + prof_bonus + spellcasting_ability_modifier
         save_dc = 8 + caster.proficiency_bonus + caster.stats.modifier(caster.spellcasting_ability)
 
@@ -1783,6 +1834,12 @@ def format_result(action: dict, result: dict, actor_name: str = "") -> str:
 
     elif t == "DISENGAGE":
         lines.append(f"{result['character']} 脫身（本回合移動不會觸發藉機攻擊）")
+
+    elif t == "COUNTERSPELLED":
+        lines.append(
+            f"【反制魔法】{result['counterspeller']} 消耗 {result['slot_used']} 環法術位，"
+            f"反制了 {result['caster_name']} 的「{result['spell_name']}」！"
+        )
 
     elif t == "LAY_ON_HANDS":
         lines.append(
