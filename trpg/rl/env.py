@@ -33,9 +33,11 @@ from ..engine.character import Character, Stats, CombatState
 from ..engine.world_state import WorldState
 from ..engine.combat import (
     execute_action, consume_resources, setup_combat_positions, MOVE_BUDGET_M,
+    tick_terrain_damage,
 )
 from ..engine.combat_policy import CombatPolicy, HeuristicCombatPolicy
 from ..engine.items import WEAPON_DEFS
+from ..engine.vec2 import TerrainType
 
 
 # ── Schema constants (everything trainable depends on these being stable) ────
@@ -50,8 +52,15 @@ _MAX_SUB_ACTIONS_PER_TURN = 5
 _MAX_AGENT_STEPS_PER_EPISODE = 50
 
 
-def _build_1v1_world() -> WorldState:
-    """Build a fresh 1v1 encounter: aria (warrior, lvl 3) vs goblin."""
+def _build_1v1_world(layout: str = "open") -> WorldState:
+    """Build a fresh 1v1 encounter: aria (warrior, lvl 3) vs goblin.
+
+    `layout` controls the battlefield terrain:
+      - "open"          empty 30x30 field (default)
+      - "walls"         two pillars between spawn points (LoS / pathing test)
+      - "difficult"     wide band of difficult terrain in the middle
+      - "lava"          two dangerous-terrain pools off-axis
+    """
     agent = Character(
         name="aria", race="人類", class_="戰士", level=3,
         stats=Stats(STR=14, DEX=12, CON=12), hp=24, max_hp=24, ac=14,
@@ -70,6 +79,16 @@ def _build_1v1_world() -> WorldState:
     cs = CombatState(initiative_order=["aria", "goblin"])
     ws.combat = cs
     setup_combat_positions(ws, cs)
+
+    bf = cs.battlefield
+    if layout == "walls":
+        bf.add_rect_obstacle(7.5, 11.5, 8.5, 13.5)
+        bf.add_rect_obstacle(7.5, 16.5, 8.5, 18.5)
+    elif layout == "difficult":
+        bf.add_rect_terrain(8.0, 0.0, 10.0, 30.0, TerrainType.DIFFICULT)
+    elif layout == "lava":
+        bf.add_rect_terrain(9.0, 13.5, 12.0, 16.5, TerrainType.DANGEROUS)
+
     return ws
 
 
@@ -83,9 +102,11 @@ class CombatEnv:
 
     def __init__(self, agent_id: str = "aria",
                  opponent_policy: CombatPolicy | None = None,
+                 layout: str = "open",
                  seed: int | None = None):
         self.agent_id = agent_id
         self.opponent_policy = opponent_policy or HeuristicCombatPolicy()
+        self.layout = layout
         self._rng = random.Random(seed)
         self.ws: WorldState | None = None
         self.resources: dict = {}
@@ -97,10 +118,12 @@ class CombatEnv:
     def reset(self, *, seed: int | None = None) -> tuple[np.ndarray, dict]:
         if seed is not None:
             self._rng = random.Random(seed)
-        self.ws = _build_1v1_world()
+        self.ws = _build_1v1_world(self.layout)
         self.resources = {"action": 1, "movement": MOVE_BUDGET_M}
         self._turn_idx = 0
         self._step_count = 0
+        # Tick start-of-turn terrain damage for whoever's turn comes first
+        self._tick_terrain(self.ws.characters[self.ws.combat.initiative_order[0]])
         self._advance_to_agent_turn()
         return self._extract_obs(), {}
 
@@ -141,6 +164,10 @@ class CombatEnv:
 
     # ── Internal: turn cycling ──────────────────────────────────────────────
 
+    def _tick_terrain(self, char: Character) -> int:
+        """Apply dangerous-terrain damage at start of `char`'s turn."""
+        return tick_terrain_damage(char, self.ws.combat.battlefield)
+
     def _advance_to_agent_turn(self) -> None:
         """Auto-play every actor before the agent's turn comes round again."""
         cs = self.ws.combat
@@ -153,6 +180,10 @@ class CombatEnv:
             if self._is_terminal():
                 return
             if self._turn_idx == agent_idx:
+                # Agent's turn starts — apply terrain tick before handing over.
+                agent = self.ws.characters[self.agent_id]
+                if agent.is_alive():
+                    self._tick_terrain(agent)
                 return
 
             cid = order[self._turn_idx]
@@ -165,7 +196,12 @@ class CombatEnv:
                 cs.round_number += 1
 
     def _run_npc_turn(self, cid: str, char: Character) -> None:
-        """Drain one full turn for an NPC via its policy."""
+        """Drain one full turn for an NPC via its policy. Includes a
+        start-of-turn terrain damage tick."""
+        self._tick_terrain(char)
+        if not char.is_alive():
+            return
+
         resources = {"action": 1, "movement": MOVE_BUDGET_M}
         for _ in range(_MAX_SUB_ACTIONS_PER_TURN):
             decision = self.opponent_policy.decide(

@@ -172,6 +172,22 @@ def apply_heal(target: Character, dice_notation: str) -> int:
     return amount
 
 
+# Damage dice for dangerous terrain (lava, acid pool, spike pit). Per-cell
+# variants would override this when scenarios pass their own.
+DANGEROUS_TERRAIN_DAMAGE = "1d4"
+
+
+def tick_terrain_damage(char: Character, battlefield) -> int:
+    """If `char` is standing in dangerous terrain, apply damage. Returns the
+    damage dealt (0 if not in dangerous terrain). Called at each character's
+    self-turn-start phase by the combat loop."""
+    if battlefield is None:
+        return 0
+    if not battlefield.is_dangerous(char.position):
+        return 0
+    return apply_damage(char, DANGEROUS_TERRAIN_DAMAGE, dtype="environment")
+
+
 def make_saving_throw(character: Character, stat: str, dc: int) -> tuple[bool, int]:
     roll_result = roll("1d20")
     modifier = character.stats.modifier(stat)
@@ -430,30 +446,38 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
         else:
             return {"type": "ERROR", "message": "MOVE 需要 target、direction、target_position 或 delta"}
 
-        # Clamp to movement budget along the requested direction
+        # Clamp to movement budget, accounting for destination terrain cost.
+        # Difficult / dangerous terrain doubles the effective movement spent.
         delta_vec = new_pos - old_pos
-        dist = delta_vec.length()
-        if dist > MOVE_BUDGET_M + 1e-6:
-            new_pos = old_pos + delta_vec.normalized() * MOVE_BUDGET_M
-            dist = MOVE_BUDGET_M
+        phys_dist = delta_vec.length()
+        mult = battlefield.terrain_multiplier(new_pos) if battlefield is not None else 1.0
+        if mult == float("inf"):
+            # Endpoint is BLOCKED — caller picked a wall as destination.
+            return {"type": "ERROR",
+                    "message": f"目的座標 ({new_pos.x:.1f}, {new_pos.y:.1f}) 被障礙物佔據"}
+        effective_cost = phys_dist * mult
+        if effective_cost > MOVE_BUDGET_M + 1e-6:
+            # Rescale physical distance so the cost matches the budget.
+            phys_dist = MOVE_BUDGET_M / mult
+            new_pos = old_pos + delta_vec.normalized() * phys_dist
+            mult = battlefield.terrain_multiplier(new_pos) if battlefield is not None else mult
+            effective_cost = phys_dist * mult
 
-        # Battlefield bounds / obstacle gate
-        if battlefield is not None:
-            if not battlefield.in_bounds(new_pos):
-                return {"type": "ERROR",
-                        "message": f"目的座標 ({new_pos.x:.1f}, {new_pos.y:.1f}) 超出戰場邊界"}
-            if battlefield.is_obstacle(new_pos):
-                return {"type": "ERROR",
-                        "message": f"目的座標 ({new_pos.x:.1f}, {new_pos.y:.1f}) 被障礙物佔據"}
+        # Battlefield bounds gate (BLOCKED is already caught above)
+        if battlefield is not None and not battlefield.in_bounds(new_pos):
+            return {"type": "ERROR",
+                    "message": f"目的座標 ({new_pos.x:.1f}, {new_pos.y:.1f}) 超出戰場邊界"}
 
         char.position = new_pos
         return {
-            "type":        "MOVE",
-            "character":   char.name,
-            "from_pos":    old_pos,
-            "to_pos":      new_pos,
-            "distance":    dist,
-            "description": action.get("description", "移動"),
+            "type":              "MOVE",
+            "character":         char.name,
+            "from_pos":          old_pos,
+            "to_pos":            new_pos,
+            "distance":          effective_cost,   # what the movement budget pays
+            "physical_distance": phys_dist,         # actual displacement (for UI)
+            "terrain_mult":      mult,
+            "description":       action.get("description", "移動"),
         }
 
     # ── DODGE ─────────────────────────────────────────────────────────────────
@@ -750,9 +774,12 @@ def format_result(action: dict, result: dict, actor_name: str = "") -> str:
     elif t == "MOVE":
         if "from_pos" in result and "to_pos" in result:
             fp, tp = result['from_pos'], result['to_pos']
+            phys = result.get('physical_distance', result['distance'])
+            mult = result.get('terrain_mult', 1.0)
+            cost_note = f"，地形 ×{mult:.0f}（消耗 {result['distance']:.1f}m）" if mult > 1.0 + 1e-6 else ""
             lines.append(
                 f"移動：{result['description']} "
-                f"(({fp.x:.1f}, {fp.y:.1f})m → ({tp.x:.1f}, {tp.y:.1f})m, 走了 {result['distance']:.1f}m)"
+                f"(({fp.x:.1f}, {fp.y:.1f})m → ({tp.x:.1f}, {tp.y:.1f})m, 走了 {phys:.1f}m{cost_note})"
             )
         else:
             lines.append(f"移動：{result['description']}")
