@@ -2,8 +2,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from .vec2 import Vec2
+
 if TYPE_CHECKING:
     from .items import Weapon, Consumable
+    from .vec2 import Battlefield
 
 
 @dataclass
@@ -41,7 +44,7 @@ class Character:
     is_npc: bool = False
     attitude: int = 2   # 0=敵意 1=戒備 2=中立 3=友好 4=信任（僅 NPC 使用）
     hostile_reaction: str = "attack"   # 敵意時的反應："attack" 開戰 / "flee" 逃跑
-    position: float = 0.0   # 戰鬥中的位置（公尺）：0 = 我方原點、正向 = 敵方那側。戰鬥開始時 reset。
+    position: Vec2 = field(default_factory=Vec2)   # 戰鬥中的 2D 座標（公尺），戰鬥開始時由 setup_combat_positions reset
 
     @property
     def proficiency_bonus(self) -> int:
@@ -138,3 +141,4 @@ class CombatState:
     current_turn_index: int = 0
     round_number: int = 1
     active: bool = True
+    battlefield: "Battlefield | None" = None   # 2D play area; populated by setup_combat_positions

@@ -3,31 +3,63 @@ from dataclasses import dataclass, field
 from .dice import roll, roll_d20, combine_advantage
 from .character import Character, CombatState
 from .world_state import WorldState
+from .vec2 import Vec2, Battlefield
 
 # Movement budget per turn (D&D 5e default speed for medium humanoid = 30 ft ≈ 9 m).
 MOVE_BUDGET_M = 9.0
 
+# Default battlefield: 30m × 30m open space, no obstacles.
+DEFAULT_BATTLEFIELD_W = 30.0
+DEFAULT_BATTLEFIELD_H = 30.0
+
+# Spawn convention (preserves 1D distances from the legacy layout):
+#   - Party at x = PARTY_SPAWN_X, on the midline
+#   - Melee enemies face the party at +1.5m
+#   - Ranged enemies / casters at +6.0m
+# Multiple combatants of the same kind stagger by ±1m in y.
+_PARTY_SPAWN_X = 5.0
+_MELEE_SPAWN_X = 6.5
+_RANGED_SPAWN_X = 11.0
+
+
+def _spawn_offsets(n: int) -> list[float]:
+    """y-axis stagger for n combatants centred on 0.0. e.g. 3 → [-1, 0, 1]."""
+    return [(i - (n - 1) / 2.0) for i in range(n)]
+
 
 def setup_combat_positions(world_state: WorldState, combat: CombatState) -> None:
-    """Place combatants on the 1-axis battlefield at combat start.
+    """Place combatants on the 2D battlefield at combat start.
 
-    Convention:
-      - Party (PCs + follower NPCs): position 0.0
-      - Hostile NPCs that fight only in melee: position 1.5 (in engagement reach)
-      - Hostile NPCs that fight at range (ranged weapon OR spellcaster):
-        position 6.0 (back row, safer; out of melee reach but in AOE-aware range)
+    Creates a default open battlefield on the combat state if one isn't
+    already attached. Party spawns on the left, hostiles on the right;
+    melee at 1.5m engagement distance, ranged at 6m back.
     """
+    if combat.battlefield is None:
+        combat.battlefield = Battlefield(width=DEFAULT_BATTLEFIELD_W,
+                                         height=DEFAULT_BATTLEFIELD_H)
+    mid_y = combat.battlefield.height / 2.0
+
+    party_ids: list[str] = []
+    melee_ids: list[str] = []
+    ranged_ids: list[str] = []
     for cid in combat.initiative_order:
         char = world_state.characters.get(cid)
         if not char:
             continue
         if world_state.is_party_ally(cid):
-            char.position = 0.0
+            party_ids.append(cid)
             continue
-        # Hostile NPC: back row if they have any ranged option (weapon or spells)
         has_ranged = any(w.range_type == "遠程" for w in char.weapons)
         is_caster = bool(char.spells and char.spellcasting_ability)
-        char.position = 6.0 if (has_ranged or is_caster) else 1.5
+        (ranged_ids if (has_ranged or is_caster) else melee_ids).append(cid)
+
+    def place(ids: list[str], x: float) -> None:
+        for cid, dy in zip(ids, _spawn_offsets(len(ids))):
+            world_state.characters[cid].position = Vec2(x, mid_y + dy)
+
+    place(party_ids, _PARTY_SPAWN_X)
+    place(melee_ids, _MELEE_SPAWN_X)
+    place(ranged_ids, _RANGED_SPAWN_X)
 
 
 def roll_initiative(world_state: WorldState,
@@ -51,11 +83,12 @@ def roll_initiative(world_state: WorldState,
 
 
 def distance_m(a: Character, b: Character) -> float:
-    """Absolute 1-axis distance between two combatants, in metres."""
-    return abs(a.position - b.position)
+    """Euclidean distance between two combatants, in metres."""
+    return a.position.distance_to(b.position)
 
 
-def attack_range_check(attacker: Character, target: Character, weapon) -> tuple[bool, str, str]:
+def attack_range_check(attacker: Character, target: Character, weapon,
+                       battlefield: Battlefield | None = None) -> tuple[bool, str, str]:
     """Decide whether `attacker` can hit `target` with `weapon` right now.
 
     Returns (in_range, reason, advantage_mode):
@@ -64,6 +97,8 @@ def attack_range_check(attacker: Character, target: Character, weapon) -> tuple[
       - advantage_mode: "normal" / "disadvantage" — disadvantage applies for:
           ranged attack while in melee (target within 1.5m of attacker)
           long-range ranged shot (between range_normal and range_long)
+    Ranged attacks also require line of sight to the target when a
+    battlefield with obstacles is supplied.
     """
     if weapon is None:
         return False, "未指定武器", "normal"
@@ -78,6 +113,9 @@ def attack_range_check(attacker: Character, target: Character, weapon) -> tuple[
     long_r   = weapon.range_long   or normal_r
     if d > long_r:
         return False, f"目標距離 {d:.1f}m，超出 {weapon.name} 最大射程 {long_r:.0f}m", "normal"
+    if battlefield is not None and not battlefield.has_line_of_sight(
+            attacker.position, target.position):
+        return False, f"視線被遮擋，無法瞄準 {target.name}", "normal"
     # In-melee penalty: any enemy within 1.5m of attacker forces disadvantage on ranged
     if d <= 1.5:
         return True, "", "disadvantage"
@@ -166,8 +204,9 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
 
         weapon = attacker.get_weapon(action.get("weapon", ""))
 
-        # Distance / range gate
-        in_range, reason, range_mode = attack_range_check(attacker, target, weapon)
+        # Distance / range gate (with LoS if a battlefield is set)
+        battlefield = world_state.combat.battlefield if world_state.combat else None
+        in_range, reason, range_mode = attack_range_check(attacker, target, weapon, battlefield)
         if not in_range:
             return {"type": "ERROR", "message": reason}
 
@@ -330,15 +369,18 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
             return {"type": "ERROR", "message": "找不到角色"}
         # Reverse-lookup the canonical char_id so we can determine the actor's side
         char_id = next((cid for cid, c in world_state.characters.items() if c is char), None)
-        old_pos = char.position
+        old_pos: Vec2 = char.position
+        battlefield = world_state.combat.battlefield if world_state.combat else None
 
         # Resolve destination from one of four formats, in priority order:
-        #   1. target (creature_id) — move toward that character, capped at
-        #      their exact position so you never overshoot ("我朝薩滿衝鋒")
-        #   2. direction ("advance"/"retreat") — side-aware, fixed distance
-        #   3. target_position (absolute coordinate)
-        #   4. delta_m (raw axis delta, legacy)
-        new_pos = None
+        #   1. target (creature_id) — move toward that character along the
+        #      shortest line, capped at their exact position so you never
+        #      overshoot ("我朝薩滿衝鋒")
+        #   2. direction ("advance"/"retreat") — toward / away from enemy
+        #      centroid, fixed distance
+        #   3. target_position ([x, y]) — absolute coordinate
+        #   4. delta ([dx, dy]) — raw 2D delta
+        new_pos: Vec2 | None = None
         target_key = action.get("target")
         if target_key:
             target_char = _lookup_char(target_key, world_state)
@@ -346,16 +388,14 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
                 return {"type": "ERROR", "message": f"找不到移動目標：{target_key}"}
             dest = target_char.position
             delta = dest - old_pos
-            if abs(delta) <= MOVE_BUDGET_M + 1e-6:
-                new_pos = dest                 # arrive exactly, no overshoot
+            if delta.length() <= MOVE_BUDGET_M + 1e-6:
+                new_pos = dest
             else:
-                sign = 1 if delta > 0 else -1
-                new_pos = old_pos + sign * MOVE_BUDGET_M
+                new_pos = old_pos + delta.normalized() * MOVE_BUDGET_M
         elif "direction" in action:
             direction = str(action["direction"]).lower()
             distance = abs(float(action.get("distance", MOVE_BUDGET_M)))
             distance = min(distance, MOVE_BUDGET_M)
-            # Determine which way is "toward the enemy" for THIS actor
             actor_in_party = (char_id is not None and world_state.is_party_ally(char_id))
             opponents = []
             for oid, other in world_state.characters.items():
@@ -369,30 +409,43 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
                     if other_in_party:
                         opponents.append(other)
             if opponents:
-                avg_opp = sum(o.position for o in opponents) / len(opponents)
-                toward_sign = 1 if avg_opp > old_pos else (-1 if avg_opp < old_pos else 1)
+                cx = sum(o.position.x for o in opponents) / len(opponents)
+                cy = sum(o.position.y for o in opponents) / len(opponents)
+                toward = (Vec2(cx, cy) - old_pos).normalized()
+                if toward.length() < 1e-9:
+                    toward = Vec2(1.0, 0.0)
             else:
-                toward_sign = 1   # no opponents → default forward = +
+                toward = Vec2(1.0, 0.0)   # no opponents → default forward = +x
             if direction == "advance":
-                sign = toward_sign
+                move_dir = toward
             elif direction == "retreat":
-                sign = -toward_sign
+                move_dir = Vec2(-toward.x, -toward.y)
             else:
                 return {"type": "ERROR", "message": f"未知 MOVE direction：{direction}"}
-            new_pos = old_pos + sign * distance
+            new_pos = old_pos + move_dir * distance
         elif "target_position" in action:
-            new_pos = float(action["target_position"])
-        elif "delta_m" in action:
-            new_pos = old_pos + float(action["delta_m"])
+            new_pos = Vec2.coerce(action["target_position"])
+        elif "delta" in action:
+            new_pos = old_pos + Vec2.coerce(action["delta"])
         else:
-            return {"type": "ERROR", "message": "MOVE 需要 target、direction、target_position 或 delta_m"}
+            return {"type": "ERROR", "message": "MOVE 需要 target、direction、target_position 或 delta"}
 
-        # Enforce movement budget (clamp in the requested direction)
-        dist = abs(new_pos - old_pos)
+        # Clamp to movement budget along the requested direction
+        delta_vec = new_pos - old_pos
+        dist = delta_vec.length()
         if dist > MOVE_BUDGET_M + 1e-6:
-            direction_sign = 1 if new_pos > old_pos else -1
-            new_pos = old_pos + direction_sign * MOVE_BUDGET_M
+            new_pos = old_pos + delta_vec.normalized() * MOVE_BUDGET_M
             dist = MOVE_BUDGET_M
+
+        # Battlefield bounds / obstacle gate
+        if battlefield is not None:
+            if not battlefield.in_bounds(new_pos):
+                return {"type": "ERROR",
+                        "message": f"目的座標 ({new_pos.x:.1f}, {new_pos.y:.1f}) 超出戰場邊界"}
+            if battlefield.is_obstacle(new_pos):
+                return {"type": "ERROR",
+                        "message": f"目的座標 ({new_pos.x:.1f}, {new_pos.y:.1f}) 被障礙物佔據"}
+
         char.position = new_pos
         return {
             "type":        "MOVE",
@@ -469,13 +522,13 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
                         "message": f"{caster.name} 沒有 {slot_level} 環法術位"}
 
         # Resolve AOE center position. Two ways:
-        #   1. target_position: explicit coordinate (lets the caster place AOE
+        #   1. target_position: explicit [x, y] (lets the caster place AOE
         #      between creatures, away from allies, etc.) — takes priority.
         #   2. target: creature id ("self" = caster), AOE centers on that body.
         target_pos_arg = action.get("target_position")
         if target_pos_arg is not None:
-            center_pos = float(target_pos_arg)
-            center_name = f"座標 {center_pos:.1f}m"
+            center_pos = Vec2.coerce(target_pos_arg)
+            center_name = f"座標 ({center_pos.x:.1f}, {center_pos.y:.1f})m"
         else:
             target_key = action.get("target", "")
             if target_key == "self":
@@ -488,11 +541,16 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
                 center_pos = target_char.position
                 center_name = target_char.name
 
-        # Range gate: caster ↔ center
-        dist_to_center = abs(caster.position - center_pos)
+        # Range gate: caster ↔ center (euclidean) + LoS through battlefield obstacles
+        dist_to_center = caster.position.distance_to(center_pos)
         if dist_to_center > spell.range_m:
             return {"type": "ERROR",
                     "message": f"目標距離 {dist_to_center:.1f}m，超出「{spell_name}」射程 {spell.range_m:.0f}m"}
+        battlefield = world_state.combat.battlefield if world_state.combat else None
+        if battlefield is not None and not battlefield.has_line_of_sight(
+                caster.position, center_pos):
+            return {"type": "ERROR",
+                    "message": f"視線被遮擋，無法將「{spell_name}」投至 {center_name}"}
 
         # Save DC = 8 + prof_bonus + spellcasting_ability_modifier
         save_dc = 8 + caster.proficiency_bonus + caster.stats.modifier(caster.spellcasting_ability)
@@ -512,7 +570,7 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
             c = world_state.characters.get(cid)
             if not c or not c.is_alive():
                 continue
-            if abs(c.position - center_pos) <= spell.aoe_radius_m + 1e-6:
+            if c.position.distance_to(center_pos) <= spell.aoe_radius_m + 1e-6:
                 affected_ids.append(cid)
 
         # Roll saves, apply damage
@@ -647,9 +705,10 @@ def format_result(player_description: str, result: dict, actor_name: str = "") -
 
     elif t == "MOVE":
         if "from_pos" in result and "to_pos" in result:
+            fp, tp = result['from_pos'], result['to_pos']
             lines.append(
                 f"移動：{result['description']} "
-                f"({result['from_pos']:.1f}m → {result['to_pos']:.1f}m, 走了 {result['distance']:.1f}m)"
+                f"(({fp.x:.1f}, {fp.y:.1f})m → ({tp.x:.1f}, {tp.y:.1f})m, 走了 {result['distance']:.1f}m)"
             )
         else:
             lines.append(f"移動：{result['description']}")
@@ -679,10 +738,10 @@ class CombatContext:
     """
     round_num: int
     actor_id: str
-    actor_position: float
+    actor_position: Vec2
     weapons_str: str         # "長劍（近戰 1.5m）、短弓（遠程 24m / 最大 96m）"
-    allies_str: str          # "凱恩 HP 22/22，座標 0.0m（距離你 0.0m）"
-    enemies_str: str         # "哥布林 HP 7/7，座標 1.5m（距離你 1.5m）"
+    allies_str: str          # "凱恩 HP 22/22，座標 (5.0, 15.0)m（距離你 0.0m）"
+    enemies_str: str         # "哥布林 HP 7/7，座標 (6.5, 15.0)m（距離你 1.5m）"
     spells_str: str = ""     # "火球術（3 環，剩餘 1 個 3 環法術位）" — empty for non-casters
     enemies: dict = field(default_factory=dict)   # {cid: name} — alive valid attack targets
     allies: dict = field(default_factory=dict)    # {cid: name} — alive non-self friendlies in room
@@ -734,9 +793,10 @@ def _weapons_str(char) -> str:
 
 
 def _entry_for(other, viewer) -> str:
-    d = abs(other.position - viewer.position)
+    d = other.position.distance_to(viewer.position)
     dodging = "（閃避中）" if other.has_status("dodging") else ""
-    return f"{other.name} HP {other.hp}/{other.max_hp}，座標 {other.position:.1f}m（距離你 {d:.1f}m）{dodging}"
+    p = other.position
+    return f"{other.name} HP {other.hp}/{other.max_hp}，座標 ({p.x:.1f}, {p.y:.1f})m（距離你 {d:.1f}m）{dodging}"
 
 
 def build_combat_context(actor_id: str, actor, world_state,
