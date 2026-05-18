@@ -1,3 +1,4 @@
+import re as _re
 from dataclasses import dataclass, field
 
 from .dice import roll, roll_d20, combine_advantage
@@ -7,6 +8,33 @@ from .vec2 import Vec2, Battlefield
 
 # Movement budget per turn (D&D 5e default speed for medium humanoid = 30 ft ≈ 9 m).
 MOVE_BUDGET_M = 9.0
+
+
+def _roll_scaled_cantrip(dice_str: str, caster_level: int) -> int:
+    """Roll cantrip damage with 5e level-based scaling.
+
+    Calls roll('1dN') once per die so that mock side_effect sequences work
+    correctly in tests (each individual die roll consumes one mock value).
+
+    '1d8' at L1-4 → 1 call; at L5-10 → 2 calls; at L11-16 → 3 calls;
+    at L17+ → 4 calls.  Any +N modifier on the base dice string is added once.
+    """
+    multiplier = 1
+    if caster_level >= 17:
+        multiplier = 4
+    elif caster_level >= 11:
+        multiplier = 3
+    elif caster_level >= 5:
+        multiplier = 2
+    m = _re.match(r'^(\d+)(d\d+)([+-]\d+)?$', dice_str)
+    if not m:
+        # Unrecognised notation — fall back to a single roll() call.
+        return roll(dice_str)
+    base_count = int(m.group(1))
+    die = m.group(2)          # e.g. "d8"
+    modifier = int(m.group(3)) if m.group(3) else 0
+    total = sum(roll(f"1{die}") for _ in range(base_count * multiplier))
+    return total + modifier
 
 # Default battlefield: 30m × 30m open space, no obstacles.
 DEFAULT_BATTLEFIELD_W = 30.0
@@ -1233,7 +1261,14 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
             success, save_roll = make_saving_throw(
                 target, spell.save_ability, save_dc, breakdown=save_bd,
             )
-            full_dmg = roll(spell.damage_dice) if spell.damage_dice else 0
+            if spell.damage_dice:
+                full_dmg = (
+                    _roll_scaled_cantrip(spell.damage_dice, caster.level)
+                    if spell.level == 0
+                    else roll(spell.damage_dice)
+                )
+            else:
+                full_dmg = 0
             if success:
                 actual_dmg = 0 if spell.save_for_no_damage else full_dmg // 2
             else:

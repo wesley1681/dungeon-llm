@@ -172,3 +172,53 @@ def test_crit_range_default_is_20():
     c = Character(name="x", race="", class_="", level=1,
                   stats=Stats(), hp=10, max_hp=10, ac=10)
     assert c.crit_range == 20
+
+
+def _cantrip_world(caster_level: int):
+    from trpg.engine.character import CombatState
+    caster = Character(
+        name="C", race="", class_="牧師", level=caster_level,
+        stats=Stats(INT=14), hp=20, max_hp=20, ac=12, is_npc=False,
+        spells=["神聖光輝"], spellcasting_ability="INT", spell_slots={},
+    )
+    target = Character(
+        name="T", race="", class_="", level=1,
+        stats=Stats(DEX=4), hp=50, max_hp=50, ac=10,
+        is_npc=True, attitude=0,
+    )
+    caster.position = Vec2(0, 0)
+    target.position = Vec2(1, 0)
+    ws = WorldState(characters={"c": caster, "t": target}, scene="", dungeon_map=None)
+    ws.party_ids = ["c"]
+    ws.combat = CombatState(initiative_order=["c", "t"])
+    return ws, caster, target
+
+
+def test_cantrip_uses_1d8_at_level_3():
+    ws, caster, target = _cantrip_world(caster_level=3)
+    # roll side_effect: save d20 roll (1 → fail), then 1 damage die
+    with patch("trpg.engine.combat.roll", side_effect=[1, 8]):
+        res = execute_action(
+            {"type": "SPELL", "caster": "c", "spell_name": "神聖光輝", "target": "t"}, ws
+        )
+    assert res["target_results"][0]["damage"] == 8
+
+
+def test_cantrip_uses_2d8_at_level_5():
+    ws, caster, target = _cantrip_world(caster_level=5)
+    # save d20 (1 → fail), then 2 damage dice each returning 4 = 8 total
+    with patch("trpg.engine.combat.roll", side_effect=[1, 4, 4]):
+        res = execute_action(
+            {"type": "SPELL", "caster": "c", "spell_name": "神聖光輝", "target": "t"}, ws
+        )
+    assert res["target_results"][0]["damage"] == 8
+
+
+def test_cantrip_uses_3d8_at_level_11():
+    ws, caster, target = _cantrip_world(caster_level=11)
+    # save d20 (1 → fail), then 3 dice each returning 3 = 9 total
+    with patch("trpg.engine.combat.roll", side_effect=[1, 3, 3, 3]):
+        res = execute_action(
+            {"type": "SPELL", "caster": "c", "spell_name": "神聖光輝", "target": "t"}, ws
+        )
+    assert res["target_results"][0]["damage"] == 9
