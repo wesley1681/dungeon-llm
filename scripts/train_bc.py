@@ -1,0 +1,96 @@
+"""BC training script.
+
+Usage:
+    python scripts/train_bc.py [--episodes N] [--epochs N] [--out PATH]
+"""
+from __future__ import annotations
+import sys, os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import argparse
+import time
+from pathlib import Path
+
+import numpy as np
+import torch
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--episodes", type=int, default=50,
+                        help="每個 archetype 的 episode 數（調小 CPU 不忙）")
+    parser.add_argument("--epochs",   type=int, default=20)
+    parser.add_argument("--batch",    type=int, default=128)
+    parser.add_argument("--lr",       type=float, default=3e-4)
+    parser.add_argument("--out",      type=str, default="models/bc_v1.pt")
+    parser.add_argument("--seed",     type=int, default=0)
+    args = parser.parse_args()
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"Device: {device}")
+    out_path = Path(args.out)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # ── Phase 1: 資料收集 ─────────────────────────────────────────────────────
+    from trpg.rl.bc_collect import collect_bc_dataset
+    from trpg.rl.env_v2 import ARCHETYPE_LIST
+
+    print(f"\n== 資料收集：{len(ARCHETYPE_LIST)} 個 archetype × {args.episodes} episode ==")
+    t0 = time.time()
+    ds = collect_bc_dataset(n_episodes_per_arch=args.episodes, seed=args.seed)
+    n_pairs = ds["actions"].shape[0]
+    elapsed = time.time() - t0
+    print(f"   收集了 {n_pairs:,} 筆 (obs, action)，耗時 {elapsed:.1f}s")
+
+    action_dist = np.bincount(ds["actions"][:, 0], minlength=20)
+    print(f"   技能使用分布 (top 5): {sorted(enumerate(action_dist), key=lambda x: -x[1])[:5]}")
+
+    # ── Phase 2: BC 訓練 ──────────────────────────────────────────────────────
+    from trpg.rl.train_bc import train_bc
+
+    print(f"\n== BC 訓練：{args.epochs} epochs, batch={args.batch}, lr={args.lr} ==")
+    hist = train_bc(
+        ds,
+        epochs=args.epochs,
+        batch_size=args.batch,
+        lr=args.lr,
+        device=device,
+        save_path=str(out_path),
+    )
+    losses = hist["losses"]
+    print(f"   Loss: {losses[0]:.3f} → {losses[-1]:.3f}")
+    if losses[-1] < losses[0]:
+        print("   OK Loss 下降，訓練正常")
+    else:
+        print("   NG Loss 沒有下降，請檢查資料或學習率")
+
+    # ── Phase 3: 評估 ─────────────────────────────────────────────────────────
+    from trpg.rl.env_v2 import CombatEnvV2
+    from trpg.rl.model import CombatPolicyNet
+
+    print("\n== 評估：20 episode vs 隨機對手 ==")
+    net = hist["model"]
+    net.to(device).eval()
+    env = CombatEnvV2(seed=99999)
+    wins = 0
+    n_eval = 20
+    for ep in range(n_eval):
+        obs, _ = env.reset()
+        done = False
+        while not done:
+            obs_t = {k: torch.from_numpy(v).unsqueeze(0).to(device) for k, v in obs.items()}
+            with torch.no_grad():
+                s, e, g = net(obs_t)
+            from trpg.rl.model import apply_resource_mask
+            s = apply_resource_mask(s, env.resources)
+            action = [int(s[0].argmax(-1)), int(e.argmax(-1)), int(g.argmax(-1))]
+            obs, _, term, trunc, _ = env.step(action)
+            done = term or trunc
+        if env.ws.characters["agent"].is_alive():
+            wins += 1
+    win_rate = wins / n_eval
+    print(f"   Win rate: {win_rate:.0%}  ({wins}/{n_eval})")
+    print(f"\nModel 存到: {out_path}")
+
+
+if __name__ == "__main__":
+    main()

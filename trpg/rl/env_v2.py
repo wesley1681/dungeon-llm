@@ -119,6 +119,10 @@ class CombatEnvV2:
             result = execute_action(action_dict, self.ws)
             if result.get("type") != "ERROR":
                 consume_resources(self.resources, action_dict, result)
+            else:
+                # Invalid action: consume whatever resource it claimed to use
+                # so the turn can progress rather than looping forever.
+                consume_resources(self.resources, action_dict, result)
 
         turn_done = (
             action_dict is None
