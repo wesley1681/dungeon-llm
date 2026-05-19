@@ -16,7 +16,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from .env_v2 import CombatEnvV2
+from .env_v2 import CombatEnvV2, _AGENT_ID
 from .model import CombatPolicyNet, apply_resource_mask, apply_entity_mask
 
 

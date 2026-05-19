@@ -2,6 +2,7 @@ import numpy as np
 import torch
 from trpg.rl.train_bc import train_bc, bc_loss_step
 from trpg.rl.model import CombatPolicyNet
+from trpg.rl.obs import ENTITY_DIM
 
 
 def test_bc_loss_step_returns_scalar():
@@ -11,7 +12,7 @@ def test_bc_loss_step_returns_scalar():
     obs = {
         "skills":     torch.randn(4, 20, 53),
         "skill_mask": torch.ones(4, 20),
-        "entities":   torch.randn(4, 6, 8),
+        "entities":   torch.randn(4, 6, ENTITY_DIM),
         "resources":  torch.randn(4, 4),
         "terrain":    torch.randn(4, 20, 20),
     }
@@ -26,7 +27,7 @@ def test_train_bc_returns_history():
     obs_batch = {
         "skills":     np.zeros((10, 20, 53), dtype=np.float32),
         "skill_mask": np.ones((10, 20), dtype=np.float32),
-        "entities":   np.zeros((10, 6, 8), dtype=np.float32),
+        "entities":   np.zeros((10, 6, ENTITY_DIM), dtype=np.float32),
         "resources":  np.zeros((10, 4), dtype=np.float32),
         "terrain":    np.zeros((10, 20, 20), dtype=np.float32),
     }

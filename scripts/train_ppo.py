@@ -50,7 +50,8 @@ def evaluate(net, n_episodes=100, device="cuda"):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model",   type=str, default="models/bc_v1.pt",
-                        help="BC checkpoint to warm-start from")
+                        help="BC checkpoint to warm-start from, "
+                             "or 'scratch' for random init")
     parser.add_argument("--updates", type=int, default=100,
                         help="PPO update iterations")
     parser.add_argument("--steps",   type=int, default=1024,
@@ -69,10 +70,12 @@ def main():
     parser.add_argument("--out_dir", type=str, default="models")
     parser.add_argument("--eval_every", type=int, default=10)
     parser.add_argument("--self_play", action="store_true",
-                        help="after curriculum, train against a frozen snapshot "
-                             "of the current model instead of expert ArchetypePolicy")
+                        help="train against a pool of past snapshots instead of "
+                             "expert ArchetypePolicy")
     parser.add_argument("--snapshot_every", type=int, default=10,
-                        help="refresh self-play opponent snapshot every N updates")
+                        help="add a new snapshot to the opponent pool every N updates")
+    parser.add_argument("--pool_size",     type=int, default=10,
+                        help="max snapshots in the opponent pool (oldest dropped)")
     args = parser.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -80,8 +83,11 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
 
     net = CombatPolicyNet().to(device)
-    net.load_state_dict(torch.load(args.model, map_location=device))
-    print(f"Loaded: {args.model}  device={device}")
+    if args.model.lower() in ("scratch", "none", ""):
+        print(f"Random init (no warm-start)  device={device}")
+    else:
+        net.load_state_dict(torch.load(args.model, map_location=device))
+        print(f"Loaded: {args.model}  device={device}")
 
     optim = torch.optim.Adam(net.parameters(), lr=args.lr)
     saved = set()
@@ -97,29 +103,37 @@ def main():
     # the "best" checkpoint reflects a real improvement, not a lucky eval.
     best_margin = 0.03
 
-    # Self-play opponent — frozen snapshot, refreshed every snapshot_every updates
-    opponent_net = None
+    # Opponent pool — list of frozen snapshots, sampled per rollout.
+    opponent_pool: list = []
     if args.self_play:
         from copy import deepcopy
-        opponent_net = deepcopy(net).to("cpu").eval()
-        print(f"  [self-play] initial opponent snapshot frozen "
-              f"(refresh every {args.snapshot_every} updates)")
+        opponent_pool.append(deepcopy(net).to("cpu").eval())
+        print(f"  [pool] initial snapshot added  "
+              f"(pool size limit {args.pool_size}, add every {args.snapshot_every} updates)")
+
+    import random as _py_random
+    rng = _py_random.Random(0)
 
     for update in range(1, args.updates + 1):
         use_heuristic = (update <= args.curriculum)
         # Once past curriculum, choose between expert ArchetypePolicy (default)
         # or self-play. Heuristic curriculum still uses HeuristicCombatPolicy.
         if update == args.curriculum + 1:
-            mode = "self-play" if args.self_play else "expert opponents"
+            mode = "pool self-play" if args.self_play else "expert opponents"
             print(f"  [curriculum] switching to {mode} at update {update}")
-        # Refresh self-play snapshot at the start of each interval
+        # Add a new snapshot every snapshot_every updates (after curriculum)
         if (args.self_play and update > args.curriculum
-                and (update - args.curriculum - 1) % args.snapshot_every == 0):
+                and (update - args.curriculum - 1) % args.snapshot_every == 0
+                and update > args.curriculum + 1):
             from copy import deepcopy
-            opponent_net = deepcopy(net).to("cpu").eval()
-            print(f"  [self-play] opponent snapshot refreshed at update {update}")
-        active_opponent = (opponent_net if (args.self_play and not use_heuristic)
-                           else None)
+            opponent_pool.append(deepcopy(net).to("cpu").eval())
+            while len(opponent_pool) > args.pool_size:
+                opponent_pool.pop(0)
+            print(f"  [pool] snapshot added at update {update}  "
+                  f"(pool size {len(opponent_pool)})")
+        active_opponent = None
+        if args.self_play and not use_heuristic and opponent_pool:
+            active_opponent = rng.choice(opponent_pool)
         batch = collect_ppo_rollout(net, n_steps=args.steps,
                                     n_envs=args.n_envs,
                                     seed=update, device=device,

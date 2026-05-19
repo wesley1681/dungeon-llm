@@ -138,13 +138,6 @@ class CombatEnvV2:
 
         agent = self.ws.characters[_AGENT_ID]
         opp = self.ws.characters[_OPPONENT_ID]
-        prev_agent_hp = agent.hp
-        prev_opp_hp = opp.hp
-        # Snapshot pre-action resources — `_compute_reward` needs to know
-        # whether the agent ended the turn voluntarily with resources still
-        # available, but the resource dict is reset to full at the end of step
-        # before reward is computed.
-        pre_resources = dict(self.resources)
 
         # Snapshot the skill list BEFORE executing — execute_action may mutate
         # state (e.g. drain lay_on_hands_pool) and change which skills are
@@ -205,12 +198,17 @@ class CombatEnvV2:
                 tick_status_effects(agent, "self_turn_start", self.ws.combat.round_number)
                 tick_terrain_damage(agent, self.ws.combat.battlefield)
 
-        reward = self._compute_reward(prev_agent_hp, prev_opp_hp,
-                                       action_dict, result, pre_resources)
+        # Pure terminal reward — no per-step shaping.
+        # Decisive outcomes only: +5 win, -5 loss, -2 if we ran out the clock
+        # (cheaper than losing but worse than winning, so the model still wants
+        # to actually finish the fight rather than stall).
+        reward = 0.0
         terminated = (not agent.is_alive()) or (not opp.is_alive())
         if terminated:
-            reward += 5.0 if not opp.is_alive() else -5.0
+            reward = 5.0 if not opp.is_alive() else -5.0
         truncated = self._step_count >= _MAX_AGENT_STEPS_PER_EPISODE
+        if truncated and not terminated:
+            reward = -2.0
 
         return (build_obs(self.ws, _AGENT_ID, self.resources),
                 float(reward), terminated, truncated,
@@ -252,30 +250,3 @@ class CombatEnvV2:
                 tick_status_effects(c, "round_end", cs.round_number)
         cs.round_number += 1
 
-    def _compute_reward(self, prev_agent_hp: int, prev_opp_hp: int,
-                        action_dict: dict | None, result: dict | None,
-                        pre_resources: dict) -> float:
-        agent = self.ws.characters[_AGENT_ID]
-        opp = self.ws.characters[_OPPONENT_ID]
-        dmg_dealt = max(0, prev_opp_hp - opp.hp)
-        dmg_taken = max(0, prev_agent_hp - agent.hp)
-        reward = dmg_dealt / max(1, opp.max_hp) - dmg_taken / max(1, agent.max_hp)
-        reward -= 0.01
-
-        if result is not None and action_dict is not None:
-            t = action_dict.get("type", "")
-            if t != "MOVE":
-                reward += 0.05   # bonus per valid non-trivial action
-        elif action_dict is None:
-            # Voluntary end-turn while action / bonus_action still available is
-            # a waste — PPO can collapse to always-end as a zero-variance
-            # strategy. Strong negative signal pulls it back out.
-            if pre_resources.get("action", 0) > 0 or pre_resources.get("bonus_action", 0) > 0:
-                reward -= 1.0
-
-        # Distance-closing bonus: reward approaching enemy while alive
-        if opp.is_alive() and agent.is_alive():
-            dist = agent.position.distance_to(opp.position)
-            if dist <= 1.5:
-                reward += 0.05   # being in melee range is good
-        return reward

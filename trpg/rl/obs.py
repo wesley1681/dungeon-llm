@@ -12,13 +12,21 @@ from ..engine.skill import available_skills, SKILL_FEATURE_DIM, STATUS_SLOTS
 from ..engine.combat import MOVE_BUDGET_M
 from ..engine.status import MODIFIER_CLASSES
 from ..engine.vec2 import Battlefield, TerrainType, Vec2
+from ..scenarios.archetypes import ARCHETYPE_FACTORIES
 
 
 # ── Schema constants ─────────────────────────────────────────────────────────
 
 N_SKILL_SLOTS = 20            # max skills per turn (pad with zeros)
 N_ENTITY_SLOTS = 6            # self + 2 allies + 3 enemies
-ENTITY_DIM = 8                # per-entity feature width
+# Stable archetype ordering for the per-entity one-hot. Multi-hot in shape so a
+# future multiclass character (paladin/sorcerer) can light up multiple bits;
+# single-class characters just have one bit set. Sorted alphabetically so the
+# mapping is deterministic across Python versions / dict orderings.
+ARCHETYPE_OBS_LIST: tuple[str, ...] = tuple(sorted(ARCHETYPE_FACTORIES.keys()))
+N_ARCHETYPES = len(ARCHETYPE_OBS_LIST)   # 12
+
+ENTITY_DIM = 8 + N_ARCHETYPES + 1   # 21: base + archetype multi-hot + is_concentrating
 N_GRID = 20                   # battlefield grid resolution
 BATTLEFIELD_SIZE_M = 30.0     # matches Battlefield default
 GRID_CELL_SIZE_M = BATTLEFIELD_SIZE_M / N_GRID    # 1.5m
@@ -127,12 +135,15 @@ def _entity_row(char: Character, self_char: Character,
     bf_size_x / bf_size_y are the battlefield dimensions used to normalise
     coordinates to [0, 1]. Distance is normalised by the diagonal so that
     the max possible distance maps to 1.0.
+
+    Layout (ENTITY_DIM = 8 + N_ARCHETYPES + 1):
+        [0..7]  base features
+        [8..8+N_ARCHETYPES-1]  archetype multi-hot (D&D-fair: visible from look)
+        [-1]    is_concentrating (D&D-fair: DM normally tells players)
     """
-    # Use Character.has_status() so legacy bare-string status entries
-    # (kept around by has_status's `fx == name` fallback) are honoured.
     has_debuff = any(char.has_status(name) for name in _DEBUFF_NAMES)
     bf_diag = (bf_size_x ** 2 + bf_size_y ** 2) ** 0.5 or 1.0
-    return np.array([
+    base = np.array([
         char.hp / max(1, char.max_hp),
         char.position.x / bf_size_x if bf_size_x else 0.0,
         char.position.y / bf_size_y if bf_size_y else 0.0,
@@ -142,6 +153,21 @@ def _entity_row(char: Character, self_char: Character,
         1.0 if is_self else 0.0,
         1.0 if has_debuff else 0.0,
     ], dtype=np.float32)
+
+    # Archetype multi-hot. Multi-hot rather than one-hot so a hypothetical
+    # multiclass character (e.g. paladin/sorcerer) can set both bits.
+    arch_oh = np.zeros(N_ARCHETYPES, dtype=np.float32)
+    arch_id = getattr(char, "archetype_id", "") or ""
+    # Accept "vengeance,sorcerer" comma-separated form for future multiclass —
+    # split and light each component that we recognise.
+    for part in arch_id.split(","):
+        part = part.strip()
+        if part in ARCHETYPE_OBS_LIST:
+            arch_oh[ARCHETYPE_OBS_LIST.index(part)] = 1.0
+
+    is_concentrating = np.array([1.0 if char.concentrating_on else 0.0],
+                                 dtype=np.float32)
+    return np.concatenate([base, arch_oh, is_concentrating])
 
 
 def entities_obs(ws: WorldState, agent_id: str) -> np.ndarray:
