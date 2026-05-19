@@ -23,7 +23,7 @@ from trpg.rl.env_v2 import CombatEnvV2
 CHECKPOINT_THRESHOLDS = {"low": 0.40, "mid": 0.55, "boss": 0.70}
 
 
-def evaluate(net, n_episodes=50, device="cuda"):
+def evaluate(net, n_episodes=100, device="cuda"):
     net.to(device).eval()
     env = CombatEnvV2(seed=88888)
     wins = 0
@@ -81,13 +81,16 @@ def main():
     optim = torch.optim.Adam(net.parameters(), lr=args.lr)
     saved = set()
 
-    # Initial eval
-    wr = evaluate(net, n_episodes=50, device=device)
+    # Initial eval — 100 episodes (std ≈ 5%, vs 7% at 50 eps)
+    wr = evaluate(net, n_episodes=100, device=device)
     print(f"\nStart win-rate: {wr:.0%}")
     best_wr = wr
     best_path = out_dir / "ppo_best.pt"
     torch.save(net.state_dict(), str(best_path))
     print(f"  => baseline saved as best: {best_path} ({wr:.0%})")
+    # Required margin to overwrite best — 3% guards against sample noise so
+    # the "best" checkpoint reflects a real improvement, not a lucky eval.
+    best_margin = 0.03
 
     for update in range(1, args.updates + 1):
         use_heuristic = (update <= args.curriculum)
@@ -108,10 +111,10 @@ def main():
               f"entropy={info['entropy']:.3f}")
 
         if update % args.eval_every == 0:
-            wr = evaluate(net, n_episodes=50, device=device)
+            wr = evaluate(net, n_episodes=100, device=device)
             print(f"  => win-rate: {wr:.0%}  (best so far: {best_wr:.0%})")
 
-            if wr > best_wr:
+            if wr >= best_wr + best_margin:
                 best_wr = wr
                 torch.save(net.state_dict(), str(best_path))
                 print(f"  => NEW BEST: {best_path} ({wr:.0%})")
