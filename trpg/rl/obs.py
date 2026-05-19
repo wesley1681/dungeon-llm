@@ -164,3 +164,20 @@ def entities_obs(ws: WorldState, agent_id: str) -> np.ndarray:
         out[3 + i] = _entity_row(enemy, self_char, bf_size_x, bf_size_y,
                                   is_self=False, is_enemy=True)
     return out
+
+
+def skills_obs(ws: WorldState, agent_id: str) -> tuple[np.ndarray, np.ndarray]:
+    """Build (skills_matrix, skill_mask).
+
+    skills_matrix : float32[N_SKILL_SLOTS, SKILL_FEATURE_DIM]
+    skill_mask    : float32[N_SKILL_SLOTS]    1=valid, 0=padding
+    """
+    agent = ws.characters[agent_id]
+    skills = available_skills(agent, ws)
+    skill_mat = np.zeros((N_SKILL_SLOTS, SKILL_FEATURE_DIM), dtype=np.float32)
+    mask = np.zeros(N_SKILL_SLOTS, dtype=np.float32)
+
+    for i, sk in enumerate(skills[:N_SKILL_SLOTS]):
+        skill_mat[i] = np.asarray(sk.features.as_vector(), dtype=np.float32)
+        mask[i] = 1.0
+    return skill_mat, mask

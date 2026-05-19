@@ -4,6 +4,7 @@ import numpy as np
 from trpg.engine.character import Character, Stats
 from trpg.engine.combat import setup_combat_positions
 from trpg.engine.items import WEAPON_DEFS
+from trpg.engine.skill import SKILL_FEATURE_DIM
 from trpg.engine.status import Paralyzed
 from trpg.engine.vec2 import Battlefield, TerrainType, Vec2
 from trpg.engine.world_state import CombatState, WorldState
@@ -16,6 +17,7 @@ from trpg.rl.obs import (
     N_SKILL_SLOTS,
     OBS_KEYS,
     entities_obs,
+    skills_obs,
     terrain_obs,
 )
 
@@ -164,3 +166,26 @@ def test_entities_obs_dead_chars_excluded():
     obs = entities_obs(ws, "a")
     # slot 3 (enemy_1) should be all zeros since b is dead
     assert np.all(obs[3] == 0.0)
+
+
+def test_skills_obs_shapes():
+    ws = _build_1v1_world()
+    skills, mask = skills_obs(ws, "a")
+    assert skills.shape == (N_SKILL_SLOTS, SKILL_FEATURE_DIM)
+    assert mask.shape == (N_SKILL_SLOTS,)
+    assert skills.dtype == np.float32
+    assert mask.dtype == np.float32
+
+
+def test_skills_obs_mask_marks_valid_slots():
+    ws = _build_1v1_world()
+    skills, mask = skills_obs(ws, "a")
+    # Agent is L3 fighter, should have several skills (end, move, weapon, dodge, hide)
+    n_valid = int(mask.sum())
+    assert n_valid >= 4
+    # mask[0] = end skill (always present)
+    assert mask[0] == 1.0
+    # padding slots have all-zero features
+    if n_valid < N_SKILL_SLOTS:
+        assert np.all(skills[n_valid:] == 0.0)
+        assert np.all(mask[n_valid:] == 0.0)
