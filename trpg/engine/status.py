@@ -261,6 +261,27 @@ class SacredWeaponBuff(StatusEffect):
         return total + 3
 
 
+class ShieldOfFaith(StatusEffect):
+    """Shield of Faith spell (L1 concentration). Target gains +2 AC for 10 minutes
+    while the caster maintains concentration."""
+    def __init__(self, applied_round: int = 0, source_id: str = ""):
+        super().__init__(name="shield_of_faith", expires_on="never",
+                         rounds_remaining=100,    # ~10 min in 6-second rounds
+                         applied_round=applied_round, source_id=source_id)
+    def on_compute_ac(self, char, current_ac: int) -> int:
+        return current_ac + 2
+
+
+class VowTarget(StatusEffect):
+    """Vow of Enmity target. The paladin (source_id) attacks this creature with
+    advantage. Handled in _resolve_single_attack (no hook here — needs
+    attacker identity from world_state)."""
+    def __init__(self, applied_round: int = 0, source_id: str = ""):
+        super().__init__(name="vow_target", expires_on="never",
+                         rounds_remaining=10, applied_round=applied_round,
+                         source_id=source_id)
+
+
 # ── Registry ─────────────────────────────────────────────────────────────────
 # Looked up by APPLY_MOD action handler. Append-only when adding new buff /
 # debuff statuses that need to be applied through the generic action.
@@ -284,6 +305,8 @@ MODIFIER_CLASSES: dict[str, type] = {
     "blurred":            Blurred,
     "baned":              Baned,
     "sacred_weapon_buff": SacredWeaponBuff,
+    "shield_of_faith":    ShieldOfFaith,
+    "vow_target":         VowTarget,
 }
 
 # Statuses that exist only for the duration of one combat — buffs/debuffs the
@@ -296,6 +319,7 @@ COMBAT_ONLY_STATUSES: frozenset[str] = frozenset({
     "prone", "paralyzed", "stunned", "poisoned", "restrained",
     "frightened", "charmed", "disengaging", "evasion", "hunters_mark",
     "blurred", "baned", "sacred_weapon_buff",
+    "shield_of_faith", "vow_target",
 })
 
 

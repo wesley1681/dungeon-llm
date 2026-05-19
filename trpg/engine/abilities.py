@@ -1194,7 +1194,7 @@ _register(ClassAbility(
     refresh_on="never", max_uses=0,
     builder=lambda actor, target, coord, char=None: {
         "type": "APPLY_MOD", "caster": actor,
-        "modifier": "shielded", "spell_name": "信仰護盾",
+        "modifier": "shield_of_faith", "spell_name": "信仰護盾",
         "targets": [target], "max_targets": 1, "range_m": 18.0,
         "slot_level": 1, "requires_concentration": True,
         "consumes": ["bonus_action"],
@@ -1320,8 +1320,8 @@ _register(ClassAbility(
     refresh_on="short_rest", max_uses=1,
     builder=lambda actor, target, coord, char=None: {
         "type": "APPLY_MOD", "caster": actor,
-        "modifier": "reckless", "spell_name": "仇敵誓言",
-        "targets": [actor], "max_targets": 1, "range_m": 0.0,
+        "modifier": "vow_target", "spell_name": "仇敵誓言",
+        "targets": [target], "max_targets": 1, "range_m": 18.0,
         "consumes": ["bonus_action"],
     },
 ))

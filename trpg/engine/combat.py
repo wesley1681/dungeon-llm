@@ -679,6 +679,14 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
             round_num = world_state.combat.round_number if world_state.combat else 0
             attacker.add_status(Reckless(applied_round=round_num))
 
+        # Vow of Enmity: paladin who declared the vow attacks marked target with advantage.
+        from .status import StatusEffect as _SE_VOW
+        for fx in target.status_effects:
+            if (isinstance(fx, _SE_VOW) and fx.name == "vow_target"
+                    and fx.source_id == attacker_id):
+                mode = combine_advantage(mode, "advantage")
+                break
+
         n_attacks = attacker.attacks_per_action
         attack_results = []
         for _ in range(n_attacks):
@@ -927,8 +935,13 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
         except TypeError:
             sample = mod_cls(applied_round=round_num)
         target_names = []
+        caster_id = action.get("caster", "")
         for target in targets:
-            target.add_status(sample.__class__(applied_round=round_num))
+            try:
+                fx = sample.__class__(applied_round=round_num, source_id=caster_id)
+            except TypeError:
+                fx = sample.__class__(applied_round=round_num)
+            target.add_status(fx)
             target_names.append(target.name)
 
         if slot_level > 0:
