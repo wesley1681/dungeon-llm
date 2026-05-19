@@ -50,3 +50,64 @@ def terrain_obs(battlefield: Battlefield) -> np.ndarray:
             elif t == TerrainType.DIFFICULT:
                 grid[ix, iy] = 0.5
     return grid
+
+
+_DEBUFF_NAMES = frozenset({"paralyzed", "restrained", "stunned", "poisoned",
+                            "frightened", "charmed", "prone", "blinded"})
+
+
+def _entity_row(char: Character, self_char: Character, bf_size: float,
+                is_self: bool, is_enemy: bool) -> np.ndarray:
+    """Build one entity row for the entities observation."""
+    has_debuff = any(
+        getattr(fx, "name", None) in _DEBUFF_NAMES
+        for fx in char.status_effects
+    )
+    return np.array([
+        char.hp / max(1, char.max_hp),
+        char.position.x / bf_size,
+        char.position.y / bf_size,
+        self_char.position.distance_to(char.position) / bf_size,
+        1.0 if is_enemy else 0.0,
+        1.0 if char.is_alive() else 0.0,
+        1.0 if is_self else 0.0,
+        1.0 if has_debuff else 0.0,
+    ], dtype=np.float32)
+
+
+def entities_obs(ws: WorldState, agent_id: str) -> np.ndarray:
+    """Build the entities observation matrix.
+
+    Row order: [self, ally_1, ally_2, enemy_1, enemy_2, enemy_3].
+    Enemies sorted by distance to self ascending. Missing rows are zero.
+    """
+    self_char = ws.characters[agent_id]
+    bf_size = BATTLEFIELD_SIZE_M
+    out = np.zeros((N_ENTITY_SLOTS, ENTITY_DIM), dtype=np.float32)
+
+    # Row 0: self
+    out[0] = _entity_row(self_char, self_char, bf_size, is_self=True, is_enemy=False)
+
+    # Partition others
+    allies, enemies = [], []
+    is_party = ws.is_party_ally(agent_id)
+    for cid, c in ws.characters.items():
+        if cid == agent_id or not c.is_alive():
+            continue
+        other_is_party = ws.is_party_ally(cid)
+        if is_party == other_is_party:
+            allies.append(c)
+        else:
+            enemies.append(c)
+
+    enemies.sort(key=lambda c: self_char.position.distance_to(c.position))
+
+    # Rows 1..2: allies (truncate at 2)
+    for i, ally in enumerate(allies[:2]):
+        out[1 + i] = _entity_row(ally, self_char, bf_size,
+                                  is_self=False, is_enemy=False)
+    # Rows 3..5: enemies (truncate at 3)
+    for i, enemy in enumerate(enemies[:3]):
+        out[3 + i] = _entity_row(enemy, self_char, bf_size,
+                                  is_self=False, is_enemy=True)
+    return out
