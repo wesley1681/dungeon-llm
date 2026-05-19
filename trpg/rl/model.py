@@ -102,14 +102,20 @@ class CombatPolicyNet(nn.Module):
 
 
 def apply_resource_mask(skill_logits: "torch.Tensor",
-                        resources: dict) -> "torch.Tensor":
-    """Mask skill slot 0 (END) when the agent still has resources to spend.
+                        resources: dict,
+                        ws=None, agent_id: str = "") -> "torch.Tensor":
+    """Mask invalid skill slots so the model never picks an unexecutable action.
 
-    Called at inference time to prevent the model from ending its turn when
-    it has actions/bonus-actions remaining — a common BC failure mode when
-    the resources signal is under-learned.
+    Slot layout (from available_skills()):
+        0 = end
+        1 = move
+        2+ = weapons, spells, class abilities, dodge, hide
 
-    Slot 0 is always END (see available_skills() — 'end' is always first).
+    Masks applied:
+    - slot 0 (END):  blocked while action > 0
+    - slot 1 (MOVE): blocked when movement == 0
+    - weapon slots:  blocked when nearest enemy is outside weapon range
+                     (requires ws + agent_id to be passed)
     """
     import torch
     has_action = resources.get("action", 0) > 0
@@ -117,9 +123,30 @@ def apply_resource_mask(skill_logits: "torch.Tensor",
 
     skill_logits = skill_logits.clone()
     if has_action:
-        # Prevent END while the agent still has their main action to spend.
         skill_logits[..., 0] = -1e9
     if not has_move:
-        # Prevent MOVE when movement budget is exhausted (slot 1 is always MOVE).
         skill_logits[..., 1] = -1e9
+
+    # Mask weapon-attack slots when nearest enemy is out of reach
+    if ws is not None and agent_id and has_action:
+        try:
+            from .obs import partition_entities
+            from ..engine.skill import available_skills
+            agent = ws.characters[agent_id]
+            _, enemies = partition_entities(ws, agent_id)
+            if enemies:
+                nearest = ws.characters[enemies[0]]
+                dist = agent.position.distance_to(nearest.position)
+                skills = available_skills(agent, ws)
+                for i, sk in enumerate(skills):
+                    if i >= skill_logits.shape[-1]:
+                        break
+                    if sk.skill_id.startswith("weapon:"):
+                        # Get weapon range from the skill features
+                        weapon_range = getattr(sk.features, "range_m", 1.5) or 1.5
+                        if dist > weapon_range + 1e-6:
+                            skill_logits[..., i] = -1e9
+        except Exception:
+            pass   # never crash inference due to mask logic
+
     return skill_logits

@@ -81,7 +81,8 @@ def main():
             with torch.no_grad():
                 s, e, g = net(obs_t)
             from trpg.rl.model import apply_resource_mask
-            s = apply_resource_mask(s, env.resources)
+            from trpg.rl.env_v2 import _AGENT_ID
+            s = apply_resource_mask(s, env.resources, env.ws, _AGENT_ID)
             action = [int(s[0].argmax(-1)), int(e.argmax(-1)), int(g.argmax(-1))]
             obs, _, term, trunc, _ = env.step(action)
             done = term or trunc

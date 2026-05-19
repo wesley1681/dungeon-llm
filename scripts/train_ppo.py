@@ -35,7 +35,8 @@ def evaluate(net, n_episodes=50, device="cuda"):
                      for k, v in obs.items()}
             with torch.no_grad():
                 s, e, g = net(obs_t)
-            s = apply_resource_mask(s, env.resources)
+            from trpg.rl.env_v2 import _AGENT_ID
+            s = apply_resource_mask(s, env.resources, env.ws, _AGENT_ID)
             action = [int(s[0].argmax()), int(e.argmax()), int(g.argmax())]
             obs, _, term, trunc, _ = env.step(action)
             done = term or trunc

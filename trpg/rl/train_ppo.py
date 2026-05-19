@@ -21,12 +21,13 @@ from .model import CombatPolicyNet, apply_resource_mask
 
 
 def _sample_action(net: CombatPolicyNet, obs_t: dict,
-                   resources: dict | None = None
+                   resources: dict | None = None,
+                   ws=None, agent_id: str = ""
                    ) -> tuple[torch.Tensor, torch.Tensor, float]:
     """Sample action, return (action[3], log_prob[3], value_scalar)."""
     skill_l, entity_l, grid_l = net(obs_t)
     if resources is not None:
-        skill_l = apply_resource_mask(skill_l, resources)
+        skill_l = apply_resource_mask(skill_l, resources, ws, agent_id)
     val = net.value(obs_t).item()
     dists = [torch.distributions.Categorical(logits=x.squeeze(0))
              for x in (skill_l, entity_l, grid_l)]
@@ -80,7 +81,7 @@ def _worker_collect(args: tuple) -> dict:
         obs_t = {k: torch.from_numpy(v).unsqueeze(0) for k, v in obs.items()}
         with torch.no_grad():
             skill_l, entity_l, grid_l = net(obs_t)
-            skill_l = apply_resource_mask(skill_l, env.resources)
+            skill_l = apply_resource_mask(skill_l, env.resources, env.ws, _AGENT_ID)
             val     = net.value(obs_t).item()
             dists   = [torch.distributions.Categorical(logits=x.squeeze(0))
                        for x in (skill_l, entity_l, grid_l)]
@@ -154,7 +155,8 @@ def _collect_sequential(net, n_steps, device, seed, gamma, gae_lambda,
     for _ in range(n_steps):
         obs_t = {k: torch.from_numpy(v).unsqueeze(0).to(device) for k, v in obs.items()}
         with torch.no_grad():
-            action, log_prob, val = _sample_action(net, obs_t, env.resources)
+            action, log_prob, val = _sample_action(
+                net, obs_t, env.resources, env.ws, _AGENT_ID)
         a_np   = action.cpu().numpy().tolist()
         obs2, reward, term, trunc, _ = env.step(a_np)
 
