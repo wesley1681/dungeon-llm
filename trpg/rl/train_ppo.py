@@ -1,12 +1,12 @@
-"""PPO training loop for CombatEnvV2.
+"""PPO training loop for CombatEnvV2 (Phase 2 smoke-grade).
 
-A compact PPO implementation that:
-  - Uses the same CombatPolicyNet from BC as the policy (warm-start from BC weights)
-  - Adds a small value head (separate MLP over the trunk's context)
-  - GAE(lambda=0.95), clip=0.2
+A minimal PPO implementation that:
+  - Uses the BC-trained CombatPolicyNet as the policy (warm-start)
+  - Treats `rewards` as advantages (no value head, no GAE bootstrap)
+  - Clips ratio at 0.2
 
-The value net is intentionally kept separate from the policy net so loading
-a BC-trained policy doesn't require value pre-training.
+This is a pipeline-only PPO — enough to verify the BC → PPO handoff works
+end-to-end. A real value head and GAE will land in a follow-up plan.
 """
 from __future__ import annotations
 import numpy as np
@@ -38,8 +38,7 @@ def _stack_obs(obs_list: list[dict]) -> dict:
 
 
 def collect_ppo_rollout(net: CombatPolicyNet, n_steps: int = 1024,
-                        device: str = "cuda", seed: int = 0,
-                        gamma: float = 0.99, gae_lambda: float = 0.95) -> dict:
+                        device: str = "cuda", seed: int = 0) -> dict:
     """Collect a single on-policy rollout of n_steps."""
     if device == "cuda" and not torch.cuda.is_available():
         device = "cpu"
@@ -129,7 +128,7 @@ def ppo_update(net: CombatPolicyNet, batch: dict,
             optim.zero_grad()
             policy_loss.backward()
             optim.step()
-            p_losses.append(float(policy_loss))
+            p_losses.append(policy_loss.item())
             v_losses.append(float(value_loss))
 
     return {"policy_loss": float(np.mean(p_losses)),
