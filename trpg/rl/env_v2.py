@@ -84,6 +84,7 @@ class CombatEnvV2:
         self._step_count = 0
 
         # Start-of-turn ticks for the agent
+        agent_char.reaction_used = False
         tick_status_effects(agent_char, "self_turn_start", 1)
         tick_terrain_damage(agent_char, self.ws.combat.battlefield)
 
@@ -132,6 +133,7 @@ class CombatEnvV2:
             self._end_of_round_tick()
             if agent.is_alive():
                 self.resources = {"action": 1, "bonus_action": 1, "movement": MOVE_BUDGET_M}
+                agent.reaction_used = False
                 tick_status_effects(agent, "self_turn_start", self.ws.combat.round_number)
                 tick_terrain_damage(agent, self.ws.combat.battlefield)
 
@@ -150,6 +152,7 @@ class CombatEnvV2:
         opp = self.ws.characters[_OPPONENT_ID]
         if not opp.is_alive():
             return
+        opp.reaction_used = False
         tick_status_effects(opp, "self_turn_start", self.ws.combat.round_number)
         tick_terrain_damage(opp, self.ws.combat.battlefield)
         resources = {"action": 1, "bonus_action": 1, "movement": MOVE_BUDGET_M}
@@ -174,11 +177,12 @@ class CombatEnvV2:
 
     def _end_of_round_tick(self) -> None:
         cs = self.ws.combat
-        cs.round_number += 1
+        # Tick round_end on all alive with the ROUND THAT JUST FINISHED
         for cid in cs.initiative_order:
             c = self.ws.characters.get(cid)
             if c and c.is_alive():
                 tick_status_effects(c, "round_end", cs.round_number)
+        cs.round_number += 1
 
     def _compute_reward(self, prev_agent_hp: int, prev_opp_hp: int,
                         action_dict: dict | None, result: dict | None) -> float:
