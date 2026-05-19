@@ -16,7 +16,9 @@ from trpg.rl.obs import (
     N_GRID,
     N_SKILL_SLOTS,
     OBS_KEYS,
+    build_obs,
     entities_obs,
+    resources_obs,
     skills_obs,
     terrain_obs,
 )
@@ -189,3 +191,36 @@ def test_skills_obs_mask_marks_valid_slots():
     if n_valid < N_SKILL_SLOTS:
         assert np.all(skills[n_valid:] == 0.0)
         assert np.all(mask[n_valid:] == 0.0)
+
+
+def test_resources_obs_full_budget():
+    res = {"action": 1, "bonus_action": 1, "movement": 9.0}
+    out = resources_obs(res, round_number=1)
+    assert out.shape == (4,)
+    assert out.dtype == np.float32
+    assert out[0] == 1.0   # action available
+    assert out[1] == 1.0   # bonus available
+    assert out[2] == pytest.approx(1.0)   # movement ratio (9.0 / MOVE_BUDGET_M)
+    assert out[3] == pytest.approx(0.1)   # round 1 / 10
+
+
+def test_resources_obs_after_action_spent():
+    res = {"action": 0, "bonus_action": 1, "movement": 0.0}
+    out = resources_obs(res, round_number=5)
+    assert out[0] == 0.0
+    assert out[1] == 1.0
+    assert out[2] == 0.0
+    assert out[3] == pytest.approx(0.5)
+
+
+def test_build_obs_returns_all_5_keys():
+    ws = _build_1v1_world()
+    res = {"action": 1, "bonus_action": 1, "movement": 9.0}
+    obs = build_obs(ws, "a", res)
+    for k in OBS_KEYS:
+        assert k in obs
+    assert obs["skills"].shape == (N_SKILL_SLOTS, SKILL_FEATURE_DIM)
+    assert obs["skill_mask"].shape == (N_SKILL_SLOTS,)
+    assert obs["entities"].shape == (N_ENTITY_SLOTS, ENTITY_DIM)
+    assert obs["resources"].shape == (4,)
+    assert obs["terrain"].shape == (N_GRID, N_GRID)

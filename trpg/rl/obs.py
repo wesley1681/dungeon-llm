@@ -181,3 +181,26 @@ def skills_obs(ws: WorldState, agent_id: str) -> tuple[np.ndarray, np.ndarray]:
         skill_mat[i] = np.asarray(sk.features.as_vector(), dtype=np.float32)
         mask[i] = 1.0
     return skill_mat, mask
+
+
+def resources_obs(resources: dict, round_number: int) -> np.ndarray:
+    """Build the resources observation vector (length 4)."""
+    return np.array([
+        1.0 if resources.get("action", 0) > 0 else 0.0,
+        1.0 if resources.get("bonus_action", 0) > 0 else 0.0,
+        max(0.0, min(1.0, resources.get("movement", 0.0) / MOVE_BUDGET_M)),
+        min(1.0, round_number / 10.0),
+    ], dtype=np.float32)
+
+
+def build_obs(ws: WorldState, agent_id: str, resources: dict) -> dict:
+    """Assemble the full Phase 2 Dict observation."""
+    skills_mat, skill_mask = skills_obs(ws, agent_id)
+    round_num = ws.combat.round_number if ws.combat else 0
+    return {
+        "skills":     skills_mat,
+        "skill_mask": skill_mask,
+        "entities":   entities_obs(ws, agent_id),
+        "resources":  resources_obs(resources, round_num),
+        "terrain":    terrain_obs(ws.combat.battlefield),
+    }
