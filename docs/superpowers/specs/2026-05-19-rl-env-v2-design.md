@@ -2,7 +2,7 @@
 
 **Date:** 2026-05-19  
 **Branch:** feat/2d-combat  
-**Status:** Approved
+**Status:** Implemented (commit 5e55f77)
 
 ---
 
