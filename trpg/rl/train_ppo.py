@@ -59,7 +59,7 @@ def _compute_gae(rewards: np.ndarray, values: np.ndarray, dones: np.ndarray,
 
 def _worker_collect(args: tuple) -> dict:
     """Run a sub-rollout on CPU in a worker process."""
-    state_dict_bytes, n_steps, seed, gamma, gae_lambda = args
+    state_dict_bytes, n_steps, seed, gamma, gae_lambda, use_heuristic = args
     import torch, numpy as np
 
     # Recreate model on CPU from serialised weights
@@ -72,6 +72,8 @@ def _worker_collect(args: tuple) -> dict:
 
     env  = CombatEnvV2(seed=seed)
     obs, _ = env.reset()
+    if use_heuristic:
+        env.use_heuristic_opponent()
     obs_list, action_list, lp_list, reward_list, value_list, done_list = [], [], [], [], [], []
 
     for _ in range(n_steps):
@@ -124,23 +126,29 @@ def collect_ppo_rollout(net: CombatPolicyNet, n_steps: int = 1024,
                         n_envs: int = 1,
                         device: str = "cuda", seed: int = 0,
                         gamma: float = 0.99,
-                        gae_lambda: float = 0.95) -> dict:
+                        gae_lambda: float = 0.95,
+                        use_heuristic_opponent: bool = False) -> dict:
     """Collect an on-policy rollout, optionally using parallel workers.
 
     n_envs > 1  spawns worker processes (one per env). Each worker gets
     n_steps // n_envs steps. Total data = n_steps regardless of n_envs.
     """
     if n_envs > 1:
-        return _collect_parallel(net, n_steps, n_envs, device, seed, gamma, gae_lambda)
-    return _collect_sequential(net, n_steps, device, seed, gamma, gae_lambda)
+        return _collect_parallel(net, n_steps, n_envs, device, seed, gamma,
+                                 gae_lambda, use_heuristic_opponent)
+    return _collect_sequential(net, n_steps, device, seed, gamma, gae_lambda,
+                               use_heuristic_opponent)
 
 
-def _collect_sequential(net, n_steps, device, seed, gamma, gae_lambda) -> dict:
+def _collect_sequential(net, n_steps, device, seed, gamma, gae_lambda,
+                         use_heuristic=False) -> dict:
     if device == "cuda" and not torch.cuda.is_available():
         device = "cpu"
     net.to(device).eval()
     env  = CombatEnvV2(seed=seed)
     obs, _ = env.reset()
+    if use_heuristic:
+        env.use_heuristic_opponent()
     obs_list, action_list, lp_list, reward_list, value_list, done_list = [], [], [], [], [], []
 
     for _ in range(n_steps):
@@ -193,7 +201,8 @@ def _get_pool(n_envs: int):
     return _POOL
 
 
-def _collect_parallel(net, n_steps, n_envs, device, seed, gamma, gae_lambda) -> dict:
+def _collect_parallel(net, n_steps, n_envs, device, seed, gamma, gae_lambda,
+                       use_heuristic=False) -> dict:
     # Serialise weights — workers deserialise on CPU
     buf = io.BytesIO()
     torch.save(net.to("cpu").state_dict(), buf)
@@ -202,7 +211,7 @@ def _collect_parallel(net, n_steps, n_envs, device, seed, gamma, gae_lambda) -> 
 
     steps_per_env = n_steps // n_envs
     worker_args = [
-        (state_bytes, steps_per_env, seed + i, gamma, gae_lambda)
+        (state_bytes, steps_per_env, seed + i, gamma, gae_lambda, use_heuristic)
         for i in range(n_envs)
     ]
 

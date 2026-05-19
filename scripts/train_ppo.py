@@ -56,9 +56,13 @@ def main():
     parser.add_argument("--epochs",  type=int, default=4,
                         help="minibatch epochs per update")
     parser.add_argument("--batch",   type=int, default=256)
-    parser.add_argument("--n_envs",  type=int, default=8,
+    parser.add_argument("--n_envs",   type=int, default=8,
                         help="parallel rollout workers (use CPU cores)")
-    parser.add_argument("--lr",      type=float, default=3e-5,
+    parser.add_argument("--ent_coef",     type=float, default=0.02,
+                        help="entropy bonus coefficient")
+    parser.add_argument("--curriculum",   type=int,   default=50,
+                        help="first N updates use HeuristicCombatPolicy opponents (easier)")
+    parser.add_argument("--lr",       type=float, default=3e-5,
                         help="use smaller LR than BC to avoid forgetting")
     parser.add_argument("--out_dir", type=str, default="models")
     parser.add_argument("--eval_every", type=int, default=10)
@@ -80,11 +84,16 @@ def main():
     print(f"\nStart win-rate: {wr:.0%}")
 
     for update in range(1, args.updates + 1):
+        use_heuristic = (update <= args.curriculum)
+        if update == args.curriculum + 1:
+            print(f"  [curriculum] switching to expert opponents at update {update}")
         batch = collect_ppo_rollout(net, n_steps=args.steps,
                                     n_envs=args.n_envs,
-                                    seed=update, device=device)
+                                    seed=update, device=device,
+                                    use_heuristic_opponent=use_heuristic)
         info = ppo_update(net, batch, optim,
                           n_epochs=args.epochs, batch_size=args.batch,
+                          ent_coef=args.ent_coef,
                           device=device)
 
         print(f"Update {update:4d}/{args.updates}  "

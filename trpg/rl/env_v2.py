@@ -90,6 +90,11 @@ class CombatEnvV2:
 
         return build_obs(self.ws, _AGENT_ID, self.resources), {}
 
+    def use_heuristic_opponent(self) -> None:
+        """Switch to weak HeuristicCombatPolicy — for curriculum warm-up."""
+        from ..engine.combat_policy import HeuristicCombatPolicy
+        self._opponent_policy = HeuristicCombatPolicy()
+
     def _apply_layout(self, layout: str) -> None:
         if layout == "open":
             return
@@ -195,9 +200,18 @@ class CombatEnvV2:
         reward = dmg_dealt / max(1, opp.max_hp) - dmg_taken / max(1, agent.max_hp)
         reward -= 0.01
 
-        # Skill-use bonus
-        if action_dict is not None and result is not None:
-            t = action_dict.get("type", "")
-            if t not in ("MOVE", "ERROR") and result.get("type") != "ERROR":
-                reward += 0.05   # flat bonus per non-trivial action
+        if result is not None:
+            if result.get("type") == "ERROR":
+                # Wasted action — push model away from illegal choices
+                reward -= 0.2
+            elif action_dict is not None:
+                t = action_dict.get("type", "")
+                if t not in ("MOVE", "ERROR"):
+                    reward += 0.05   # bonus per valid non-trivial action
+
+        # Distance-closing bonus: reward approaching enemy while alive
+        if opp.is_alive() and agent.is_alive():
+            dist = agent.position.distance_to(opp.position)
+            if dist <= 1.5:
+                reward += 0.05   # being in melee range is good
         return reward
