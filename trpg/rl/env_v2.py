@@ -101,3 +101,97 @@ class CombatEnvV2:
             bf.add_rect_terrain(8.0, 0.0, 10.0, 30.0, TerrainType.DIFFICULT)
         elif layout == "lava":
             bf.add_rect_terrain(9.0, 13.5, 12.0, 16.5, TerrainType.DANGEROUS)
+
+    def step(self, action) -> tuple[dict, float, bool, bool, dict]:
+        if self.ws is None:
+            raise RuntimeError("call reset() before step()")
+        self._step_count += 1
+
+        agent = self.ws.characters[_AGENT_ID]
+        opp = self.ws.characters[_OPPONENT_ID]
+        prev_agent_hp = agent.hp
+        prev_opp_hp = opp.hp
+
+        action_dict = decode_action(action, self.ws, _AGENT_ID)
+        result: dict[str, Any] | None = None
+        if action_dict is not None:
+            result = execute_action(action_dict, self.ws)
+            if result.get("type") != "ERROR":
+                consume_resources(self.resources, action_dict, result)
+
+        turn_done = (
+            action_dict is None
+            or (self.resources["action"] <= 0
+                and self.resources["bonus_action"] <= 0
+                and self.resources["movement"] <= 1e-6)
+        )
+        if turn_done:
+            tick_status_effects(agent, "self_turn_end", self.ws.combat.round_number)
+            if opp.is_alive():
+                self._run_opponent_turn()
+            self._end_of_round_tick()
+            if agent.is_alive():
+                self.resources = {"action": 1, "bonus_action": 1, "movement": MOVE_BUDGET_M}
+                tick_status_effects(agent, "self_turn_start", self.ws.combat.round_number)
+                tick_terrain_damage(agent, self.ws.combat.battlefield)
+
+        reward = self._compute_reward(prev_agent_hp, prev_opp_hp,
+                                       action_dict, result)
+        terminated = (not agent.is_alive()) or (not opp.is_alive())
+        if terminated:
+            reward += 5.0 if not opp.is_alive() else -5.0
+        truncated = self._step_count >= _MAX_AGENT_STEPS_PER_EPISODE
+
+        return (build_obs(self.ws, _AGENT_ID, self.resources),
+                float(reward), terminated, truncated,
+                {"action_result": result})
+
+    def _run_opponent_turn(self) -> None:
+        opp = self.ws.characters[_OPPONENT_ID]
+        if not opp.is_alive():
+            return
+        tick_status_effects(opp, "self_turn_start", self.ws.combat.round_number)
+        tick_terrain_damage(opp, self.ws.combat.battlefield)
+        resources = {"action": 1, "bonus_action": 1, "movement": MOVE_BUDGET_M}
+        for _ in range(_MAX_SUB_ACTIONS_PER_TURN):
+            if not opp.is_alive():
+                break
+            decision = self._opponent_policy.decide(
+                _OPPONENT_ID, opp, self.ws, resources,
+                self.ws.combat.round_number,
+            )
+            if decision.fled or decision.action is None:
+                break
+            r = execute_action(decision.action, self.ws)
+            if r.get("type") != "ERROR":
+                consume_resources(resources, decision.action, r)
+            if decision.ended:
+                break
+            if (resources["action"] <= 0 and resources["bonus_action"] <= 0
+                    and resources["movement"] <= 1e-6):
+                break
+        tick_status_effects(opp, "self_turn_end", self.ws.combat.round_number)
+
+    def _end_of_round_tick(self) -> None:
+        cs = self.ws.combat
+        cs.round_number += 1
+        for cid in cs.initiative_order:
+            c = self.ws.characters.get(cid)
+            if c and c.is_alive():
+                tick_status_effects(c, "round_end", cs.round_number)
+
+    def _compute_reward(self, prev_agent_hp: int, prev_opp_hp: int,
+                        action_dict: dict | None, result: dict | None) -> float:
+        agent = self.ws.characters[_AGENT_ID]
+        opp = self.ws.characters[_OPPONENT_ID]
+        dmg_dealt = max(0, prev_opp_hp - opp.hp)
+        dmg_taken = max(0, prev_agent_hp - agent.hp)
+        reward = dmg_dealt / max(1, opp.max_hp) - dmg_taken / max(1, agent.max_hp)
+        reward -= 0.01
+
+        # Skill-use bonus
+        if action_dict is not None and result is not None:
+            t = action_dict.get("type", "")
+            if t not in ("MOVE", "ERROR") and result.get("type") != "ERROR":
+                reward += 0.05   # flat bonus per non-trivial action
+        return reward

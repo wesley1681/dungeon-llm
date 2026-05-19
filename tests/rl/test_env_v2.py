@@ -39,3 +39,60 @@ def test_reset_seed_is_reproducible():
     obs1, _ = env1.reset()
     obs2, _ = env2.reset()
     np.testing.assert_array_equal(obs1["entities"], obs2["entities"])
+
+
+def test_step_end_turn_returns_obs_reward_done():
+    env = CombatEnvV2(seed=0)
+    env.reset(agent_arch="champion", opponent_arch="champion", level=5)
+    obs, reward, terminated, truncated, info = env.step([0, 0, 0])
+    assert isinstance(obs, dict)
+    assert isinstance(reward, float)
+    assert isinstance(terminated, bool)
+    assert isinstance(truncated, bool)
+
+
+def test_step_attack_reduces_enemy_hp_when_in_range():
+    env = CombatEnvV2(seed=0)
+    env.reset(agent_arch="champion", opponent_arch="champion", level=5)
+    # Force positions: agent and opponent adjacent
+    from trpg.engine.vec2 import Vec2
+    env.ws.characters["opponent"].position = Vec2(
+        env.ws.characters["agent"].position.x + 1.5,
+        env.ws.characters["agent"].position.y,
+    )
+    enemy_hp_before = env.ws.characters["opponent"].hp
+    # Find the weapon-attack slot
+    from trpg.engine.skill import available_skills
+    skills = available_skills(env.ws.characters["agent"], env.ws)
+    weapon_idx = next(i for i, s in enumerate(skills) if s.skill_id.startswith("weapon:"))
+    # Multiple steps: agent attacks (some may miss)
+    for _ in range(20):
+        obs, reward, term, trunc, info = env.step([weapon_idx, 3, 0])
+        if env.ws.characters["opponent"].hp < enemy_hp_before:
+            break
+        if term or trunc:
+            break
+    # Either dealt damage or opponent killed us
+    assert (env.ws.characters["opponent"].hp < enemy_hp_before
+            or not env.ws.characters["agent"].is_alive())
+
+
+def test_step_terminates_when_enemy_dies():
+    env = CombatEnvV2(seed=0)
+    env.reset(agent_arch="champion", opponent_arch="champion", level=5)
+    env.ws.characters["opponent"].hp = 1   # one-shot kill
+    from trpg.engine.vec2 import Vec2
+    env.ws.characters["opponent"].position = Vec2(
+        env.ws.characters["agent"].position.x + 1.5,
+        env.ws.characters["agent"].position.y,
+    )
+    from trpg.engine.skill import available_skills
+    skills = available_skills(env.ws.characters["agent"], env.ws)
+    weapon_idx = next(i for i, s in enumerate(skills) if s.skill_id.startswith("weapon:"))
+    # May take a few tries to land a hit
+    term = False
+    for _ in range(20):
+        obs, reward, term, trunc, info = env.step([weapon_idx, 3, 0])
+        if term:
+            break
+    assert term, "enemy at 1 HP should die within 20 attacks"
