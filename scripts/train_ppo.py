@@ -84,6 +84,10 @@ def main():
     # Initial eval
     wr = evaluate(net, n_episodes=50, device=device)
     print(f"\nStart win-rate: {wr:.0%}")
+    best_wr = wr
+    best_path = out_dir / "ppo_best.pt"
+    torch.save(net.state_dict(), str(best_path))
+    print(f"  => baseline saved as best: {best_path} ({wr:.0%})")
 
     for update in range(1, args.updates + 1):
         use_heuristic = (update <= args.curriculum)
@@ -105,7 +109,12 @@ def main():
 
         if update % args.eval_every == 0:
             wr = evaluate(net, n_episodes=50, device=device)
-            print(f"  => win-rate: {wr:.0%}")
+            print(f"  => win-rate: {wr:.0%}  (best so far: {best_wr:.0%})")
+
+            if wr > best_wr:
+                best_wr = wr
+                torch.save(net.state_dict(), str(best_path))
+                print(f"  => NEW BEST: {best_path} ({wr:.0%})")
 
             for label, threshold in CHECKPOINT_THRESHOLDS.items():
                 if wr >= threshold and label not in saved:
@@ -117,6 +126,7 @@ def main():
     # Final save
     torch.save(net.state_dict(), str(out_dir / "ppo_final.pt"))
     print(f"\nFinal model: {out_dir}/ppo_final.pt")
+    print(f"Best model:  {best_path}  (win-rate {best_wr:.0%})")
 
 
 if __name__ == "__main__":

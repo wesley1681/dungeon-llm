@@ -490,6 +490,11 @@ def available_skills(char, world_state=None) -> list[Skill]:
                 )
                 if not has_slot:
                     continue
+            # Skip concentration spells when already concentrating — the engine
+            # would replace the active concentration, which is rarely worth the
+            # extra slot/action spend and lets the policy spam re-casts.
+            if spell.requires_concentration and char.concentrating_on:
+                continue
             out.append(from_spell(spell, char))
 
     # Class abilities from known_abilities, filtered to what's usable now.
@@ -515,6 +520,10 @@ def available_skills(char, world_state=None) -> list[Skill]:
         # over-allows the skill when only higher slots remain.
         slot_lvl = int(getattr(ab.features, "cost_slot_level", 0) or 0)
         if slot_lvl > 0 and char.spell_slots.get(slot_lvl, 0) <= 0:
+            continue
+        # Same concentration filter as spells — re-casting a concentration
+        # buff while already concentrating just burns the slot.
+        if getattr(ab.features, "requires_concentration", False) and char.concentrating_on:
             continue
         out.append(_from_class_ability(ab, char))
 
