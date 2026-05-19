@@ -101,7 +101,7 @@ class CombatEnvV2:
         elif layout == "difficult":
             bf.add_rect_terrain(8.0, 0.0, 10.0, 30.0, TerrainType.DIFFICULT)
         elif layout == "lava":
-            bf.add_rect_terrain(9.0, 13.5, 12.0, 16.5, TerrainType.DANGEROUS)
+            bf.add_rect_terrain(13.5, 13.5, 16.5, 16.5, TerrainType.DANGEROUS)
 
     def step(self, action) -> tuple[dict, float, bool, bool, dict]:
         if self.ws is None:
