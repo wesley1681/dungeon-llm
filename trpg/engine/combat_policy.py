@@ -12,6 +12,14 @@ Implementations included here:
   - HumanInputPolicy         reads structured command text from a UI callback
                              and parses it into an action dict via regex.
                              No LLM in the parsing path.
+  - _ArchetypeBase           shared utilities for scripted expert policies
+  - BattleMasterPolicy / ChampionPolicy      Fighter archetypes
+  - TotemBearPolicy / BerserkerPolicy        Barbarian archetypes
+  - EvocationPolicy / DivinationPolicy       Wizard archetypes
+  - LifeClericPolicy / WarClericPolicy       Cleric archetypes
+  - AssassinPolicy / ArcaneTricksterPolicy   Rogue archetypes
+  - DevotionPolicy / VengeancePolicy         Paladin archetypes
+  - make_archetype_policy(archetype_id)      factory → correct expert policy
 
 The RL controller will land as a separate subclass that wraps a trained model.
 """
@@ -328,6 +336,508 @@ def _parse_command(text: str, actor_id: str, world_state) -> dict:
         }
 
     raise ValueError(f"無法解析指令：{text}")
+
+
+# ── Archetype expert policies (Stage A — scripted teachers for RL BC) ─────────
+#
+# Each policy follows its archetype's priority ordering:
+#   1. Bonus-action setup (rage, vow, buff) if not yet used this turn
+#   2. Close gap / position (movement)
+#   3. Main action (attack, spell, heal, buff)
+#   4. End turn
+#
+# Resources dict keys: "action" (int), "bonus_action" (int), "movement" (float).
+# Policies use available_skills() to build actions so they naturally respect
+# ability-use limits, min_level gates, and archetype filters — the same
+# interface the RL model will observe.
+
+class _ArchetypeBase(CombatPolicy):
+    """Shared utility methods for all archetype expert policies."""
+
+    # ── Target selection ──────────────────────────────────────────────────────
+
+    def _enemy_candidates(self, actor_id: str, ws) -> list:
+        is_party = ws.is_party_ally(actor_id)
+        room = ws.dungeon_map.current_room if ws.dungeon_map else None
+        room_ids = set(room.npc_ids) if room else set(ws.characters.keys())
+        out = []
+        for cid, c in ws.characters.items():
+            if cid == actor_id or not c.is_alive():
+                continue
+            if is_party:
+                if c.is_npc and c.attitude == 0 and cid in room_ids:
+                    out.append((cid, c))
+            else:
+                if ws.is_party_ally(cid):
+                    out.append((cid, c))
+        return out
+
+    def _nearest_enemy(self, actor, ws, actor_id) -> tuple:
+        enemies = self._enemy_candidates(actor_id, ws)
+        if not enemies:
+            return None, None
+        return min(enemies, key=lambda kv: actor.position.distance_to(kv[1].position))
+
+    def _find_heal_target(self, actor_id: str, ws, threshold: float = 0.45) -> str | None:
+        """Return char_id of the ally with lowest HP% below threshold, or None."""
+        best_id, best_ratio = None, threshold
+        for cid, c in ws.characters.items():
+            if cid == actor_id or not c.is_alive() or not ws.is_party_ally(cid):
+                continue
+            ratio = c.hp / c.max_hp if c.max_hp else 1.0
+            if ratio < best_ratio:
+                best_ratio, best_id = ratio, cid
+        return best_id
+
+    # ── Action helpers ────────────────────────────────────────────────────────
+
+    def _in_reach(self, actor, target) -> bool:
+        weapon = actor.get_weapon() if actor.weapons else None
+        reach = (weapon.range_normal if weapon else 1.5) or 1.5
+        return actor.position.distance_to(target.position) <= reach + 1e-6
+
+    def _use_skill(self, actor_id: str, actor, ws, skill_id: str,
+                   target_id: str | None = None, coord=None) -> dict | None:
+        """Build an action dict for skill_id via available_skills(), or None if unavailable."""
+        from .skill import available_skills
+        sk = next((s for s in available_skills(actor, ws) if s.skill_id == skill_id), None)
+        if sk is None:
+            return None
+        t = ws.characters.get(target_id) if target_id else None
+        c = coord or (t.position if t else actor.position)
+        return sk.builder(actor_id, target_id, c)
+
+    def _attack(self, actor_id: str, actor, target_id: str) -> dict | None:
+        weapon = actor.get_weapon() if actor.weapons else None
+        if not weapon:
+            return None
+        return {"type": "ATTACK", "attacker": actor_id, "target": target_id,
+                "weapon": weapon.name, "consumes": ["action"]}
+
+    def _smite_attack(self, actor_id: str, actor, target_id: str) -> dict | None:
+        """Attack with the lowest available spell slot for divine smite."""
+        weapon = actor.get_weapon() if actor.weapons else None
+        if not weapon:
+            return None
+        for slot in (1, 2, 3, 4):
+            if actor.spell_slots.get(slot, 0) > 0:
+                return {"type": "ATTACK", "attacker": actor_id, "target": target_id,
+                        "weapon": weapon.name, "divine_smite_slot": slot,
+                        "consumes": ["action"]}
+        return self._attack(actor_id, actor, target_id)
+
+    def _move_to(self, actor_id: str, target_id: str) -> dict:
+        return {"type": "MOVE", "character": actor_id, "target": target_id,
+                "description": "靠近", "consumes": ["movement"]}
+
+
+# ── Fighters ──────────────────────────────────────────────────────────────────
+
+class BattleMasterPolicy(_ArchetypeBase):
+    """Fighter Battle Master: approach → attack with superiority maneuver → plain attack."""
+    _MANEUVERS = ("menacing_attack", "trip_attack", "pushing_attack")
+
+    def decide(self, actor_id, actor, ws, resources, round_num):
+        tid, tgt = self._nearest_enemy(actor, ws, actor_id)
+        if tid is None:
+            return CombatDecision(ended=True)
+
+        if not self._in_reach(actor, tgt) and resources.get("movement", 0) > 1e-6:
+            return CombatDecision(action=self._move_to(actor_id, tid))
+
+        if resources.get("action", 0) > 0 and self._in_reach(actor, tgt):
+            for m in self._MANEUVERS:
+                a = self._use_skill(actor_id, actor, ws, m, tid)
+                if a:
+                    return CombatDecision(action=a)
+            a = self._attack(actor_id, actor, tid)
+            if a:
+                return CombatDecision(action=a)
+
+        return CombatDecision(ended=True)
+
+
+class ChampionPolicy(_ArchetypeBase):
+    """Fighter Champion: approach → attack (relies on passive improved crit range)."""
+
+    def decide(self, actor_id, actor, ws, resources, round_num):
+        tid, tgt = self._nearest_enemy(actor, ws, actor_id)
+        if tid is None:
+            return CombatDecision(ended=True)
+
+        if not self._in_reach(actor, tgt) and resources.get("movement", 0) > 1e-6:
+            return CombatDecision(action=self._move_to(actor_id, tid))
+
+        if resources.get("action", 0) > 0 and self._in_reach(actor, tgt):
+            a = self._attack(actor_id, actor, tid)
+            if a:
+                return CombatDecision(action=a)
+
+        return CombatDecision(ended=True)
+
+
+# ── Barbarians ────────────────────────────────────────────────────────────────
+
+class _BarbarianBase(_ArchetypeBase):
+    """Rage (bonus) first turn → reckless attack every turn."""
+
+    def decide(self, actor_id, actor, ws, resources, round_num):
+        tid, tgt = self._nearest_enemy(actor, ws, actor_id)
+        if tid is None:
+            return CombatDecision(ended=True)
+
+        # Rage via bonus action if not already raging
+        if not actor.has_status("raging") and resources.get("bonus_action", 1) > 0:
+            a = self._use_skill(actor_id, actor, ws, "rage", actor_id)
+            if a:
+                return CombatDecision(action=a)
+
+        if not self._in_reach(actor, tgt) and resources.get("movement", 0) > 1e-6:
+            return CombatDecision(action=self._move_to(actor_id, tid))
+
+        if resources.get("action", 0) > 0 and self._in_reach(actor, tgt):
+            a = (self._use_skill(actor_id, actor, ws, "reckless_attack", tid)
+                 or self._attack(actor_id, actor, tid))
+            if a:
+                return CombatDecision(action=a)
+
+        return CombatDecision(ended=True)
+
+
+class TotemBearPolicy(_BarbarianBase):
+    pass   # Bear totem resistance is passive; base logic suffices
+
+
+class BerserkerPolicy(_BarbarianBase):
+    pass   # Frenzy is engine_todo; falls back to base barbarian
+
+
+# ── Wizards ───────────────────────────────────────────────────────────────────
+
+class _WizardBase(_ArchetypeBase):
+    """Kite + spell priority. Misty-step escape if cornered in melee."""
+
+    # Subclasses provide ordered list of skill_ids to try each turn
+    def _spell_priority(self, actor, tgt, distance: float) -> list[str]:
+        return ["magic_missile"]
+
+    def decide(self, actor_id, actor, ws, resources, round_num):
+        from .vec2 import Vec2
+        tid, tgt = self._nearest_enemy(actor, ws, actor_id)
+        if tid is None:
+            return CombatDecision(ended=True)
+
+        d = actor.position.distance_to(tgt.position)
+
+        # Cornered in melee → misty step away (bonus action)
+        if d <= 1.5 + 1e-6 and resources.get("bonus_action", 1) > 0:
+            away = Vec2(actor.position.x + 9.0, actor.position.y)
+            a = self._use_skill(actor_id, actor, ws, "misty_step", None, away)
+            if a:
+                return CombatDecision(action=a)
+
+        # Cast best available spell
+        if resources.get("action", 0) > 0:
+            for spell_id in self._spell_priority(actor, tgt, d):
+                a = self._use_skill(actor_id, actor, ws, spell_id, tid, tgt.position)
+                if a:
+                    return CombatDecision(action=a)
+
+        # Close gap if target out of spell range
+        if d > 18.0 and resources.get("movement", 0) > 1e-6:
+            return CombatDecision(action=self._move_to(actor_id, tid))
+
+        return CombatDecision(ended=True)
+
+
+class EvocationPolicy(_WizardBase):
+    """Evocation: fireball > hold_person > burning_hands (close) > magic_missile."""
+
+    def _spell_priority(self, actor, tgt, distance: float) -> list[str]:
+        spells = []
+        if distance > 4.5:
+            spells.append("fireball_ev")
+        if not tgt.has_status("paralyzed"):
+            spells.append("hold_person")
+        if distance <= 4.5:
+            spells.append("burning_hands_ev")
+        spells.append("magic_missile")
+        return spells
+
+
+class DivinationPolicy(_WizardBase):
+    """Divination: hold_person > web > fireball > magic_missile.
+    Once target is already debuffed, switch directly to damage spells."""
+
+    def _spell_priority(self, actor, tgt, distance: float) -> list[str]:
+        already_debuffed = tgt.has_status("paralyzed") or tgt.has_status("restrained")
+        spells = []
+        if not already_debuffed:
+            spells.append("hold_person")
+            spells.append("web_div")
+        if distance > 4.5:
+            spells.append("fireball_div")
+        spells.append("magic_missile")
+        return spells
+
+
+# ── Clerics ───────────────────────────────────────────────────────────────────
+
+class _ClericBase(_ArchetypeBase):
+    """Heal wounded ally → bless early → sacred flame / melee attack."""
+    _HEAL_THRESHOLD = 0.4
+
+    def decide(self, actor_id, actor, ws, resources, round_num):
+        tid, tgt = self._nearest_enemy(actor, ws, actor_id)
+        if tid is None:
+            return CombatDecision(ended=True)
+
+        if resources.get("action", 0) > 0:
+            # Heal critically low ally
+            heal_id = self._find_heal_target(actor_id, ws, self._HEAL_THRESHOLD)
+            if heal_id:
+                a = self._use_skill(actor_id, actor, ws, "cure_wounds", heal_id)
+                if a:
+                    return CombatDecision(action=a)
+
+            # Bless early (round 1 or 2)
+            if round_num <= 2 and not actor.has_status("blessed"):
+                a = self._use_skill(actor_id, actor, ws, "bless", actor_id)
+                if a:
+                    return CombatDecision(action=a)
+
+            # Sacred flame at range, or melee attack if adjacent
+            if self._in_reach(actor, tgt):
+                a = self._attack(actor_id, actor, tid)
+            else:
+                a = self._use_skill(actor_id, actor, ws, "sacred_flame", tid)
+            if a:
+                return CombatDecision(action=a)
+
+        if not self._in_reach(actor, tgt) and resources.get("movement", 0) > 1e-6:
+            return CombatDecision(action=self._move_to(actor_id, tid))
+
+        return CombatDecision(ended=True)
+
+
+class LifeClericPolicy(_ClericBase):
+    """Life Cleric: heal aggressively (threshold 50%), lay_on_hands before cure_wounds."""
+    _HEAL_THRESHOLD = 0.5
+
+    def decide(self, actor_id, actor, ws, resources, round_num):
+        tid, tgt = self._nearest_enemy(actor, ws, actor_id)
+        if tid is None:
+            return CombatDecision(ended=True)
+
+        if resources.get("action", 0) > 0:
+            heal_id = self._find_heal_target(actor_id, ws, self._HEAL_THRESHOLD)
+            if heal_id:
+                a = (self._use_skill(actor_id, actor, ws, "lay_on_hands_ability", heal_id)
+                     or self._use_skill(actor_id, actor, ws, "cure_wounds", heal_id))
+                if a:
+                    return CombatDecision(action=a)
+
+            if round_num <= 1 and not actor.has_status("blessed"):
+                a = self._use_skill(actor_id, actor, ws, "bless", actor_id)
+                if a:
+                    return CombatDecision(action=a)
+
+            if self._in_reach(actor, tgt):
+                a = self._attack(actor_id, actor, tid)
+            else:
+                a = self._use_skill(actor_id, actor, ws, "sacred_flame", tid)
+            if a:
+                return CombatDecision(action=a)
+
+        if not self._in_reach(actor, tgt) and resources.get("movement", 0) > 1e-6:
+            return CombatDecision(action=self._move_to(actor_id, tid))
+
+        return CombatDecision(ended=True)
+
+
+class WarClericPolicy(_ClericBase):
+    """War Cleric: aggressive (bless round 1, sacred flame primary, heal only near-death)."""
+    _HEAL_THRESHOLD = 0.25
+
+
+# ── Rogues ────────────────────────────────────────────────────────────────────
+
+class _RogueBase(_ArchetypeBase):
+    """Cunning action hide (bonus) → attack for sneak attack → dash to close."""
+    _HIDE_SKILL     = "cunning_action_hide"
+    _DASH_SKILL     = "cunning_action_dash"
+    _DISENGAGE_SKILL = "cunning_action_disengage"
+
+    def decide(self, actor_id, actor, ws, resources, round_num):
+        tid, tgt = self._nearest_enemy(actor, ws, actor_id)
+        if tid is None:
+            return CombatDecision(ended=True)
+
+        d = actor.position.distance_to(tgt.position)
+        in_melee = d <= 1.5 + 1e-6
+
+        # Cunning action: hide for sneak-attack advantage (bonus action)
+        if in_melee and not actor.has_status("hidden") and resources.get("bonus_action", 1) > 0:
+            a = self._use_skill(actor_id, actor, ws, self._HIDE_SKILL)
+            if a:
+                return CombatDecision(action=a)
+
+        # Attack (sneak attack fires automatically when conditions met)
+        if resources.get("action", 0) > 0 and in_melee:
+            a = self._attack(actor_id, actor, tid)
+            if a:
+                return CombatDecision(action=a)
+
+        # Close gap: cunning dash (bonus) then walk
+        if not in_melee:
+            if resources.get("bonus_action", 1) > 0:
+                a = self._use_skill(actor_id, actor, ws, self._DASH_SKILL)
+                if a:
+                    return CombatDecision(action=a)
+            if resources.get("movement", 0) > 1e-6:
+                return CombatDecision(action=self._move_to(actor_id, tid))
+
+        return CombatDecision(ended=True)
+
+
+class AssassinPolicy(_RogueBase):
+    _HIDE_SKILL      = "cunning_action_hide"
+    _DASH_SKILL      = "cunning_action_dash"
+    _DISENGAGE_SKILL = "cunning_action_disengage"
+
+
+class ArcaneTricksterPolicy(_RogueBase):
+    """Arcane Trickster: hide (action) when out of melee, dash in, then sneak attack.
+
+    No cunning-action hide for this archetype; hide costs the action, so
+    hiding and attacking happen on alternating turns.
+    """
+    _HIDE_SKILL      = ""                        # no bonus-action hide
+    _DASH_SKILL      = "cunning_action_dash_at"
+    _DISENGAGE_SKILL = "cunning_action_disengage_at"
+
+    def decide(self, actor_id, actor, ws, resources, round_num):
+        tid, tgt = self._nearest_enemy(actor, ws, actor_id)
+        if tid is None:
+            return CombatDecision(ended=True)
+
+        d = actor.position.distance_to(tgt.position)
+        in_melee = d <= 1.5 + 1e-6
+
+        # Hide (action) when out of melee and not yet hidden — get advantage
+        if not in_melee and not actor.has_status("hidden") and resources.get("action", 0) > 0:
+            a = self._use_skill(actor_id, actor, ws, "hide")
+            if a:
+                return CombatDecision(action=a)
+
+        # Cunning dash (bonus) to close gap
+        if not in_melee and resources.get("bonus_action", 1) > 0:
+            a = self._use_skill(actor_id, actor, ws, self._DASH_SKILL)
+            if a:
+                return CombatDecision(action=a)
+
+        if not in_melee and resources.get("movement", 0) > 1e-6:
+            return CombatDecision(action=self._move_to(actor_id, tid))
+
+        # Attack (sneak fires if hidden or target debuffed)
+        if resources.get("action", 0) > 0 and in_melee:
+            a = self._attack(actor_id, actor, tid)
+            if a:
+                return CombatDecision(action=a)
+
+        return CombatDecision(ended=True)
+
+
+# ── Paladins ──────────────────────────────────────────────────────────────────
+
+class DevotionPolicy(_ArchetypeBase):
+    """Devotion: sacred weapon buff (action, round 1) → smite attacks."""
+
+    def decide(self, actor_id, actor, ws, resources, round_num):
+        tid, tgt = self._nearest_enemy(actor, ws, actor_id)
+        if tid is None:
+            return CombatDecision(ended=True)
+
+        if not self._in_reach(actor, tgt) and resources.get("movement", 0) > 1e-6:
+            return CombatDecision(action=self._move_to(actor_id, tid))
+
+        if resources.get("action", 0) > 0:
+            # Round 1: sacred weapon buff (costs action)
+            if round_num == 1 and not actor.has_status("sacred_weapon_buff"):
+                a = self._use_skill(actor_id, actor, ws, "sacred_weapon_dev", actor_id)
+                if a:
+                    return CombatDecision(action=a)
+
+            # Self-heal if critically low
+            if actor.hp / max(actor.max_hp, 1) < 0.25:
+                a = self._use_skill(actor_id, actor, ws, "lay_on_hands_ability", actor_id)
+                if a:
+                    return CombatDecision(action=a)
+
+            if self._in_reach(actor, tgt):
+                a = self._smite_attack(actor_id, actor, tid)
+                if a:
+                    return CombatDecision(action=a)
+
+        return CombatDecision(ended=True)
+
+
+class VengeancePolicy(_ArchetypeBase):
+    """Vengeance: vow of enmity (bonus, round 1) → smite attacks."""
+
+    def decide(self, actor_id, actor, ws, resources, round_num):
+        tid, tgt = self._nearest_enemy(actor, ws, actor_id)
+        if tid is None:
+            return CombatDecision(ended=True)
+
+        if not self._in_reach(actor, tgt) and resources.get("movement", 0) > 1e-6:
+            return CombatDecision(action=self._move_to(actor_id, tid))
+
+        # Vow of enmity on target (bonus action, round 1)
+        if round_num == 1 and not tgt.has_status("vow_target") and resources.get("bonus_action", 1) > 0:
+            a = self._use_skill(actor_id, actor, ws, "vow_of_enmity_ven", tid)
+            if a:
+                return CombatDecision(action=a)
+
+        if resources.get("action", 0) > 0:
+            if actor.hp / max(actor.max_hp, 1) < 0.25:
+                a = self._use_skill(actor_id, actor, ws, "lay_on_hands_ability", actor_id)
+                if a:
+                    return CombatDecision(action=a)
+
+            if self._in_reach(actor, tgt):
+                a = self._smite_attack(actor_id, actor, tid)
+                if a:
+                    return CombatDecision(action=a)
+
+        return CombatDecision(ended=True)
+
+
+# ── Registry and factory ──────────────────────────────────────────────────────
+
+ARCHETYPE_POLICIES: dict[str, type] = {
+    "battle_master":    BattleMasterPolicy,
+    "champion":         ChampionPolicy,
+    "totem_bear":       TotemBearPolicy,
+    "berserker":        BerserkerPolicy,
+    "evocation":        EvocationPolicy,
+    "divination":       DivinationPolicy,
+    "life":             LifeClericPolicy,
+    "war":              WarClericPolicy,
+    "assassin":         AssassinPolicy,
+    "arcane_trickster": ArcaneTricksterPolicy,
+    "devotion":         DevotionPolicy,
+    "vengeance":        VengeancePolicy,
+}
+
+
+def make_archetype_policy(archetype_id: str) -> CombatPolicy:
+    """Return the scripted expert policy for the given archetype.
+
+    Falls back to HeuristicCombatPolicy if the archetype is not recognised
+    (e.g. generic NPCs without a specific archetype).
+    """
+    return ARCHETYPE_POLICIES.get(archetype_id, HeuristicCombatPolicy)()
 
 
 class HumanInputPolicy(CombatPolicy):

@@ -1099,6 +1099,21 @@ _register(ClassAbility(
 ))
 
 _register(ClassAbility(
+    skill_id="cunning_action_hide_at",
+    display_name="狡猾動作：躲藏",
+    class_id="rogue",
+    description="bonus action：進行躲藏（Stealth 對抗對手 Perception），成功則獲得 hidden 狀態。",
+    features=SkillFeatures(cost_bonus=1.0, target_type=TargetType.SELF),
+    engine_ready=True,
+    min_level=2, archetype_id="arcane_trickster",
+    refresh_on="never", max_uses=0,
+    builder=lambda actor, target, coord, char=None: {
+        "type": "HIDE", "character": actor,
+        "consumes": ["bonus_action"],
+    },
+))
+
+_register(ClassAbility(
     skill_id="uncanny_dodge_at",
     display_name="閃避直覺",
     class_id="rogue",

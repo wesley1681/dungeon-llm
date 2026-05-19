@@ -1707,8 +1707,16 @@ def format_result(action: dict, result: dict, actor_name: str = "") -> str:
             dmg_extras = _format_damage_breakdown(
                 result.get("damage_base_roll"), dmg_mod, result.get("damage_modifiers"),
             )
+            bonus_parts = []
+            if result.get("sneak_attack_damage"):
+                bonus_parts.append(f"偷襲+{result['sneak_attack_damage']}")
+            if result.get("hunters_mark_damage"):
+                bonus_parts.append(f"獵人印記+{result['hunters_mark_damage']}")
+            if result.get("divine_smite_damage"):
+                bonus_parts.append(f"神聖打擊+{result['divine_smite_damage']}")
+            bonus_str = f" [{', '.join(bonus_parts)}]" if bonus_parts else ""
             lines.append(
-                f"造成 {result['damage']} 點傷害（{dice_str}）{dmg_extras}，"
+                f"造成 {result['damage']} 點傷害（{dice_str}）{dmg_extras}{bonus_str}，"
                 f"{result['target_name']} HP {result['target_hp']}/{result['target_max_hp']}（{alive}）"
             )
             if "rider_save_roll" in result:
@@ -1737,8 +1745,26 @@ def format_result(action: dict, result: dict, actor_name: str = "") -> str:
                 dmg_ext  = _format_damage_breakdown(
                     atk.get("damage_base_roll"), dmg_mod, atk.get("damage_modifiers")
                 )
-                line += f"，{atk['damage']} 傷（{atk['damage_dice']}{mod_str}）{dmg_ext}"
+                bonus_parts = []
+                if atk.get("sneak_attack_damage"):
+                    bonus_parts.append(f"偷襲+{atk['sneak_attack_damage']}")
+                if atk.get("hunters_mark_damage"):
+                    bonus_parts.append(f"獵人印記+{atk['hunters_mark_damage']}")
+                if atk.get("divine_smite_damage"):
+                    bonus_parts.append(f"神聖打擊+{atk['divine_smite_damage']}")
+                bonus_str = f" [{', '.join(bonus_parts)}]" if bonus_parts else ""
+                line += f"，{atk['damage']} 傷（{atk['damage_dice']}{mod_str}）{dmg_ext}{bonus_str}"
             lines.append(line)
+            if atk.get("rider_save_roll") is not None:
+                save_ok = atk.get("rider_save_success")
+                rider_stat = atk.get("rider_save_stat", "")
+                rider_roll = atk.get("rider_save_roll")
+                rider_bd = _format_roll_breakdown(atk.get("rider_save_breakdown"))
+                outcome = "成功" if save_ok else "失敗"
+                rider_line = f"    附加：{rider_stat} 豁免 {rider_roll} {rider_bd}：{outcome}"
+                if atk.get("rider_status_applied"):
+                    rider_line += f"，施加 [{atk['rider_status_applied']}]"
+                lines.append(rider_line)
         alive_str = "存活" if result.get("target_alive") else "倒下"
         lines.append(
             f"  合計 {result['total_damage']} 傷，"

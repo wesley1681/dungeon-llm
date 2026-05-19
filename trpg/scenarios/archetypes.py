@@ -207,8 +207,9 @@ def make_divination_wizard(name: str = "Diviner", level: int = 3,
 
     L2: Portent (2 d20 rolls stored at dawn).
     """
+    from trpg.engine.dice import roll as _roll
     if portent_rolls is None:
-        portent_rolls = []
+        portent_rolls = [_roll("1d20"), _roll("1d20")] if level >= 2 else []
     spells = ["魔法飛彈", "燃燒之手"]
     abilities = ["magic_missile", "shield_spell", "burning_hands_div"]
     if level >= 3:
@@ -231,7 +232,7 @@ def make_divination_wizard(name: str = "Diviner", level: int = 3,
     )
     c.archetype_id = "divination"
     c.known_abilities = abilities
-    if level >= 2 and portent_rolls:
+    if portent_rolls:
         c.portent_dice = list(portent_rolls)
     return c
 
@@ -364,7 +365,7 @@ def make_arcane_trickster(name: str = "Arcane Trickster", level: int = 3) -> Cha
     spells = []
     abilities = []
     if level >= 2:
-        abilities.extend(["cunning_action_dash_at", "cunning_action_disengage_at"])
+        abilities.extend(["cunning_action_dash_at", "cunning_action_disengage_at", "cunning_action_hide_at"])
     if level >= 3:
         spells.extend(["霧步"])
     if level >= 5:

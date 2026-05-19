@@ -16,6 +16,7 @@ from .engine.combat import (
     consume_resources, MOVE_BUDGET_M, build_combat_context,
     tick_terrain_damage,
 )
+from .engine.dice import roll
 from .engine.combat_policy import CombatPolicy, HeuristicCombatPolicy, HumanInputPolicy
 from .engine.quests import check_quest_progress, objective_progress_str
 from .engine.status import tick_status_effects
@@ -456,7 +457,7 @@ class GameSession:
                         continue
 
                 # Per-turn resource budget. Sub-actions decrement these.
-                resources = {"action": 1, "movement": MOVE_BUDGET_M}
+                resources = {"action": 1, "bonus_action": 1, "movement": MOVE_BUDGET_M}
                 stop_round = self._take_combat_turn(cid, char, resources, combat.round_number, log)
 
                 # Phase: end of this character's turn
