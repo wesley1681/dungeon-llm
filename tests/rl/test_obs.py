@@ -1,7 +1,22 @@
 import pytest
+import numpy as np
+
+from trpg.engine.character import Character, Stats
+from trpg.engine.combat import setup_combat_positions
+from trpg.engine.items import WEAPON_DEFS
+from trpg.engine.status import Paralyzed
+from trpg.engine.vec2 import Battlefield, TerrainType, Vec2
+from trpg.engine.world_state import CombatState, WorldState
 from trpg.rl.obs import (
-    N_SKILL_SLOTS, N_ENTITY_SLOTS, ENTITY_DIM,
-    N_GRID, GRID_CELL_SIZE_M, BATTLEFIELD_SIZE_M, OBS_KEYS,
+    BATTLEFIELD_SIZE_M,
+    ENTITY_DIM,
+    GRID_CELL_SIZE_M,
+    N_ENTITY_SLOTS,
+    N_GRID,
+    N_SKILL_SLOTS,
+    OBS_KEYS,
+    entities_obs,
+    terrain_obs,
 )
 
 
@@ -13,11 +28,6 @@ def test_schema_constants():
     assert GRID_CELL_SIZE_M == 1.5
     assert BATTLEFIELD_SIZE_M == 30.0
     assert set(OBS_KEYS) == {"skills", "skill_mask", "entities", "resources", "terrain"}
-
-
-import numpy as np
-from trpg.engine.vec2 import Battlefield, TerrainType
-from trpg.rl.obs import terrain_obs, N_GRID
 
 
 def test_terrain_obs_shape_and_dtype():
@@ -56,13 +66,6 @@ def test_terrain_obs_difficult_is_half():
     bf.add_rect_terrain(0.0, 0.0, 3.0, 3.0, TerrainType.DIFFICULT)
     grid = terrain_obs(bf)
     assert grid[0, 0] == 0.5
-
-
-from trpg.engine.character import Character, Stats
-from trpg.engine.world_state import WorldState, CombatState
-from trpg.engine.combat import setup_combat_positions
-from trpg.engine.items import WEAPON_DEFS
-from trpg.rl.obs import entities_obs, N_ENTITY_SLOTS, ENTITY_DIM
 
 
 def _build_1v1_world():
@@ -117,3 +120,47 @@ def test_entities_obs_padding_is_zero():
     # only 1 enemy → rows 4, 5 are padding
     assert np.all(obs[4] == 0.0)
     assert np.all(obs[5] == 0.0)
+
+
+def test_entities_obs_sorts_enemies_by_distance():
+    """When multiple enemies exist, slot 3 = closest, slot 4 = farther."""
+    a = Character(name="agent", race="人類", class_="戰士", level=3,
+                  stats=Stats(STR=14), hp=24, max_hp=24, ac=14,
+                  weapons=[WEAPON_DEFS["長劍"]], is_npc=False)
+    far = Character(name="far", race="哥布林", class_="戰士", level=1,
+                    stats=Stats(STR=10), hp=10, max_hp=10, ac=12,
+                    weapons=[WEAPON_DEFS["短劍"]], is_npc=True, attitude=0)
+    close = Character(name="close", race="哥布林", class_="戰士", level=1,
+                      stats=Stats(STR=10), hp=10, max_hp=10, ac=12,
+                      weapons=[WEAPON_DEFS["短劍"]], is_npc=True, attitude=0)
+    ws = WorldState(characters={"a": a, "far": far, "close": close},
+                    scene="test", pc_ids=["a"], party_ids=["a"])
+    ws.combat = CombatState(active=True, initiative_order=["a", "close", "far"], round_number=1)
+    setup_combat_positions(ws, ws.combat)
+    # Manual placement
+    a.position = Vec2(5.0, 15.0)
+    close.position = Vec2(10.0, 15.0)
+    far.position = Vec2(20.0, 15.0)
+
+    obs = entities_obs(ws, "a")
+    # slot 3 should be "close" (distance 5), slot 4 should be "far" (distance 15)
+    # We can verify via the dist_norm column (index 3)
+    assert obs[3, 3] < obs[4, 3], "closer enemy should have smaller dist_norm"
+
+
+def test_entities_obs_has_debuff_flag():
+    """has_debuff flag is set when a debuff status is on the character."""
+    ws = _build_1v1_world()
+    ws.characters["b"].status_effects.append(Paralyzed())
+    obs = entities_obs(ws, "a")
+    # enemy "b" is at slot 3, has_debuff is column 7
+    assert obs[3, 7] == 1.0
+
+
+def test_entities_obs_dead_chars_excluded():
+    """Dead characters are not placed in slots."""
+    ws = _build_1v1_world()
+    ws.characters["b"].hp = 0
+    obs = entities_obs(ws, "a")
+    # slot 3 (enemy_1) should be all zeros since b is dead
+    assert np.all(obs[3] == 0.0)

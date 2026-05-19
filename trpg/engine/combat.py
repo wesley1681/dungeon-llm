@@ -1252,7 +1252,7 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
         round_num = world_state.combat.round_number if world_state.combat else 0
         char.add_status(StatusEffect(
             name="disengaging", expires_on="self_turn_start",
-            applied_round=round_num,
+            applied_round=round_num, kind="buff",
         ))
         return {"type": "DISENGAGE", "character": char.name}
 

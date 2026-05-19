@@ -29,6 +29,12 @@ class StatusEffect(Modifier):
     applied_round: int = 0
     source_id: str = ""                  # caster ID for concentration / cleanup
     metadata: dict = field(default_factory=dict)
+    # Whether this effect helps ("buff"), hurts ("debuff"), or is tactical/
+    # neutral ("neutral"). Read by observation extractors (e.g. RL obs's
+    # has_debuff flag) and any other code that needs to classify effects
+    # without maintaining a separate name allowlist. Subclasses override the
+    # default by setting kind="buff" / "neutral" in their __init__.
+    kind: str = "debuff"
 
 
 class Dodging(StatusEffect):
@@ -39,6 +45,7 @@ class Dodging(StatusEffect):
             name="dodging",
             expires_on="self_turn_start",
             applied_round=applied_round,
+            kind="buff",
         )
 
     def on_incoming_attack(self, defender, attacker, weapon, mode: str) -> str:
@@ -48,15 +55,17 @@ class Dodging(StatusEffect):
 class Hidden(StatusEffect):
     """Successful HIDE action. Persists until broken (not auto-expired here)."""
     def __init__(self, applied_round: int = 0):
-        super().__init__(name="hidden", expires_on="never", applied_round=applied_round)
+        super().__init__(name="hidden", expires_on="never",
+                         applied_round=applied_round, kind="buff")
 
 
 class Reckless(StatusEffect):
     """Reckless Attack rider. Lasts until the attacker's next turn — until
-    then, attacks against them have advantage."""
+    then, attacks against them have advantage. Tactical self-imposed effect
+    (trades vulnerability for advantage on this turn), so classed neutral."""
     def __init__(self, applied_round: int = 0):
         super().__init__(name="reckless", expires_on="self_turn_start",
-                         applied_round=applied_round)
+                         applied_round=applied_round, kind="neutral")
     def on_incoming_attack(self, defender, attacker, weapon, mode: str) -> str:
         return combine_advantage(mode, "advantage")
 
@@ -68,7 +77,7 @@ class Blessed(StatusEffect):
         super().__init__(
             name="blessed", expires_on="never",
             rounds_remaining=10, applied_round=applied_round,
-            source_id=source_id,
+            source_id=source_id, kind="buff",
         )
     def on_outgoing_attack_total(self, attacker, target, weapon, total: int) -> int:
         from .dice import roll
@@ -83,7 +92,7 @@ class Shielded(StatusEffect):
     Auto-attached by the engine when a Shield reaction fires."""
     def __init__(self, applied_round: int = 0):
         super().__init__(name="shielded", expires_on="self_turn_start",
-                         applied_round=applied_round)
+                         applied_round=applied_round, kind="buff")
     def on_compute_ac(self, char, current_ac: int) -> int:
         return current_ac + 5
 
@@ -97,6 +106,7 @@ class Raging(StatusEffect):
         super().__init__(
             name="raging", expires_on="never",
             rounds_remaining=10, applied_round=applied_round,
+            kind="buff",
         )
     def on_outgoing_damage(self, attacker, target, amount: int, dtype: str) -> int:
         return amount + 2 if dtype in self._PHYSICAL else amount
@@ -211,7 +221,8 @@ class Evasion(StatusEffect):
     """
     def __init__(self, applied_round: int = 0, source_id: str = ""):
         super().__init__(name="evasion", expires_on="never",
-                         applied_round=applied_round, source_id=source_id)
+                         applied_round=applied_round, source_id=source_id,
+                         kind="buff")
 
     def on_incoming_save_damage(self, char, stat: str, success: bool,
                                 amount: int) -> int:
@@ -232,7 +243,8 @@ class Blurred(StatusEffect):
     """Blur spell (L2 concentration). All attacks against this creature have disadvantage."""
     def __init__(self, applied_round: int = 0, source_id: str = ""):
         super().__init__(name="blurred", expires_on="never",
-                         applied_round=applied_round, source_id=source_id)
+                         applied_round=applied_round, source_id=source_id,
+                         kind="buff")
     def on_incoming_attack(self, defender, attacker, weapon, mode: str) -> str:
         return combine_advantage(mode, "disadvantage")
 
@@ -256,7 +268,7 @@ class SacredWeaponBuff(StatusEffect):
     def __init__(self, applied_round: int = 0, source_id: str = ""):
         super().__init__(name="sacred_weapon_buff", expires_on="never",
                          rounds_remaining=10, applied_round=applied_round,
-                         source_id=source_id)
+                         source_id=source_id, kind="buff")
     def on_outgoing_attack_total(self, attacker, target, weapon, total: int) -> int:
         return total + 3
 
@@ -267,7 +279,8 @@ class ShieldOfFaith(StatusEffect):
     def __init__(self, applied_round: int = 0, source_id: str = ""):
         super().__init__(name="shield_of_faith", expires_on="never",
                          rounds_remaining=100,    # ~10 min in 6-second rounds
-                         applied_round=applied_round, source_id=source_id)
+                         applied_round=applied_round, source_id=source_id,
+                         kind="buff")
     def on_compute_ac(self, char, current_ac: int) -> int:
         return current_ac + 2
 
