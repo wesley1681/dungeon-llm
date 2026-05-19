@@ -344,7 +344,7 @@ def from_spell(spell, char) -> Skill:
             "consumes":   ["action"],
         }
         if coord is not None:
-            action["target_position"] = [float(coord[0]), float(coord[1])]
+            action["target_position"] = [float(coord.x), float(coord.y)]
         elif target_id:
             action["target"] = target_id
         else:
