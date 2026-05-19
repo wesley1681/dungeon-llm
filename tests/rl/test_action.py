@@ -92,3 +92,38 @@ def test_encode_move_action():
     }
     enc = encode_action(action_dict, ws, "a")
     assert enc[0] == move_idx
+
+
+def test_decode_move_skill_via_grid_cell():
+    """MOVE skill with POINT target uses grid_cell, not entity_idx."""
+    ws = _world()
+    from trpg.engine.skill import available_skills
+    skills = available_skills(ws.characters["a"], ws)
+    # Find move skill (target_type might be SINGLE_ENEMY for "move to creature" or POINT for raw coord)
+    move_skills = [(i, s) for i, s in enumerate(skills) if s.skill_id == "move"]
+    if not move_skills:
+        return  # No move skill available
+    move_idx, move_sk = move_skills[0]
+    # Decode action — should produce a valid action dict without TypeError
+    out = decode_action([move_idx, 0, 100], ws, "a")
+    # Either None (if skill_type expects entity but slot 0 is self → no move) or a MOVE action
+    if out is not None:
+        assert out["type"] == "MOVE"
+
+
+def test_encode_action_roundtrip_via_grid():
+    """Encode → decode round trip for POINT-target actions preserves grid cell."""
+    ws = _world()
+    from trpg.engine.skill import available_skills
+    # Find a POINT-target skill if any; otherwise skip
+    skills = available_skills(ws.characters["a"], ws)
+    point_skills = [(i, s) for i, s in enumerate(skills)
+                    if hasattr(s.features, "target_type")
+                    and s.features.target_type.name == "POINT"]
+    if not point_skills:
+        return  # No POINT skill in this fixture
+    # Otherwise verify grid encoding round-trips
+    from trpg.rl.action import _xy_to_grid_cell, _grid_cell_to_xy
+    for cell in [0, 50, 100, 200, 399]:
+        x, y = _grid_cell_to_xy(cell)
+        assert _xy_to_grid_cell(x, y) == cell

@@ -97,12 +97,16 @@ def _xy_to_grid_cell(x: float, y: float) -> int:
     return ix * N_GRID + iy
 
 
-def _match_skill_idx(action_dict: dict, agent, ws: WorldState) -> int:
+def _match_skill_idx(action_dict: dict, agent, agent_id: str, ws: WorldState) -> int:
     """Find the skill_idx whose builder would have produced this action dict.
 
     Strategy: match on action ``type`` plus the most-discriminative key
     (``weapon_index`` / ``modifier`` / ``spell_name``). Falls back to skill_id
     inference for MOVE-style actions.
+
+    For weapon/spell matches we prefer exact ``skill_id == "weapon:<name>"`` /
+    ``"spell:<name>"`` equality; a substring fallback only kicks in when no
+    exact match exists, to avoid collisions like "短劍" ⊂ "雙手短劍".
     """
     skills = available_skills(agent, ws)
     a_type = action_dict.get("type")
@@ -116,18 +120,20 @@ def _match_skill_idx(action_dict: dict, agent, ws: WorldState) -> int:
 
     if a_type == "ATTACK":
         weapon_name = action_dict.get("weapon", "")
+        target_skill_id = f"weapon:{weapon_name}"
+        # Exact match first.
         for i, s in enumerate(skills):
-            if s.skill_id.startswith("weapon:") and weapon_name in s.skill_id:
+            if s.skill_id == target_skill_id:
+                return i
+        # Substring fallback for safety.
+        for i, s in enumerate(skills):
+            if s.skill_id.startswith("weapon:") and weapon_name and weapon_name in s.skill_id:
                 return i
         # Fall through: some ClassAbility builders also emit ATTACK
-        # (e.g. reckless_attack). Match by full action dict structure.
+        # (e.g. reckless_attack). Probe each builder with the real agent_id.
         for i, s in enumerate(skills):
             try:
-                probe = s.builder(
-                    agent.char_id if hasattr(agent, "char_id") else "",
-                    action_dict.get("target"),
-                    None,
-                )
+                probe = s.builder(agent_id, action_dict.get("target"), None)
                 if probe and probe.get("type") == "ATTACK":
                     return i
             except Exception:
@@ -137,8 +143,12 @@ def _match_skill_idx(action_dict: dict, agent, ws: WorldState) -> int:
     # SPELL by spell_name
     if a_type == "SPELL":
         spell_name = action_dict.get("spell_name", "")
+        target_skill_id = f"spell:{spell_name}"
         for i, s in enumerate(skills):
-            if s.skill_id.startswith("spell:") and spell_name in s.skill_id:
+            if s.skill_id == target_skill_id:
+                return i
+        for i, s in enumerate(skills):
+            if s.skill_id.startswith("spell:") and spell_name and spell_name in s.skill_id:
                 return i
 
     # APPLY_MOD by modifier name
@@ -164,7 +174,7 @@ def encode_action(action_dict: dict | None, ws: WorldState, agent_id: str) -> tu
         return (0, 0, 0)
 
     agent = ws.characters[agent_id]
-    skill_idx = _match_skill_idx(action_dict, agent, ws)
+    skill_idx = _match_skill_idx(action_dict, agent, agent_id, ws)
 
     # Entity slot
     target_id = (action_dict.get("target") or action_dict.get("character")

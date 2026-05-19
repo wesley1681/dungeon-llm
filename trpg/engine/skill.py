@@ -23,6 +23,8 @@ from typing import Callable
 
 import numpy as np
 
+from .vec2 import Vec2
+
 
 # ── Schema enums (orderings are frozen — append-only) ────────────────────────
 
@@ -392,8 +394,10 @@ def move_skill(char, budget_m: float = 9.0) -> Skill:
 
     def builder(actor_id, target_id, coord):
         if coord is not None:
+            # Accept Vec2 (no __getitem__), tuple, or list uniformly.
+            cx, cy = Vec2.coerce(coord).x, Vec2.coerce(coord).y
             return {"type": "MOVE", "character": actor_id,
-                    "target_position": [float(coord[0]), float(coord[1])],
+                    "target_position": [float(cx), float(cy)],
                     "consumes": ["movement"]}
         if target_id:
             return {"type": "MOVE", "character": actor_id, "target": target_id,
