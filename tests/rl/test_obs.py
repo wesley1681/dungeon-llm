@@ -213,6 +213,42 @@ def test_resources_obs_after_action_spent():
     assert out[3] == pytest.approx(0.5)
 
 
+def test_partition_entities_excludes_self_and_dead():
+    from trpg.rl.obs import partition_entities
+    ws = _build_1v1_world()
+    allies, enemies = partition_entities(ws, "a")
+    assert "a" not in allies and "a" not in enemies
+    assert allies == []
+    assert enemies == ["b"]
+
+
+def test_partition_entities_sorts_enemies_by_distance():
+    from trpg.rl.obs import partition_entities
+    from trpg.engine.character import Character, Stats
+    from trpg.engine.world_state import WorldState, CombatState
+    from trpg.engine.combat import setup_combat_positions
+    from trpg.engine.items import WEAPON_DEFS
+    from trpg.engine.vec2 import Vec2
+    a = Character(name="a", race="人類", class_="戰士", level=3,
+                  stats=Stats(STR=14), hp=24, max_hp=24, ac=14,
+                  weapons=[WEAPON_DEFS["長劍"]], is_npc=False)
+    close = Character(name="c", race="哥布林", class_="戰士", level=1,
+                      stats=Stats(STR=10), hp=10, max_hp=10, ac=12,
+                      weapons=[WEAPON_DEFS["短劍"]], is_npc=True, attitude=0)
+    far = Character(name="f", race="哥布林", class_="戰士", level=1,
+                    stats=Stats(STR=10), hp=10, max_hp=10, ac=12,
+                    weapons=[WEAPON_DEFS["短劍"]], is_npc=True, attitude=0)
+    ws = WorldState(characters={"a": a, "close": close, "far": far},
+                    scene="test", pc_ids=["a"], party_ids=["a"])
+    ws.combat = CombatState(active=True, initiative_order=["a","close","far"], round_number=1)
+    setup_combat_positions(ws, ws.combat)
+    a.position = Vec2(5.0, 15.0)
+    close.position = Vec2(10.0, 15.0)
+    far.position = Vec2(20.0, 15.0)
+    _, enemies = partition_entities(ws, "a")
+    assert enemies == ["close", "far"]
+
+
 def test_build_obs_returns_all_5_keys():
     ws = _build_1v1_world()
     res = {"action": 1, "bonus_action": 1, "movement": 9.0}

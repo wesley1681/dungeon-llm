@@ -15,7 +15,8 @@ from typing import Sequence
 
 from ..engine.world_state import WorldState
 from ..engine.skill import available_skills, TargetType
-from .obs import N_SKILL_SLOTS, N_ENTITY_SLOTS, N_GRID, GRID_CELL_SIZE_M
+from ..engine.vec2 import Vec2
+from .obs import N_SKILL_SLOTS, N_ENTITY_SLOTS, N_GRID, GRID_CELL_SIZE_M, partition_entities
 
 
 ACTION_DIMS: tuple[int, int, int] = (N_SKILL_SLOTS, N_ENTITY_SLOTS, N_GRID * N_GRID)
@@ -28,20 +29,7 @@ def _entity_id_at_slot(ws: WorldState, agent_id: str, slot: int) -> str | None:
     """
     if slot == 0:
         return agent_id
-    self_char = ws.characters[agent_id]
-    is_party = ws.is_party_ally(agent_id)
-
-    allies, enemies = [], []
-    for cid, c in ws.characters.items():
-        if cid == agent_id or not c.is_alive():
-            continue
-        other_is_party = ws.is_party_ally(cid)
-        if is_party == other_is_party:
-            allies.append(cid)
-        else:
-            enemies.append(cid)
-
-    enemies.sort(key=lambda cid: self_char.position.distance_to(ws.characters[cid].position))
+    allies, enemies = partition_entities(ws, agent_id)
 
     if 1 <= slot <= 2:
         idx = slot - 1
@@ -55,7 +43,7 @@ def _entity_id_at_slot(ws: WorldState, agent_id: str, slot: int) -> str | None:
 def _grid_cell_to_xy(cell: int) -> tuple[float, float]:
     """Decode a 0..N_GRID*N_GRID-1 cell index to (x, y) world coords at cell centre."""
     ix = cell // N_GRID
-    iy = cell %  N_GRID
+    iy = cell % N_GRID
     return (ix + 0.5) * GRID_CELL_SIZE_M, (iy + 0.5) * GRID_CELL_SIZE_M
 
 
@@ -85,8 +73,6 @@ def decode_action(action: Sequence[int], ws: WorldState, agent_id: str) -> dict 
         target_pos = ws.characters[target_id].position
         return sk.builder(agent_id, target_id, target_pos)
     if tt == TargetType.POINT:
-        from ..engine.vec2 import Vec2
         return sk.builder(agent_id, None, Vec2(coord_x, coord_y))
     # LINE/CONE fall back to POINT semantics
-    from ..engine.vec2 import Vec2
     return sk.builder(agent_id, target_id, Vec2(coord_x, coord_y))

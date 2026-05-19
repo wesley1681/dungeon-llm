@@ -97,6 +97,28 @@ def _debuff_names() -> frozenset[str]:
 _DEBUFF_NAMES = _debuff_names()
 
 
+def partition_entities(ws: WorldState, agent_id: str) -> tuple[list[str], list[str]]:
+    """Partition live characters (excluding self) into (allies, enemies_sorted_by_distance).
+
+    Both lists contain char_ids. Enemy ordering is the slot ordering used by
+    entities_obs (slot 3 = enemies[0] = closest).
+    """
+    self_char = ws.characters[agent_id]
+    is_party = ws.is_party_ally(agent_id)
+    allies: list[str] = []
+    enemies: list[str] = []
+    for cid, c in ws.characters.items():
+        if cid == agent_id or not c.is_alive():
+            continue
+        other_is_party = ws.is_party_ally(cid)
+        if is_party == other_is_party:
+            allies.append(cid)
+        else:
+            enemies.append(cid)
+    enemies.sort(key=lambda cid: self_char.position.distance_to(ws.characters[cid].position))
+    return allies, enemies
+
+
 def _entity_row(char: Character, self_char: Character,
                 bf_size_x: float, bf_size_y: float,
                 is_self: bool, is_enemy: bool) -> np.ndarray:
@@ -141,27 +163,15 @@ def entities_obs(ws: WorldState, agent_id: str) -> np.ndarray:
     out[0] = _entity_row(self_char, self_char, bf_size_x, bf_size_y,
                          is_self=True, is_enemy=False)
 
-    # Partition others
-    allies, enemies = [], []
-    is_party = ws.is_party_ally(agent_id)
-    for cid, c in ws.characters.items():
-        if cid == agent_id or not c.is_alive():
-            continue
-        other_is_party = ws.is_party_ally(cid)
-        if is_party == other_is_party:
-            allies.append(c)
-        else:
-            enemies.append(c)
-
-    enemies.sort(key=lambda c: self_char.position.distance_to(c.position))
+    ally_ids, enemy_ids = partition_entities(ws, agent_id)
 
     # Rows 1..2: allies (truncate at 2)
-    for i, ally in enumerate(allies[:2]):
-        out[1 + i] = _entity_row(ally, self_char, bf_size_x, bf_size_y,
+    for i, cid in enumerate(ally_ids[:2]):
+        out[1 + i] = _entity_row(ws.characters[cid], self_char, bf_size_x, bf_size_y,
                                   is_self=False, is_enemy=False)
     # Rows 3..5: enemies (truncate at 3)
-    for i, enemy in enumerate(enemies[:3]):
-        out[3 + i] = _entity_row(enemy, self_char, bf_size_x, bf_size_y,
+    for i, cid in enumerate(enemy_ids[:3]):
+        out[3 + i] = _entity_row(ws.characters[cid], self_char, bf_size_x, bf_size_y,
                                   is_self=False, is_enemy=True)
     return out
 
