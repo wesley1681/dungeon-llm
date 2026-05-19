@@ -108,7 +108,12 @@ def watch(net, agent_arch, opponent_arch, level, seed, device):
               f"  [agent HP {agent.hp}/{agent.max_hp}]")
 
     print("\n" + "=" * 60)
-    winner = "Agent 勝" if agent.is_alive() else "Opponent 勝"
+    if not opp.is_alive():
+        winner = "Agent 勝"
+    elif not agent.is_alive():
+        winner = "Opponent 勝"
+    else:
+        winner = "平局（截斷）"
     print(f"結果: {winner}  (agent HP={agent.hp}, opp HP={opp.hp})")
 
 

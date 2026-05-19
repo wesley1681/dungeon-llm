@@ -126,9 +126,7 @@ class CombatEnvV2:
 
         turn_done = (
             action_dict is None
-            or (self.resources["action"] <= 0
-                and self.resources["bonus_action"] <= 0
-                and self.resources["movement"] <= 1e-6)
+            or self.resources["action"] <= 0   # once main action is spent, end turn
         )
         if turn_done:
             tick_status_effects(agent, "self_turn_end", self.ws.combat.round_number)

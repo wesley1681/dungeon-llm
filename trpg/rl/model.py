@@ -113,10 +113,13 @@ def apply_resource_mask(skill_logits: "torch.Tensor",
     """
     import torch
     has_action = resources.get("action", 0) > 0
+    has_move   = resources.get("movement", 0.0) > 1e-6
+
+    skill_logits = skill_logits.clone()
     if has_action:
         # Prevent END while the agent still has their main action to spend.
-        # Bonus-action and movement are optional — the agent can legitimately
-        # choose not to use them, so we don't force a non-END choice there.
-        skill_logits = skill_logits.clone()
         skill_logits[..., 0] = -1e9
+    if not has_move:
+        # Prevent MOVE when movement budget is exhausted (slot 1 is always MOVE).
+        skill_logits[..., 1] = -1e9
     return skill_logits

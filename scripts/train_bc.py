@@ -85,7 +85,7 @@ def main():
             action = [int(s[0].argmax(-1)), int(e.argmax(-1)), int(g.argmax(-1))]
             obs, _, term, trunc, _ = env.step(action)
             done = term or trunc
-        if env.ws.characters["agent"].is_alive():
+        if not env.ws.characters["opponent"].is_alive():
             wins += 1
     win_rate = wins / n_eval
     print(f"   Win rate: {win_rate:.0%}  ({wins}/{n_eval})")
