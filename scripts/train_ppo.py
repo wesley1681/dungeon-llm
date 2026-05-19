@@ -68,6 +68,11 @@ def main():
                         help="use smaller LR than BC to avoid forgetting")
     parser.add_argument("--out_dir", type=str, default="models")
     parser.add_argument("--eval_every", type=int, default=10)
+    parser.add_argument("--self_play", action="store_true",
+                        help="after curriculum, train against a frozen snapshot "
+                             "of the current model instead of expert ArchetypePolicy")
+    parser.add_argument("--snapshot_every", type=int, default=10,
+                        help="refresh self-play opponent snapshot every N updates")
     args = parser.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -92,14 +97,34 @@ def main():
     # the "best" checkpoint reflects a real improvement, not a lucky eval.
     best_margin = 0.03
 
+    # Self-play opponent — frozen snapshot, refreshed every snapshot_every updates
+    opponent_net = None
+    if args.self_play:
+        from copy import deepcopy
+        opponent_net = deepcopy(net).to("cpu").eval()
+        print(f"  [self-play] initial opponent snapshot frozen "
+              f"(refresh every {args.snapshot_every} updates)")
+
     for update in range(1, args.updates + 1):
         use_heuristic = (update <= args.curriculum)
+        # Once past curriculum, choose between expert ArchetypePolicy (default)
+        # or self-play. Heuristic curriculum still uses HeuristicCombatPolicy.
         if update == args.curriculum + 1:
-            print(f"  [curriculum] switching to expert opponents at update {update}")
+            mode = "self-play" if args.self_play else "expert opponents"
+            print(f"  [curriculum] switching to {mode} at update {update}")
+        # Refresh self-play snapshot at the start of each interval
+        if (args.self_play and update > args.curriculum
+                and (update - args.curriculum - 1) % args.snapshot_every == 0):
+            from copy import deepcopy
+            opponent_net = deepcopy(net).to("cpu").eval()
+            print(f"  [self-play] opponent snapshot refreshed at update {update}")
+        active_opponent = (opponent_net if (args.self_play and not use_heuristic)
+                           else None)
         batch = collect_ppo_rollout(net, n_steps=args.steps,
                                     n_envs=args.n_envs,
                                     seed=update, device=device,
-                                    use_heuristic_opponent=use_heuristic)
+                                    use_heuristic_opponent=use_heuristic,
+                                    opponent_net=active_opponent)
         info = ppo_update(net, batch, optim,
                           n_epochs=args.epochs, batch_size=args.batch,
                           ent_coef=args.ent_coef,

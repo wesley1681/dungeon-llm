@@ -61,7 +61,7 @@ def _compute_gae(rewards: np.ndarray, values: np.ndarray, dones: np.ndarray,
 
 def _worker_collect(args: tuple) -> dict:
     """Run a sub-rollout on CPU in a worker process."""
-    state_dict_bytes, n_steps, seed, gamma, gae_lambda, use_heuristic = args
+    state_dict_bytes, n_steps, seed, gamma, gae_lambda, use_heuristic, opp_state_bytes = args
     import torch, numpy as np
 
     # Recreate model on CPU from serialised weights
@@ -72,10 +72,16 @@ def _worker_collect(args: tuple) -> dict:
     net.load_state_dict(torch.load(io.BytesIO(state_dict_bytes), map_location="cpu"))
     net.eval()
 
-    env  = CombatEnvV2(seed=seed)
-    obs, _ = env.reset()
+    env = CombatEnvV2(seed=seed)
+    # Set opponent override BEFORE reset so it applies to the first episode too.
     if use_heuristic:
         env.use_heuristic_opponent()
+    elif opp_state_bytes is not None:
+        opp_net = CombatPolicyNet()
+        opp_net.load_state_dict(torch.load(io.BytesIO(opp_state_bytes), map_location="cpu"))
+        opp_net.eval()
+        env.use_self_play_opponent(opp_net)
+    obs, _ = env.reset()
     obs_list, action_list, lp_list, reward_list, value_list, done_list = [], [], [], [], [], []
 
     for _ in range(n_steps):
@@ -130,28 +136,34 @@ def collect_ppo_rollout(net: CombatPolicyNet, n_steps: int = 1024,
                         device: str = "cuda", seed: int = 0,
                         gamma: float = 0.99,
                         gae_lambda: float = 0.95,
-                        use_heuristic_opponent: bool = False) -> dict:
+                        use_heuristic_opponent: bool = False,
+                        opponent_net: CombatPolicyNet | None = None) -> dict:
     """Collect an on-policy rollout, optionally using parallel workers.
 
     n_envs > 1  spawns worker processes (one per env). Each worker gets
     n_steps // n_envs steps. Total data = n_steps regardless of n_envs.
+
+    If `opponent_net` is provided (and use_heuristic_opponent is False), the
+    opponent in each env is driven by that network — self-play mode.
     """
     if n_envs > 1:
         return _collect_parallel(net, n_steps, n_envs, device, seed, gamma,
-                                 gae_lambda, use_heuristic_opponent)
+                                 gae_lambda, use_heuristic_opponent, opponent_net)
     return _collect_sequential(net, n_steps, device, seed, gamma, gae_lambda,
-                               use_heuristic_opponent)
+                               use_heuristic_opponent, opponent_net)
 
 
 def _collect_sequential(net, n_steps, device, seed, gamma, gae_lambda,
-                         use_heuristic=False) -> dict:
+                         use_heuristic=False, opponent_net=None) -> dict:
     if device == "cuda" and not torch.cuda.is_available():
         device = "cpu"
     net.to(device).eval()
-    env  = CombatEnvV2(seed=seed)
-    obs, _ = env.reset()
+    env = CombatEnvV2(seed=seed)
     if use_heuristic:
         env.use_heuristic_opponent()
+    elif opponent_net is not None:
+        env.use_self_play_opponent(opponent_net)
+    obs, _ = env.reset()
     obs_list, action_list, lp_list, reward_list, value_list, done_list = [], [], [], [], [], []
 
     for _ in range(n_steps):
@@ -206,16 +218,22 @@ def _get_pool(n_envs: int):
 
 
 def _collect_parallel(net, n_steps, n_envs, device, seed, gamma, gae_lambda,
-                       use_heuristic=False) -> dict:
+                       use_heuristic=False, opponent_net=None) -> dict:
     # Serialise weights — workers deserialise on CPU
     buf = io.BytesIO()
     torch.save(net.to("cpu").state_dict(), buf)
     net.to(device)
     state_bytes = buf.getvalue()
 
+    opp_bytes = None
+    if opponent_net is not None:
+        ob = io.BytesIO()
+        torch.save(opponent_net.to("cpu").state_dict(), ob)
+        opp_bytes = ob.getvalue()
+
     steps_per_env = n_steps // n_envs
     worker_args = [
-        (state_bytes, steps_per_env, seed + i, gamma, gae_lambda, use_heuristic)
+        (state_bytes, steps_per_env, seed + i, gamma, gae_lambda, use_heuristic, opp_bytes)
         for i in range(n_envs)
     ]
 

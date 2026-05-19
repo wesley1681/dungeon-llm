@@ -49,6 +49,11 @@ class CombatEnvV2:
         self.agent_arch: str = ""
         self.opponent_arch: str = ""
         self._opponent_policy = None
+        # Persistent opponent-policy preference across reset(). One of:
+        #   None    — use the archetype-specific expert policy (default)
+        #   "heuristic"  — use HeuristicCombatPolicy
+        #   net (callable) — drive opponent with this network (self-play)
+        self._opponent_override = None
 
     def reset(self, *, agent_arch: str | None = None,
               opponent_arch: str | None = None,
@@ -82,7 +87,15 @@ class CombatEnvV2:
         setup_combat_positions(self.ws, self.ws.combat)
         self._apply_layout(layout)
 
-        self._opponent_policy = make_archetype_policy(self.opponent_arch)
+        if self._opponent_override is None:
+            self._opponent_policy = make_archetype_policy(self.opponent_arch)
+        elif self._opponent_override == "heuristic":
+            from ..engine.combat_policy import HeuristicCombatPolicy
+            self._opponent_policy = HeuristicCombatPolicy()
+        else:
+            # Network checkpoint — wrap it for the engine
+            from .neural_policy import NeuralCombatPolicy
+            self._opponent_policy = NeuralCombatPolicy(self._opponent_override, device="cpu")
         self.resources = {"action": 1, "bonus_action": 1, "movement": MOVE_BUDGET_M}
         self._step_count = 0
 
@@ -94,9 +107,16 @@ class CombatEnvV2:
         return build_obs(self.ws, _AGENT_ID, self.resources), {}
 
     def use_heuristic_opponent(self) -> None:
-        """Switch to weak HeuristicCombatPolicy — for curriculum warm-up."""
+        """Switch to weak HeuristicCombatPolicy across resets (curriculum)."""
         from ..engine.combat_policy import HeuristicCombatPolicy
+        self._opponent_override = "heuristic"
         self._opponent_policy = HeuristicCombatPolicy()
+
+    def use_self_play_opponent(self, net) -> None:
+        """Drive the opponent with a network across resets (self-play)."""
+        from .neural_policy import NeuralCombatPolicy
+        self._opponent_override = net
+        self._opponent_policy = NeuralCombatPolicy(net, device="cpu")
 
     def _apply_layout(self, layout: str) -> None:
         if layout == "open":
