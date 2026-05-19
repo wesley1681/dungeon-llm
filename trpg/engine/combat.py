@@ -836,6 +836,13 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
         battlefield = world_state.combat.battlefield if world_state.combat else None
         targets_spec = action.get("targets", [])
 
+        if not targets_spec:
+            raise RuntimeError(
+                f"AUTO_DAMAGE built with empty `targets` list — "
+                f"caller would have consumed slot {slot_level} for no effect "
+                f"(attacker={attacker.name})"
+            )
+
         target_results = []
         for spec in targets_spec:
             tid = spec.get("id")
@@ -915,6 +922,13 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
         max_targets = int(action.get("max_targets", len(target_ids) or 1))
         target_ids = target_ids[:max_targets]
         range_m = float(action.get("range_m", 0.0))
+
+        if not target_ids:
+            raise RuntimeError(
+                f"APPLY_MOD built with empty `targets` list — caller would "
+                f"have consumed slot {slot_level} + concentration for no effect "
+                f"(caster={caster.name}, modifier={mod_name})"
+            )
 
         targets = []
         for tid in target_ids:
@@ -1419,7 +1433,8 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
         #     of the centre, scoped to the current room.
         #   Single-target spell (aoe_radius_m == 0): only the named creature.
         #     Coordinate-only casts (target_position with aoe=0) have no
-        #     meaningful target and are rejected upstream by the builder.
+        #     meaningful target — we raise RuntimeError below so the broken
+        #     builder is identified at the call site, not silently no-op'd.
         affected_ids: list[str] = []
         if spell.aoe_radius_m > 0:
             room = world_state.dungeon_map.current_room if world_state.dungeon_map else None
@@ -1439,13 +1454,23 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
         else:
             # Single-target: resolve the explicit creature target.
             target_key = action.get("target", "")
-            if target_key and target_key != "self":
+            if not target_key:
+                # Contract violation: a non-AOE spell needs a creature target.
+                # The builder is expected to set `target`; if we see only
+                # target_position here, the resources/concentration would be
+                # spent on nobody. Fail loud instead of silently no-opping.
+                raise RuntimeError(
+                    f"Non-AOE spell {spell_name!r} cast without `target` — "
+                    f"builder violated contract "
+                    f"(target_position={action.get('target_position')!r})"
+                )
+            if target_key != "self":
                 target_char = _lookup_char(target_key, world_state)
                 tid = next((cid for cid, c in world_state.characters.items()
                             if c is target_char), None) if target_char else None
                 if tid and target_char.is_alive():
                     affected_ids.append(tid)
-            elif target_key == "self":
+            else:
                 # Self-targeted (rare for damage spells) — caster is the single target.
                 caster_id = next((cid for cid, c in world_state.characters.items()
                                   if c is caster), None)

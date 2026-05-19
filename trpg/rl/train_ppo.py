@@ -17,7 +17,7 @@ import torch
 import torch.nn.functional as F
 
 from .env_v2 import CombatEnvV2
-from .model import CombatPolicyNet, apply_resource_mask
+from .model import CombatPolicyNet, apply_resource_mask, apply_entity_mask
 
 
 def _sample_action(net: CombatPolicyNet, obs_t: dict,
@@ -28,6 +28,7 @@ def _sample_action(net: CombatPolicyNet, obs_t: dict,
     skill_l, entity_l, grid_l = net(obs_t)
     if resources is not None:
         skill_l = apply_resource_mask(skill_l, resources, ws, agent_id)
+    entity_l = apply_entity_mask(entity_l, obs_t)
     val = net.value(obs_t).item()
     dists = [torch.distributions.Categorical(logits=x.squeeze(0))
              for x in (skill_l, entity_l, grid_l)]
@@ -64,8 +65,8 @@ def _worker_collect(args: tuple) -> dict:
     import torch, numpy as np
 
     # Recreate model on CPU from serialised weights
-    from trpg.rl.model import CombatPolicyNet, apply_resource_mask
-    from trpg.rl.env_v2 import CombatEnvV2
+    from trpg.rl.model import CombatPolicyNet, apply_resource_mask, apply_entity_mask
+    from trpg.rl.env_v2 import CombatEnvV2, _AGENT_ID
 
     net = CombatPolicyNet()
     net.load_state_dict(torch.load(io.BytesIO(state_dict_bytes), map_location="cpu"))
@@ -81,9 +82,10 @@ def _worker_collect(args: tuple) -> dict:
         obs_t = {k: torch.from_numpy(v).unsqueeze(0) for k, v in obs.items()}
         with torch.no_grad():
             skill_l, entity_l, grid_l = net(obs_t)
-            skill_l = apply_resource_mask(skill_l, env.resources, env.ws, _AGENT_ID)
-            val     = net.value(obs_t).item()
-            dists   = [torch.distributions.Categorical(logits=x.squeeze(0))
+            skill_l  = apply_resource_mask(skill_l, env.resources, env.ws, _AGENT_ID)
+            entity_l = apply_entity_mask(entity_l, obs_t)
+            val      = net.value(obs_t).item()
+            dists    = [torch.distributions.Categorical(logits=x.squeeze(0))
                        for x in (skill_l, entity_l, grid_l)]
             action    = torch.stack([d.sample()    for d    in dists])
             log_prob  = torch.stack([d.log_prob(a) for d, a in zip(dists, action)])

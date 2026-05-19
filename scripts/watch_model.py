@@ -12,7 +12,7 @@ import torch
 import numpy as np
 
 from trpg.rl.env_v2 import CombatEnvV2, ARCHETYPE_LIST, _AGENT_ID, _OPPONENT_ID
-from trpg.rl.model import CombatPolicyNet
+from trpg.rl.model import CombatPolicyNet, apply_entity_mask
 from trpg.rl.obs import N_SKILL_SLOTS
 from trpg.engine.skill import available_skills
 
@@ -62,16 +62,16 @@ def watch(net, agent_arch, opponent_arch, level, seed, device):
 
         # Get model's top-3 skill probabilities
         from trpg.rl.model import apply_resource_mask
-        from trpg.rl.env_v2 import _AGENT_ID
         obs_t = {k: torch.from_numpy(v).unsqueeze(0).to(device) for k, v in obs.items()}
         with torch.no_grad():
             skill_l, entity_l, grid_l = net(obs_t)
-        skill_l = apply_resource_mask(skill_l, env.resources, env.ws, _AGENT_ID)
+        skill_l  = apply_resource_mask(skill_l, env.resources, env.ws, _AGENT_ID)
+        entity_l = apply_entity_mask(entity_l, obs_t)
 
         skill_probs = torch.softmax(skill_l[0], dim=-1).cpu().numpy()
         top3_skills = sorted(enumerate(skill_probs), key=lambda x: -x[1])[:3]
 
-        action = [int(skill_l[0].argmax(-1)), int(entity_l.argmax(-1)), int(grid_l.argmax(-1))]
+        action = [int(skill_l[0].argmax(-1)), int(entity_l[0].argmax(-1)), int(grid_l.argmax(-1))]
         chosen_skill = action[0]
         chosen_entity = action[1]
 

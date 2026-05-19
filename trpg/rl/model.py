@@ -101,52 +101,90 @@ class CombatPolicyNet(nn.Module):
         return self.value_head(h).squeeze(-1)
 
 
+def apply_entity_mask(entity_logits: "torch.Tensor", obs: dict) -> "torch.Tensor":
+    """Mask dead/empty entity slots and self.
+
+    Entity feature layout (from obs.py _entity_row):
+        index 5 = is_alive
+        index 6 = is_self
+    """
+    import torch
+    entities = obs["entities"]
+    if not isinstance(entities, torch.Tensor):
+        entities = torch.from_numpy(entities)
+    entities = entities.to(entity_logits.device)
+    entity_logits = entity_logits.clone()
+    entity_logits = entity_logits.masked_fill(entities[..., 5] < 0.5, -1e9)  # dead/empty
+    entity_logits = entity_logits.masked_fill(entities[..., 6] > 0.5, -1e9)  # self
+    return entity_logits
+
+
 def apply_resource_mask(skill_logits: "torch.Tensor",
                         resources: dict,
                         ws=None, agent_id: str = "") -> "torch.Tensor":
-    """Mask invalid skill slots so the model never picks an unexecutable action.
+    """Mask skill slots that the engine would reject.
 
-    Slot layout (from available_skills()):
-        0 = end
-        1 = move
-        2+ = weapons, spells, class abilities, dodge, hide
+    Iterates the current `available_skills()` list and masks any skill that:
+      - is MOVE while the agent has no remaining movement budget
+      - is a non-SELF skill whose range_m < distance to nearest enemy
 
-    Masks applied:
-    - slot 0 (END):  blocked while action > 0
-    - slot 1 (MOVE): blocked when movement == 0
-    - weapon slots:  blocked when nearest enemy is outside weapon range
-                     (requires ws + agent_id to be passed)
+    Slot positions are dynamic — they come from `available_skills`, so this
+    function must look up each skill's features/skill_id, never assume a slot.
     """
     import torch
-    has_action = resources.get("action", 0) > 0
-    has_move   = resources.get("movement", 0.0) > 1e-6
-
     skill_logits = skill_logits.clone()
-    if has_action:
-        skill_logits[..., 0] = -1e9
-    if not has_move:
-        skill_logits[..., 1] = -1e9
+    if ws is None or not agent_id:
+        return skill_logits
 
-    # Mask weapon-attack slots when nearest enemy is out of reach
-    if ws is not None and agent_id and has_action:
+    from .obs import partition_entities
+    from ..engine.skill import available_skills, TargetType
+    agent = ws.characters[agent_id]
+    allies, enemies = partition_entities(ws, agent_id)
+    enemy_dist: float | None = None
+    if enemies:
+        enemy_dist = agent.position.distance_to(ws.characters[enemies[0]].position)
+    ally_dist: float | None = None
+    if allies:
+        ally_dist = agent.position.distance_to(ws.characters[allies[0]].position)
+
+    # Fallback range for melee class abilities that leave range_m=0 in their
+    # features (engine resolves the actual reach from the wielded weapon).
+    fallback_reach = 1.5
+    if agent.weapons:
         try:
-            from .obs import partition_entities
-            from ..engine.skill import available_skills
-            agent = ws.characters[agent_id]
-            _, enemies = partition_entities(ws, agent_id)
-            if enemies:
-                nearest = ws.characters[enemies[0]]
-                dist = agent.position.distance_to(nearest.position)
-                skills = available_skills(agent, ws)
-                for i, sk in enumerate(skills):
-                    if i >= skill_logits.shape[-1]:
-                        break
-                    if sk.skill_id.startswith("weapon:"):
-                        # Get weapon range from the skill features
-                        weapon_range = getattr(sk.features, "range_m", 1.5) or 1.5
-                        if dist > weapon_range + 1e-6:
-                            skill_logits[..., i] = -1e9
+            fallback_reach = float(agent.get_weapon().range_normal)
         except Exception:
-            pass   # never crash inference due to mask logic
+            pass
+
+    has_move = resources.get("movement", 0.0) > 1e-6
+    skills = available_skills(agent, ws)
+    for i, sk in enumerate(skills):
+        if i >= skill_logits.shape[-1]:
+            break
+        if sk.skill_id == "move":
+            if not has_move:
+                skill_logits[..., i] = -1e9
+            continue
+        tt = sk.features.target_type
+        if tt == TargetType.SELF:
+            continue
+        # Pick the relevant target distance for the skill's target type.
+        if tt == TargetType.SINGLE_ALLY:
+            target_dist = ally_dist if ally_dist is not None else (
+                0.0 if agent.weapons else None  # self-heal via touch is OK
+            )
+            # Heal-touch skills target self when no ally → distance is 0
+            if not allies:
+                target_dist = 0.0
+        else:
+            target_dist = enemy_dist
+        if target_dist is None:
+            skill_logits[..., i] = -1e9
+            continue
+        rng = float(getattr(sk.features, "range_m", 0.0) or 0.0)
+        if rng <= 0.0:
+            rng = fallback_reach
+        if target_dist > rng + 1e-6:
+            skill_logits[..., i] = -1e9
 
     return skill_logits

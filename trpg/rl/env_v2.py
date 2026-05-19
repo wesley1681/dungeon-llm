@@ -1,3 +1,4 @@
+
 """Phase 2 RL combat environment.
 
 Dict observation, MultiDiscrete action. See
@@ -21,6 +22,8 @@ from ..engine.status import tick_status_effects
 from ..scenarios.archetypes import ARCHETYPE_FACTORIES
 from .obs import build_obs
 from .action import decode_action, ACTION_DIMS
+from ..engine.skill import available_skills
+from ..engine.abilities import CLASS_ABILITIES
 
 
 ARCHETYPE_LIST: tuple[str, ...] = tuple(ARCHETYPE_FACTORIES.keys())
@@ -118,20 +121,50 @@ class CombatEnvV2:
         prev_agent_hp = agent.hp
         prev_opp_hp = opp.hp
 
+        # Snapshot the skill list BEFORE executing — execute_action may mutate
+        # state (e.g. drain lay_on_hands_pool) and change which skills are
+        # available, so skill_idx → skill_id must be resolved against the
+        # pre-action list.
+        skill_id_used: str | None = None
+        skill_idx_val = int(action[0])
+        skills_before = available_skills(agent, self.ws)
+        if 0 <= skill_idx_val < len(skills_before):
+            skill_id_used = skills_before[skill_idx_val].skill_id
+
         action_dict = decode_action(action, self.ws, _AGENT_ID)
         result: dict[str, Any] | None = None
         if action_dict is not None:
             result = execute_action(action_dict, self.ws)
-            if result.get("type") != "ERROR":
-                consume_resources(self.resources, action_dict, result)
-            else:
-                # Invalid action: consume whatever resource it claimed to use
-                # so the turn can progress rather than looping forever.
-                consume_resources(self.resources, action_dict, result)
+            # Any ERROR here is a masking bug — the model picked an action the
+            # network should have masked. Fail loudly so we fix it instead of
+            # silently consuming resources and continuing.
+            if result.get("type") == "ERROR":
+                raise RuntimeError(
+                    f"Action mask leak: skill_id={skill_id_used!r} "
+                    f"action_type={action_dict.get('type')!r} "
+                    f"msg={result.get('message')!r} "
+                    f"resources={self.resources} "
+                    f"action_triplet={list(action)}"
+                )
+            consume_resources(self.resources, action_dict, result)
+            # If MOVE went nowhere (stuck against obstacle/enemy), drain remaining
+            # movement so the agent can't loop forever trying the same blocked move.
+            if (action_dict.get("type") == "MOVE"
+                    and result.get("distance", 0) < 0.01):
+                self.resources["movement"] = 0.0
+            # Decrement use count for limited-use class abilities. The expert
+            # parse_command path does this; decode_action skips it, so we deduct
+            # here to keep both paths consistent.
+            if skill_id_used is not None:
+                ab = CLASS_ABILITIES.get(skill_id_used)
+                if ab is not None and ab.max_uses > 0:
+                    agent.ability_uses[skill_id_used] = (
+                        agent.ability_uses.get(skill_id_used, ab.max_uses) - 1
+                    )
 
         turn_done = (
             action_dict is None
-            or self.resources["action"] <= 0   # once main action is spent, end turn
+            or self.resources["action"] <= 0
         )
         if turn_done:
             tick_status_effects(agent, "self_turn_end", self.ws.combat.round_number)
@@ -200,14 +233,10 @@ class CombatEnvV2:
         reward = dmg_dealt / max(1, opp.max_hp) - dmg_taken / max(1, agent.max_hp)
         reward -= 0.01
 
-        if result is not None:
-            if result.get("type") == "ERROR":
-                # Wasted action — push model away from illegal choices
-                reward -= 0.2
-            elif action_dict is not None:
-                t = action_dict.get("type", "")
-                if t not in ("MOVE", "ERROR"):
-                    reward += 0.05   # bonus per valid non-trivial action
+        if result is not None and action_dict is not None:
+            t = action_dict.get("type", "")
+            if t != "MOVE":
+                reward += 0.05   # bonus per valid non-trivial action
 
         # Distance-closing bonus: reward approaching enemy while alive
         if opp.is_alive() and agent.is_alive():

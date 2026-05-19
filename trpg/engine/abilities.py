@@ -31,6 +31,11 @@ def _status_multihot(*names: str) -> tuple[bool, ...]:
     return tuple(slot in names for slot in STATUS_SLOTS)
 
 
+def _can_move(char) -> bool:
+    """True iff the character isn't reduced to zero movement (restrain, grapple)."""
+    return all(m.on_speed_multiplier(char) > 0 for m in char.iter_modifiers())
+
+
 @dataclass
 class ClassAbility:
     """Static description of a class ability."""
@@ -54,6 +59,9 @@ class ClassAbility:
     refresh_on: str = "short_rest"
     # Maximum uses per refresh period (0 = unlimited / passive).
     max_uses: int = 0
+    # Optional gate for resource pools that aren't tracked by ability_uses
+    # (e.g. lay_on_hands_pool). Returns True when the ability can still be used.
+    is_usable: Callable | None = None
 
 
 # ── Catalog ──────────────────────────────────────────────────────────────────
@@ -981,13 +989,15 @@ _register(ClassAbility(
     display_name="狡猾動作：衝刺",
     class_id="rogue",
     description="bonus action：本回合移動距離翻倍。",
-    features=SkillFeatures(cost_bonus=1.0, target_type=TargetType.SELF),
+    features=SkillFeatures(cost_bonus=1.0, range_m=9.0,
+                           target_type=TargetType.POINT),
     engine_ready=True,
     min_level=2, archetype_id="assassin",
     refresh_on="never", max_uses=0,
+    is_usable=_can_move,
     builder=lambda actor, target, coord, char=None: {
         "type": "MOVE", "character": actor,
-        "direction": "advance", "distance": 9.0,
+        "target_position": [float(coord.x), float(coord.y)] if coord else [0.0, 0.0],
         "consumes": ["bonus_action"],
     },
 ))
@@ -1072,13 +1082,15 @@ _register(ClassAbility(
     display_name="狡猾動作：衝刺",
     class_id="rogue",
     description="bonus action：本回合移動距離翻倍。",
-    features=SkillFeatures(cost_bonus=1.0, target_type=TargetType.SELF),
+    features=SkillFeatures(cost_bonus=1.0, range_m=9.0,
+                           target_type=TargetType.POINT),
     engine_ready=True,
     min_level=2, archetype_id="arcane_trickster",
     refresh_on="never", max_uses=0,
+    is_usable=_can_move,
     builder=lambda actor, target, coord, char=None: {
         "type": "MOVE", "character": actor,
-        "direction": "advance", "distance": 9.0,
+        "target_position": [float(coord.x), float(coord.y)] if coord else [0.0, 0.0],
         "consumes": ["bonus_action"],
     },
 ))
@@ -1183,6 +1195,7 @@ _register(ClassAbility(
     engine_ready=True,
     min_level=1, archetype_id="devotion",
     refresh_on="long_rest", max_uses=0,
+    is_usable=lambda char: getattr(char, "lay_on_hands_pool", 0) > 0,
     builder=lambda actor, target, coord, char=None: {
         "type": "LAY_ON_HANDS", "caster": actor, "target": target,
         "amount": min(5, getattr(char, "lay_on_hands_pool", 5)) if char else 5,
@@ -1355,6 +1368,7 @@ _register(ClassAbility(
     engine_ready=True,
     min_level=1, archetype_id="vengeance",
     refresh_on="long_rest", max_uses=0,
+    is_usable=lambda char: getattr(char, "lay_on_hands_pool", 0) > 0,
     builder=lambda actor, target, coord, char=None: {
         "type": "LAY_ON_HANDS", "caster": actor, "target": target,
         "amount": min(5, getattr(char, "lay_on_hands_pool", 5)) if char else 5,

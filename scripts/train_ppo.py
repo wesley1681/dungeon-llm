@@ -15,7 +15,7 @@ from pathlib import Path
 import torch
 import numpy as np
 
-from trpg.rl.model import CombatPolicyNet, apply_resource_mask
+from trpg.rl.model import CombatPolicyNet, apply_resource_mask, apply_entity_mask
 from trpg.rl.train_ppo import collect_ppo_rollout, ppo_update
 from trpg.rl.env_v2 import CombatEnvV2
 
@@ -37,6 +37,7 @@ def evaluate(net, n_episodes=50, device="cuda"):
                 s, e, g = net(obs_t)
             from trpg.rl.env_v2 import _AGENT_ID
             s = apply_resource_mask(s, env.resources, env.ws, _AGENT_ID)
+            e = apply_entity_mask(e, obs_t)
             action = [int(s[0].argmax()), int(e.argmax()), int(g.argmax())]
             obs, _, term, trunc, _ = env.step(action)
             done = term or trunc

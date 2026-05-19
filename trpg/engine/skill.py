@@ -336,6 +336,8 @@ def from_spell(spell, char) -> Skill:
         target_type=TargetType.POINT if spell.aoe_radius_m > 0 else TargetType.SINGLE_ENEMY,
     )
 
+    is_aoe = spell.aoe_radius_m > 0
+
     def builder(actor_id, target_id, coord):
         action = {
             "type":       "SPELL",
@@ -343,11 +345,18 @@ def from_spell(spell, char) -> Skill:
             "spell_name": spell.name,
             "consumes":   ["action"],
         }
-        if coord is not None:
+        # AOE spells use a coordinate centre. Single-target spells use a
+        # character id — otherwise the engine reads target_position and
+        # treats the cast as point-blank coords, which loses creature-specific
+        # context (e.g. concentration target tracking, save vs. THIS creature).
+        if is_aoe and coord is not None:
             c = Vec2.coerce(coord)
             action["target_position"] = [float(c.x), float(c.y)]
         elif target_id:
             action["target"] = target_id
+        elif coord is not None:
+            c = Vec2.coerce(coord)
+            action["target_position"] = [float(c.x), float(c.y)]
         else:
             return None
         return action
@@ -450,16 +459,38 @@ def available_skills(char, world_state=None) -> list[Skill]:
     from .spells import SPELLS
     from .abilities import CLASS_ABILITIES
 
-    out: list[Skill] = [end_turn_skill(), move_skill(char)]
+    out: list[Skill] = [end_turn_skill()]
+
+    # MOVE is only listed if the character can actually move (no restrain/grapple)
+    can_move = True
+    for m in char.iter_modifiers():
+        if m.on_speed_multiplier(char) <= 0.0:
+            can_move = False
+            break
+    if can_move:
+        out.append(move_skill(char))
 
     for w in char.weapons:
+        # Skip ranged weapons whose ammo type is depleted.
+        if w.ammo and not char.has_ammo(w.ammo):
+            continue
         out.append(from_weapon(w, char))
 
     if char.spells and char.spellcasting_ability:
         for name in char.spells:
             spell = SPELLS.get(name)
-            if spell is not None:
-                out.append(from_spell(spell, char))
+            if spell is None:
+                continue
+            # Skip leveled spells when no slot of sufficient level is available.
+            if spell.level > 0:
+                has_slot = any(
+                    char.spell_slots.get(lvl, 0) > 0
+                    for lvl in char.spell_slots
+                    if lvl >= spell.level
+                )
+                if not has_slot:
+                    continue
+            out.append(from_spell(spell, char))
 
     # Class abilities from known_abilities, filtered to what's usable now.
     for skill_id in (char.known_abilities or []):
@@ -476,6 +507,15 @@ def available_skills(char, world_state=None) -> list[Skill]:
             remaining = char.ability_uses.get(skill_id, ab.max_uses)
             if remaining <= 0:
                 continue
+        if ab.is_usable is not None and not ab.is_usable(char):
+            continue
+        # If the ability declares a spell-slot cost in its features, require
+        # that exact slot level. Most class abilities hardcode `slot_level` in
+        # their builder (no upcast), so a permissive "any level ≥ N" check
+        # over-allows the skill when only higher slots remain.
+        slot_lvl = int(getattr(ab.features, "cost_slot_level", 0) or 0)
+        if slot_lvl > 0 and char.spell_slots.get(slot_lvl, 0) <= 0:
+            continue
         out.append(_from_class_ability(ab, char))
 
     out.append(dodge_skill(char))

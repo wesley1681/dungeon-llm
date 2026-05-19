@@ -63,19 +63,57 @@ def decode_action(action: Sequence[int], ws: WorldState, agent_id: str) -> dict 
 
     target_id = _entity_id_at_slot(ws, agent_id, entity_idx)
     coord_x, coord_y = _grid_cell_to_xy(grid_cell)
+    bf = ws.combat.battlefield if ws.combat else None
 
     tt = sk.features.target_type
     if tt == TargetType.SELF:
         return sk.builder(agent_id, agent_id, agent.position)
-    if tt in (TargetType.SINGLE_ENEMY, TargetType.SINGLE_ALLY, TargetType.MULTI_ENEMY, TargetType.MULTI_ALLY):
+    if tt in (TargetType.SINGLE_ALLY, TargetType.MULTI_ALLY):
+        is_party = ws.is_party_ally(agent_id)
+        if target_id is None or ws.is_party_ally(target_id) != is_party:
+            target_id = agent_id
+        target_pos = ws.characters[target_id].position
+        return sk.builder(agent_id, target_id, target_pos)
+    if tt in (TargetType.SINGLE_ENEMY, TargetType.MULTI_ENEMY):
         if target_id is None:
             return None
         target_pos = ws.characters[target_id].position
+        if bf is not None and not bf.has_line_of_sight(agent.position, target_pos):
+            return None   # LOS-blocked targets become a no-op turn end
         return sk.builder(agent_id, target_id, target_pos)
     if tt == TargetType.POINT:
-        return sk.builder(agent_id, None, Vec2(coord_x, coord_y))
+        coord = _clamp_to_range(Vec2(coord_x, coord_y), agent.position,
+                                sk.features.range_m)
+        if bf is not None:
+            if bf.is_blocked(coord) or not bf.has_line_of_sight(agent.position, coord):
+                return None
+        return sk.builder(agent_id, None, coord)
     # LINE/CONE fall back to POINT semantics
-    return sk.builder(agent_id, target_id, Vec2(coord_x, coord_y))
+    coord = _clamp_to_range(Vec2(coord_x, coord_y), agent.position,
+                            sk.features.range_m)
+    if bf is not None:
+        if bf.is_blocked(coord) or not bf.has_line_of_sight(agent.position, coord):
+            return None
+    return sk.builder(agent_id, target_id, coord)
+
+
+def _clamp_to_range(target: Vec2, origin: Vec2, range_m: float) -> Vec2:
+    """Pull `target` along the (origin → target) ray to within `range_m`.
+
+    Random grid samples are usually farther than a spell's range; clamping
+    here keeps decode_action from ever producing an out-of-range POINT action.
+    """
+    if range_m <= 0.0:
+        return target
+    dx = target.x - origin.x
+    dy = target.y - origin.y
+    dist = (dx * dx + dy * dy) ** 0.5
+    if dist <= range_m - 1e-3:
+        return target
+    # Pull strictly inside the range circle — engine compares with strict
+    # inequality, so landing exactly on the boundary can still trip on FP drift.
+    scale = (range_m - 1e-3) / dist
+    return Vec2(origin.x + dx * scale, origin.y + dy * scale)
 
 
 def _entity_slot_of(ws: WorldState, agent_id: str, target_id: str) -> int:
