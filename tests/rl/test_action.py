@@ -53,3 +53,42 @@ def test_decode_attack_targets_entity_slot_3():
     assert out["type"] == "ATTACK"
     assert out["attacker"] == "a"
     assert out["target"] == "b"
+
+
+from trpg.rl.action import encode_action
+
+
+def test_encode_end_turn():
+    ws = _world()
+    enc = encode_action(None, ws, "a")
+    assert enc == (0, 0, 0)   # slot 0 = end skill
+
+
+def test_encode_attack_action_roundtrip():
+    ws = _world()
+    from trpg.engine.skill import available_skills
+    skills = available_skills(ws.characters["a"], ws)
+    weapon_idx = next(i for i, s in enumerate(skills) if s.skill_id.startswith("weapon:"))
+    # Build the action the policy would emit
+    action_dict = {
+        "type": "ATTACK", "attacker": "a", "target": "b",
+        "weapon": ws.characters["a"].weapons[0].name,
+        "consumes": ["action"],
+    }
+    enc = encode_action(action_dict, ws, "a")
+    # skill_idx matches weapon attack, entity_idx=3 (enemy_1), grid_cell ignored
+    assert enc[0] == weapon_idx
+    assert enc[1] == 3
+
+
+def test_encode_move_action():
+    ws = _world()
+    from trpg.engine.skill import available_skills
+    skills = available_skills(ws.characters["a"], ws)
+    move_idx = next(i for i, s in enumerate(skills) if s.skill_id == "move")
+    action_dict = {
+        "type": "MOVE", "character": "a", "target": "b",
+        "consumes": ["movement"],
+    }
+    enc = encode_action(action_dict, ws, "a")
+    assert enc[0] == move_idx

@@ -76,3 +76,108 @@ def decode_action(action: Sequence[int], ws: WorldState, agent_id: str) -> dict 
         return sk.builder(agent_id, None, Vec2(coord_x, coord_y))
     # LINE/CONE fall back to POINT semantics
     return sk.builder(agent_id, target_id, Vec2(coord_x, coord_y))
+
+
+def _entity_slot_of(ws: WorldState, agent_id: str, target_id: str) -> int:
+    """Reverse of _entity_id_at_slot."""
+    if target_id == agent_id:
+        return 0
+    allies, enemies = partition_entities(ws, agent_id)
+    if target_id in allies[:2]:
+        return 1 + allies.index(target_id)
+    if target_id in enemies[:3]:
+        return 3 + enemies.index(target_id)
+    return 0
+
+
+def _xy_to_grid_cell(x: float, y: float) -> int:
+    """Inverse of _grid_cell_to_xy. Clamps to grid range."""
+    ix = max(0, min(N_GRID - 1, int(x / GRID_CELL_SIZE_M)))
+    iy = max(0, min(N_GRID - 1, int(y / GRID_CELL_SIZE_M)))
+    return ix * N_GRID + iy
+
+
+def _match_skill_idx(action_dict: dict, agent, ws: WorldState) -> int:
+    """Find the skill_idx whose builder would have produced this action dict.
+
+    Strategy: match on action ``type`` plus the most-discriminative key
+    (``weapon_index`` / ``modifier`` / ``spell_name``). Falls back to skill_id
+    inference for MOVE-style actions.
+    """
+    skills = available_skills(agent, ws)
+    a_type = action_dict.get("type")
+
+    # MOVE → 'move' skill
+    if a_type == "MOVE":
+        for i, s in enumerate(skills):
+            if s.skill_id == "move":
+                return i
+        return 0
+
+    if a_type == "ATTACK":
+        weapon_name = action_dict.get("weapon", "")
+        for i, s in enumerate(skills):
+            if s.skill_id.startswith("weapon:") and weapon_name in s.skill_id:
+                return i
+        # Fall through: some ClassAbility builders also emit ATTACK
+        # (e.g. reckless_attack). Match by full action dict structure.
+        for i, s in enumerate(skills):
+            try:
+                probe = s.builder(
+                    agent.char_id if hasattr(agent, "char_id") else "",
+                    action_dict.get("target"),
+                    None,
+                )
+                if probe and probe.get("type") == "ATTACK":
+                    return i
+            except Exception:
+                continue
+        return 0
+
+    # SPELL by spell_name
+    if a_type == "SPELL":
+        spell_name = action_dict.get("spell_name", "")
+        for i, s in enumerate(skills):
+            if s.skill_id.startswith("spell:") and spell_name in s.skill_id:
+                return i
+
+    # APPLY_MOD by modifier name
+    if a_type == "APPLY_MOD":
+        mod = action_dict.get("modifier", "")
+        for i, s in enumerate(skills):
+            if s.skill_id == mod or s.skill_id.endswith(mod):
+                return i
+
+    # DODGE / HIDE / DISENGAGE — match by type name
+    for i, s in enumerate(skills):
+        if s.skill_id == a_type.lower():
+            return i
+    return 0
+
+
+def encode_action(action_dict: dict | None, ws: WorldState, agent_id: str) -> tuple[int, int, int]:
+    """Reverse-map an engine action dict into [skill_idx, entity_idx, grid_cell].
+
+    Returns (0, 0, 0) for None / end-turn. Used by BC data collection.
+    """
+    if action_dict is None:
+        return (0, 0, 0)
+
+    agent = ws.characters[agent_id]
+    skill_idx = _match_skill_idx(action_dict, agent, ws)
+
+    # Entity slot
+    target_id = (action_dict.get("target") or action_dict.get("character")
+                 or action_dict.get("caster") or agent_id)
+    if isinstance(target_id, str) and target_id in ws.characters:
+        entity_idx = _entity_slot_of(ws, agent_id, target_id)
+    else:
+        entity_idx = 0
+
+    # Grid cell (for POINT-target spells and MOVE-with-coord)
+    if "target_position" in action_dict:
+        x, y = action_dict["target_position"][0], action_dict["target_position"][1]
+        grid_cell = _xy_to_grid_cell(float(x), float(y))
+    else:
+        grid_cell = 0
+    return (skill_idx, entity_idx, grid_cell)
