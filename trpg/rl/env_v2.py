@@ -27,7 +27,7 @@ from ..engine.abilities import CLASS_ABILITIES
 
 
 ARCHETYPE_LIST: tuple[str, ...] = tuple(ARCHETYPE_FACTORIES.keys())
-LAYOUTS = ("open", "open", "walls", "difficult", "lava")
+LAYOUTS = ("open", "open", "walls", "difficult")
 
 _MAX_SUB_ACTIONS_PER_TURN = 5
 _MAX_AGENT_STEPS_PER_EPISODE = 50
@@ -199,16 +199,17 @@ class CombatEnvV2:
                 tick_terrain_damage(agent, self.ws.combat.battlefield)
 
         # Pure terminal reward — no per-step shaping.
-        # Decisive outcomes only: +5 win, -5 loss, -2 if we ran out the clock
-        # (cheaper than losing but worse than winning, so the model still wants
-        # to actually finish the fight rather than stall).
+        # +5 win, -5 loss, -10 on step-limit truncation (2× loss). Self-play
+        # eval showed half of dodge-vs-dodge episodes hit the step cap, so the
+        # truncation penalty is the dominant gradient signal. Making it worse
+        # than losing forces the policy to decide the fight rather than stall.
         reward = 0.0
         terminated = (not agent.is_alive()) or (not opp.is_alive())
         if terminated:
             reward = 5.0 if not opp.is_alive() else -5.0
         truncated = self._step_count >= _MAX_AGENT_STEPS_PER_EPISODE
         if truncated and not terminated:
-            reward = -2.0
+            reward = -10.0
 
         return (build_obs(self.ws, _AGENT_ID, self.resources),
                 float(reward), terminated, truncated,

@@ -17,10 +17,46 @@ import numpy as np
 
 from trpg.rl.model import CombatPolicyNet, apply_resource_mask, apply_entity_mask
 from trpg.rl.train_ppo import collect_ppo_rollout, ppo_update
-from trpg.rl.env_v2 import CombatEnvV2
+from trpg.rl.env_v2 import CombatEnvV2, _AGENT_ID
 
 
 CHECKPOINT_THRESHOLDS = {"low": 0.40, "mid": 0.55, "boss": 0.70}
+
+
+def qualify_candidate(candidate, pool, games_per_opp: int, threshold: float,
+                       seed: int, device: str = "cpu") -> tuple[bool, float]:
+    """Test ``candidate`` against every snapshot in ``pool``.
+
+    Returns ``(qualified, win_rate)``. Win-rate is aggregated across all
+    matches (games_per_opp × len(pool) total). Qualified iff win_rate >= threshold.
+    """
+    if not pool:
+        return True, 1.0   # empty pool: candidate is seed, no test needed
+    candidate.to(device).eval()
+    wins = 0
+    total = 0
+    for opp_idx, opp_net in enumerate(pool):
+        opp_net.to("cpu").eval()
+        for g in range(games_per_opp):
+            env = CombatEnvV2(seed=seed + opp_idx * games_per_opp + g)
+            env.use_self_play_opponent(opp_net)
+            obs, _ = env.reset()
+            done = False
+            while not done:
+                obs_t = {k: torch.from_numpy(v).unsqueeze(0).to(device)
+                         for k, v in obs.items()}
+                with torch.no_grad():
+                    s, e, gg = candidate(obs_t)
+                s = apply_resource_mask(s, env.resources, env.ws, _AGENT_ID)
+                e = apply_entity_mask(e, obs_t)
+                action = [int(s[0].argmax()), int(e[0].argmax()), int(gg.argmax())]
+                obs, _, term, trunc, _ = env.step(action)
+                done = term or trunc
+            if not env.ws.characters["opponent"].is_alive():
+                wins += 1
+            total += 1
+    wr = wins / total if total else 0.0
+    return wr >= threshold, wr
 
 
 def evaluate(net, n_episodes=100, device="cuda"):
@@ -76,6 +112,10 @@ def main():
                         help="add a new snapshot to the opponent pool every N updates")
     parser.add_argument("--pool_size",     type=int, default=10,
                         help="max snapshots in the opponent pool (oldest dropped)")
+    parser.add_argument("--qual_games", type=int, default=50,
+                        help="qualification games per pool opponent for new snapshots")
+    parser.add_argument("--qual_threshold", type=float, default=0.55,
+                        help="min win-rate vs current pool to accept a new snapshot")
     args = parser.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -121,16 +161,31 @@ def main():
         if update == args.curriculum + 1:
             mode = "pool self-play" if args.self_play else "expert opponents"
             print(f"  [curriculum] switching to {mode} at update {update}")
-        # Add a new snapshot every snapshot_every updates (after curriculum)
+        # Qualification check: every snapshot_every updates, the current model
+        # plays games_per_opp games against EACH pool member. Only added if its
+        # aggregate win-rate beats the threshold — keeps the pool monotonically
+        # stronger and discourages sideways drift.
         if (args.self_play and update > args.curriculum
                 and (update - args.curriculum - 1) % args.snapshot_every == 0
                 and update > args.curriculum + 1):
             from copy import deepcopy
-            opponent_pool.append(deepcopy(net).to("cpu").eval())
-            while len(opponent_pool) > args.pool_size:
-                opponent_pool.pop(0)
-            print(f"  [pool] snapshot added at update {update}  "
-                  f"(pool size {len(opponent_pool)})")
+            candidate = deepcopy(net).to("cpu").eval()
+            qualified, wr = qualify_candidate(
+                candidate, opponent_pool,
+                games_per_opp=args.qual_games,
+                threshold=args.qual_threshold,
+                seed=10_000 + update, device="cpu",
+            )
+            n_games = args.qual_games * len(opponent_pool)
+            if qualified:
+                opponent_pool.append(candidate)
+                while len(opponent_pool) > args.pool_size:
+                    opponent_pool.pop(0)
+                print(f"  [pool] candidate ACCEPTED at update {update} "
+                      f"({wr:.0%} over {n_games} games, pool size {len(opponent_pool)})")
+            else:
+                print(f"  [pool] candidate rejected at update {update} "
+                      f"({wr:.0%} over {n_games} games < {args.qual_threshold:.0%})")
         active_opponent = None
         if args.self_play and not use_heuristic and opponent_pool:
             active_opponent = rng.choice(opponent_pool)

@@ -140,6 +140,9 @@ def main():
                         help="lock agent archetype (default: random)")
     parser.add_argument("--opponent", type=str, default=None,
                         help="lock opponent archetype (default: random)")
+    parser.add_argument("--opponent_model", type=str, default=None,
+                        help="if set, opponent uses this network checkpoint "
+                             "(self-play eval) instead of the ArchetypePolicy")
     args = parser.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -147,9 +150,18 @@ def main():
     net.load_state_dict(torch.load(args.model, map_location=device))
     net.eval()
 
+    opp_net = None
+    if args.opponent_model:
+        opp_net = CombatPolicyNet()
+        opp_net.load_state_dict(torch.load(args.opponent_model, map_location="cpu"))
+        opp_net.eval()
+        print(f"Self-play eval: agent={args.model}, opponent={args.opponent_model}")
+
     episodes = []
     for i in range(args.n):
         env = CombatEnvV2(seed=args.seed + i)
+        if opp_net is not None:
+            env.use_self_play_opponent(opp_net)
         episodes.append(run_episode(net, env, device, args.agent, args.opponent))
         if (i + 1) % 50 == 0:
             wins = sum(1 for e in episodes if e["outcome"] == "win")

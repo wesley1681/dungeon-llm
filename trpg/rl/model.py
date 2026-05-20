@@ -184,7 +184,10 @@ def apply_resource_mask(skill_logits: "torch.Tensor",
         rng = float(getattr(sk.features, "range_m", 0.0) or 0.0)
         if rng <= 0.0:
             rng = fallback_reach
-        if target_dist > rng + 1e-6:
+        # Engine uses strict inequality (distance > range = out of range), so
+        # distance == range gets rejected. Mask conservatively: anything at or
+        # within 1 cm of the range boundary is treated as out-of-range.
+        if target_dist >= rng - 0.01:
             skill_logits[..., i] = -1e9
 
     return skill_logits
