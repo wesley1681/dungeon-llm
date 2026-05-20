@@ -80,7 +80,11 @@ class ConsoleFrontend:
         n_rows = int(bf.height)
         ax, ay = int(agent.position.x), int(agent.position.y)
         ox, oy = int(opp.position.x), int(opp.position.y)
-        # Top axis (every-other column gets its low digit)
+        # Top axis: two rows — tens digit (only at every multiple of 10),
+        # then ones digit (every-other column). Distinguishes x=0 / 10 / 20.
+        text.append("    " + "".join(
+            str(x // 10) if x % 10 == 0 and x > 0 else " " for x in range(n_cols)
+        ) + "\n")
         text.append("    " + "".join(
             str(x % 10) if x % 2 == 0 else " " for x in range(n_cols)
         ) + "\n")
