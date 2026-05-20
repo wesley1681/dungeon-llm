@@ -111,6 +111,10 @@ def run_combat(ws, frontend, opponent_policy, *,
       "truncated" — both alive after max_rounds
     """
     def user_decider(_aid, actor, _ws, resources, _round):
+        # Re-render before each user sub-action so the player sees the
+        # post-action state (their own moves, opp moves between rounds, etc.)
+        # without waiting for the next round's start-of-round render.
+        frontend.render(ws, agent_id, opp_id)
         return frontend.prompt_action(ws, actor, resources)
 
     def opp_decider(aid, actor, _ws, resources, round_num):
@@ -125,7 +129,8 @@ def run_combat(ws, frontend, opponent_policy, *,
     while True:
         rounds += 1
         ws.combat.round_number = rounds
-        frontend.render(ws, agent_id, opp_id)
+        # No render here — user_decider re-renders before each sub-action,
+        # which covers the start-of-round display for the human side.
         _run_one_turn(agent_id, ws, user_decider, frontend)
         if not ws.characters[opp_id].is_alive():
             return {"outcome": "win", "rounds": rounds}
