@@ -28,10 +28,11 @@ def test_schema_constants():
     assert N_SKILL_SLOTS == 20
     assert N_ENTITY_SLOTS == 6
     assert ENTITY_DIM == 21   # 8 base + 12 archetype multi-hot + 1 is_concentrating
-    assert N_GRID == 20
-    assert GRID_CELL_SIZE_M == 1.5
+    assert N_GRID == 30
+    assert GRID_CELL_SIZE_M == 1.0
     assert BATTLEFIELD_SIZE_M == 30.0
-    assert set(OBS_KEYS) == {"skills", "skill_mask", "entities", "resources", "terrain"}
+    assert set(OBS_KEYS) == {"skills", "skill_mask", "entities", "resources",
+                             "terrain", "entity_grid"}
 
 
 def test_terrain_obs_shape_and_dtype():
@@ -51,7 +52,7 @@ def test_terrain_obs_obstacle_is_one():
     bf = Battlefield(width=30.0, height=30.0)
     bf.add_rect_obstacle(0.0, 0.0, 3.0, 3.0)
     grid = terrain_obs(bf)
-    # (0..3m, 0..3m) covers cells (0..2, 0..2) at 1.5m/cell
+    # (0..3m, 0..3m) covers cells (0..2, 0..2) at 1.0m/cell
     assert grid[0, 0] == 1.0
     assert grid[1, 1] == 1.0
     # outside the obstacle stays 0

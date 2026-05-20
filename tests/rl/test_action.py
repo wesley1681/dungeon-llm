@@ -24,7 +24,7 @@ def _world():
 
 
 def test_action_dims_shape():
-    assert ACTION_DIMS == (20, 6, 400)
+    assert ACTION_DIMS == (20, 6, 900)
 
 
 def test_decode_skill_0_returns_none_end_turn():
@@ -126,6 +126,6 @@ def test_encode_action_roundtrip_via_grid():
         return  # No POINT skill in this fixture
     # Otherwise verify grid encoding round-trips
     from trpg.rl.action import _xy_to_grid_cell, _grid_cell_to_xy
-    for cell in [0, 50, 100, 200, 399]:
+    for cell in [0, 50, 100, 200, 899]:
         x, y = _grid_cell_to_xy(cell)
         assert _xy_to_grid_cell(x, y) == cell

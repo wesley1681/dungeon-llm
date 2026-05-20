@@ -30,8 +30,17 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 
-from .obs import N_SKILL_SLOTS, N_ENTITY_SLOTS, ENTITY_DIM, N_GRID
+from .obs import (
+    N_SKILL_SLOTS, N_ENTITY_SLOTS, ENTITY_DIM, N_GRID,
+    N_ENTITY_GRID_CHANNELS,
+)
 from ..engine.skill import SKILL_FEATURE_DIM
+
+
+# Spatial channel count for the terrain+entity-overlay CNN. Determines how
+# much capacity the per-cell grid_head logits read from. Keep small enough
+# that the dot product with grid_query stays cheap.
+_SPATIAL_C = 32
 
 
 class CombatPolicyNet(nn.Module):
@@ -49,19 +58,25 @@ class CombatPolicyNet(nn.Module):
             nn.Linear(ENTITY_DIM, 32), nn.ReLU(), nn.Linear(32, 32),
         )
 
-        # Terrain: small CNN
-        self.terrain_cnn = nn.Sequential(
-            nn.Conv2d(1, 8, kernel_size=3, padding=1), nn.ReLU(),
-            nn.Conv2d(8, 8, kernel_size=3, padding=1), nn.ReLU(),
-            nn.AdaptiveAvgPool2d(4),
+        # Spatial CNN over terrain + entity-grid overlay.
+        # Input channels: 1 (terrain) + N_ENTITY_GRID_CHANNELS (self/ally/enemy).
+        # Output: [B, _SPATIAL_C, N_GRID, N_GRID] — kept at full resolution so
+        # the grid_head can read per-cell features instead of a flat Linear
+        # learning the continuous→discrete map.
+        spatial_in_c = 1 + N_ENTITY_GRID_CHANNELS
+        self.spatial_cnn = nn.Sequential(
+            nn.Conv2d(spatial_in_c, 16, kernel_size=3, padding=1), nn.ReLU(),
+            nn.Conv2d(16, _SPATIAL_C, kernel_size=3, padding=1), nn.ReLU(),
+            nn.Conv2d(_SPATIAL_C, _SPATIAL_C, kernel_size=3, padding=1), nn.ReLU(),
         )
-        self.terrain_proj = nn.Linear(8 * 4 * 4, 32)
+        # Global terrain/entity summary for the trunk: pool spatial → 32-d.
+        self.spatial_global_proj = nn.Linear(_SPATIAL_C, 32)
 
         # Resources
         self.res_mlp = nn.Sequential(nn.Linear(4, 16), nn.ReLU())
 
         # Shared trunk
-        # 64 (skills mean) + 32 (entities mean) + 32 (terrain) + 16 (res) = 144
+        # 64 (skills mean) + 32 (entities mean) + 32 (spatial pool) + 16 (res) = 144
         self.trunk = nn.Sequential(
             nn.Linear(144, hidden), nn.ReLU(),
             nn.Linear(hidden, hidden), nn.ReLU(),
@@ -72,22 +87,29 @@ class CombatPolicyNet(nn.Module):
         self.end_head = nn.Linear(hidden, 1)
         # skill_head: per-skill-slot logit (existing)
         self.skill_head = nn.Linear(64 + hidden, 1)
-        # entity_head: per (skill, entity) — Linear over (sk_emb, h, ent_emb)
-        # gives one scalar per (skill_slot, entity_slot) pair.
+        # entity_head: per (skill, entity) — Linear over (sk_emb, h, ent_emb).
         self.entity_head = nn.Linear(64 + hidden + 32, 1)
-        # grid_head: per skill — Linear over (sk_emb, h) gives N_GRID*N_GRID
-        # logits for each skill_slot.
-        self.grid_head = nn.Linear(64 + hidden, N_GRID * N_GRID)
+        # grid_head — spatial. Projects (sk_emb, h) to a per-skill query
+        # vector of dim _SPATIAL_C, then dot-products it against the per-cell
+        # spatial features to produce one logit per (skill, cell). This is
+        # the fix for the old flat Linear(192 → 400) that could not learn
+        # sharp continuous→cell discretisation.
+        self.grid_query_proj = nn.Linear(64 + hidden, _SPATIAL_C)
         # Value head — critic (shared encoder, separate output)
         self.value_head = nn.Linear(hidden, 1)
 
     def _encode(self, obs: dict):
-        """Shared encoder. Returns (sk_emb, ent_emb, h, key_padding)."""
-        skills     = obs["skills"]
-        skill_mask = obs["skill_mask"]
-        entities   = obs["entities"]
-        resources  = obs["resources"]
-        terrain    = obs["terrain"]
+        """Shared encoder. Returns (sk_emb, ent_emb, h, key_padding, spatial_feat).
+
+        ``spatial_feat`` is [B, _SPATIAL_C, N_GRID, N_GRID] — per-cell features
+        that the spatial grid_head reads to produce per-(skill, cell) logits.
+        """
+        skills      = obs["skills"]
+        skill_mask  = obs["skill_mask"]
+        entities    = obs["entities"]
+        resources   = obs["resources"]
+        terrain     = obs["terrain"]
+        entity_grid = obs["entity_grid"]   # [B, N_ENTITY_GRID_CHANNELS, N_GRID, N_GRID]
 
         sk_proj     = self.skill_proj(skills)
         key_padding = skill_mask < 0.5
@@ -97,14 +119,19 @@ class CombatPolicyNet(nn.Module):
         ent_emb  = self.entity_mlp(entities)
         ent_mean = ent_emb.mean(1)
 
-        terr     = self.terrain_cnn(terrain.unsqueeze(1)).flatten(1)
-        terr_ctx = self.terrain_proj(terr)
+        # Stack terrain (1 channel) with entity-grid overlay → spatial CNN.
+        terrain_ch = terrain.unsqueeze(1)   # [B, 1, N_GRID, N_GRID]
+        spatial_in = torch.cat([terrain_ch, entity_grid], dim=1)
+        spatial_feat = self.spatial_cnn(spatial_in)   # [B, _SPATIAL_C, N_GRID, N_GRID]
+        # Global spatial summary via average pool.
+        pooled = spatial_feat.mean(dim=(2, 3))        # [B, _SPATIAL_C]
+        terr_ctx = self.spatial_global_proj(pooled)   # [B, 32]
 
         res_ctx = self.res_mlp(resources)
 
         ctx = torch.cat([sk_mean, ent_mean, terr_ctx, res_ctx], dim=-1)
         h   = self.trunk(ctx)
-        return sk_emb, ent_emb, h, key_padding
+        return sk_emb, ent_emb, h, key_padding, spatial_feat
 
     def forward(self, obs: dict) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """Returns (end_logit, skill_logits, entity_logits, grid_logits).
@@ -114,7 +141,7 @@ class CombatPolicyNet(nn.Module):
         entity_logits:[B, N_SKILL_SLOTS, N_ENTITY_SLOTS] — per-skill
         grid_logits:  [B, N_SKILL_SLOTS, N_GRID*N_GRID]  — per-skill
         """
-        sk_emb, ent_emb, h, key_padding = self._encode(obs)
+        sk_emb, ent_emb, h, key_padding, spatial_feat = self._encode(obs)
         B = h.shape[0]
 
         end_logit = self.end_head(h).squeeze(-1)
@@ -125,23 +152,29 @@ class CombatPolicyNet(nn.Module):
         skill_logits = skill_logits.masked_fill(key_padding, -1e9)
 
         # entity_head per (skill, entity): combine (sk_emb[skill], h, ent_emb[entity])
-        # Build [B, N_SKILL, N_ENTITY, 64+128+32] via broadcasting:
         sk_for_ent  = sk_emb.unsqueeze(2).expand(-1, -1, N_ENTITY_SLOTS, -1)   # [B, S, E, 64]
         h_for_ent   = h.unsqueeze(1).unsqueeze(2).expand(-1, N_SKILL_SLOTS, N_ENTITY_SLOTS, -1)  # [B, S, E, 128]
         ent_for_ent = ent_emb.unsqueeze(1).expand(-1, N_SKILL_SLOTS, -1, -1)   # [B, S, E, 32]
         ent_in      = torch.cat([sk_for_ent, h_for_ent, ent_for_ent], dim=-1)
         entity_logits = self.entity_head(ent_in).squeeze(-1)                   # [B, S, E]
 
-        # grid_head per skill: combine (sk_emb[skill], h)
-        h_for_grid = h.unsqueeze(1).expand(-1, N_SKILL_SLOTS, -1)              # [B, S, 128]
-        grid_in    = torch.cat([sk_emb, h_for_grid], dim=-1)                   # [B, S, 64+128]
-        grid_logits = self.grid_head(grid_in)                                  # [B, S, N_GRID*N_GRID]
+        # Spatial grid_head: per-(skill, cell) logit via query × spatial-key dot.
+        # Query depends on the chosen skill + global context; keys are per-cell
+        # features from the spatial CNN. This replaces the old flat Linear so
+        # the model can read positional info directly from the spatial map
+        # instead of learning continuous→discrete cell discretisation with a
+        # smooth linear map (which capped out at ~78% grid accuracy).
+        h_for_grid = h.unsqueeze(1).expand(-1, N_SKILL_SLOTS, -1)              # [B, S, hidden]
+        grid_in    = torch.cat([sk_emb, h_for_grid], dim=-1)                   # [B, S, 64+hidden]
+        grid_query = self.grid_query_proj(grid_in)                             # [B, S, _SPATIAL_C]
+        spatial_flat = spatial_feat.flatten(2)                                 # [B, _SPATIAL_C, N_GRID*N_GRID]
+        grid_logits = torch.bmm(grid_query, spatial_flat)                      # [B, S, N_GRID*N_GRID]
 
         return end_logit, skill_logits, entity_logits, grid_logits
 
     def value(self, obs: dict) -> torch.Tensor:
         """Critic: estimate state value V(s). Returns [B]."""
-        _, _, h, _ = self._encode(obs)
+        _, _, h, _, _ = self._encode(obs)
         return self.value_head(h).squeeze(-1)
 
 

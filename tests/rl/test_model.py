@@ -2,16 +2,18 @@ import numpy as np
 import torch
 from trpg.rl.model import CombatPolicyNet
 from trpg.rl.obs import N_SKILL_SLOTS, N_ENTITY_SLOTS, ENTITY_DIM, N_GRID
+from trpg.rl.obs import N_ENTITY_GRID_CHANNELS
 from trpg.engine.skill import SKILL_FEATURE_DIM
 
 
 def _fake_obs_batch(batch=2):
     return {
-        "skills":     torch.zeros(batch, N_SKILL_SLOTS, SKILL_FEATURE_DIM),
-        "skill_mask": torch.ones(batch, N_SKILL_SLOTS),
-        "entities":   torch.zeros(batch, N_ENTITY_SLOTS, ENTITY_DIM),
-        "resources":  torch.zeros(batch, 4),
-        "terrain":    torch.zeros(batch, N_GRID, N_GRID),
+        "skills":      torch.zeros(batch, N_SKILL_SLOTS, SKILL_FEATURE_DIM),
+        "skill_mask":  torch.ones(batch, N_SKILL_SLOTS),
+        "entities":    torch.zeros(batch, N_ENTITY_SLOTS, ENTITY_DIM),
+        "resources":   torch.zeros(batch, 4),
+        "terrain":     torch.zeros(batch, N_GRID, N_GRID),
+        "entity_grid": torch.zeros(batch, N_ENTITY_GRID_CHANNELS, N_GRID, N_GRID),
     }
 
 

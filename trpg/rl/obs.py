@@ -27,12 +27,20 @@ ARCHETYPE_OBS_LIST: tuple[str, ...] = tuple(sorted(ARCHETYPE_FACTORIES.keys()))
 N_ARCHETYPES = len(ARCHETYPE_OBS_LIST)   # 12
 
 ENTITY_DIM = 8 + N_ARCHETYPES + 1   # 21: base + archetype multi-hot + is_concentrating
-N_GRID = 20                   # battlefield grid resolution
+N_GRID = 30                   # battlefield grid resolution (1m cells)
 BATTLEFIELD_SIZE_M = 30.0     # matches Battlefield default
-GRID_CELL_SIZE_M = BATTLEFIELD_SIZE_M / N_GRID    # 1.5m
-N_GRID_CELLS = N_GRID * N_GRID                    # 400
+GRID_CELL_SIZE_M = BATTLEFIELD_SIZE_M / N_GRID    # 1.0m
+N_GRID_CELLS = N_GRID * N_GRID                    # 900
 
-OBS_KEYS = ("skills", "skill_mask", "entities", "resources", "terrain")
+# Entity-grid overlay channels: a parallel 30x30 representation of where
+# self/allies/enemies are. Gives the model the same positional info as the
+# continuous entity rows BUT pre-discretised to the same cell grid that
+# grid_head outputs — so grid_head doesn't have to learn the continuous→
+# discrete map with a Linear (which is what bottlenecked the previous arch).
+N_ENTITY_GRID_CHANNELS = 3       # [self, ally, enemy]
+
+OBS_KEYS = ("skills", "skill_mask", "entities", "resources", "terrain",
+            "entity_grid")
 
 
 def terrain_obs(battlefield: Battlefield) -> np.ndarray:
@@ -229,14 +237,50 @@ def resources_obs(resources: dict, round_number: int) -> np.ndarray:
     ], dtype=np.float32)
 
 
+def entity_grid_obs(ws: WorldState, agent_id: str) -> np.ndarray:
+    """Build the entity-grid overlay.
+
+    Returns: float32[N_ENTITY_GRID_CHANNELS, N_GRID, N_GRID]
+      channel 0 — self position   (1.0 at self's cell, 0 elsewhere)
+      channel 1 — allies          (sum of ally markers per cell)
+      channel 2 — enemies         (sum of enemy markers per cell)
+
+    Each cell value is the count of matching characters whose centre falls in
+    that cell — typically 0 or 1, occasionally >1 if two share a cell.
+    """
+    bf = ws.combat.battlefield if (ws.combat and ws.combat.battlefield) else None
+    cell_size = bf.width / N_GRID if bf else GRID_CELL_SIZE_M
+    out = np.zeros((N_ENTITY_GRID_CHANNELS, N_GRID, N_GRID), dtype=np.float32)
+
+    self_char = ws.characters[agent_id]
+    ally_ids, enemy_ids = partition_entities(ws, agent_id)
+
+    def _mark(ch: int, pos) -> None:
+        ix = max(0, min(N_GRID - 1, int(pos.x / cell_size)))
+        iy = max(0, min(N_GRID - 1, int(pos.y / cell_size)))
+        out[ch, ix, iy] += 1.0
+
+    _mark(0, self_char.position)
+    for cid in ally_ids:
+        c = ws.characters[cid]
+        if c.is_alive():
+            _mark(1, c.position)
+    for cid in enemy_ids:
+        c = ws.characters[cid]
+        if c.is_alive():
+            _mark(2, c.position)
+    return out
+
+
 def build_obs(ws: WorldState, agent_id: str, resources: dict) -> dict:
     """Assemble the full Phase 2 Dict observation."""
     skills_mat, skill_mask = skills_obs(ws, agent_id)
     round_num = ws.combat.round_number if ws.combat else 0
     return {
-        "skills":     skills_mat,
-        "skill_mask": skill_mask,
-        "entities":   entities_obs(ws, agent_id),
-        "resources":  resources_obs(resources, round_num),
-        "terrain":    terrain_obs(ws.combat.battlefield),
+        "skills":      skills_mat,
+        "skill_mask":  skill_mask,
+        "entities":    entities_obs(ws, agent_id),
+        "resources":   resources_obs(resources, round_num),
+        "terrain":     terrain_obs(ws.combat.battlefield),
+        "entity_grid": entity_grid_obs(ws, agent_id),
     }
