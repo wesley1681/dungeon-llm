@@ -12,7 +12,6 @@ from ..engine.combat import (
 )
 from ..engine.status import tick_status_effects
 from ..engine.abilities import CLASS_ABILITIES
-from ..engine.skill import available_skills
 
 
 _MAX_SUB_ACTIONS_PER_TURN = 5
@@ -40,8 +39,6 @@ def _run_one_turn(actor_id: str, ws, decider, frontend) -> None:
     for _ in range(_MAX_SUB_ACTIONS_PER_TURN):
         if not actor.is_alive():
             break
-        # Snapshot skill list before mutation (matches env_v2 step ordering)
-        skills_before = available_skills(actor, ws)
         action = decider(actor_id, actor, ws, resources, round_num)
         if action is None:
             break
@@ -87,6 +84,12 @@ def _format_result(actor, result: dict) -> str:
         return f"[{actor.name}] {result.get('modifier', '?')} 施加於 {len(result.get('targets_affected', []))} 個目標"
     if t == "HEAL" or t == "LAY_ON_HANDS":
         return f"[{actor.name}] 治療 {result.get('amount') or result.get('healed', 0)}"
+    if t == "AUTO_DAMAGE":
+        targets = result.get("target_results", [])
+        dmg = sum(tr.get("damage", 0) for tr in targets)
+        return f"[{actor.name}] AUTO_DAMAGE → {dmg} 傷 ({len(targets)} 個目標)"
+    if t == "ACTION_SURGE":
+        return f"[{actor.name}] 行動激增（多得一個 action）"
     return f"[{actor.name}] {t}"
 
 
