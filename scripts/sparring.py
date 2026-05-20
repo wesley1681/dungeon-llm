@@ -29,9 +29,25 @@ def _ask(prompt: str, default: str) -> str:
 
 
 def _ask_position(label: str, default: Vec2) -> Vec2:
-    raw = _ask(f"{label} 座標 (x y)", f"{default.x:.0f} {default.y:.0f}")
-    parts = raw.split()
-    return Vec2(float(parts[0]), float(parts[1]))
+    while True:
+        raw = _ask(f"{label} 座標 (x y)", f"{default.x:.0f} {default.y:.0f}")
+        parts = raw.split()
+        if len(parts) != 2:
+            print(f"  需要兩個數字 (x y)，收到: {raw!r}")
+            continue
+        try:
+            return Vec2(float(parts[0]), float(parts[1]))
+        except ValueError:
+            print(f"  無效座標: {raw!r}")
+
+
+def _ask_int(prompt: str, default: str) -> int:
+    while True:
+        raw = _ask(prompt, default)
+        try:
+            return int(raw)
+        except ValueError:
+            print(f"  需要整數，收到: {raw!r}")
 
 
 def _ask_archetype(label: str, default: str) -> str:
@@ -97,7 +113,7 @@ def main() -> None:
     print("=== Sparring Sandbox 設定 ===\n")
     agent_arch = _ask_archetype("你的", "evocation")
     opponent_arch = _ask_archetype("對手", "berserker")
-    level = int(_ask("等級", "5"))
+    level = _ask_int("等級", "5")
     agent_pos = _ask_position("你的", Vec2(8.0, 15.0))
     opp_pos = _ask_position("對手", Vec2(22.0, 15.0))
     terrain = _ask_terrain("empty")
