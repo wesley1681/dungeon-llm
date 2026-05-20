@@ -22,8 +22,18 @@ from .action import encode_action
 
 def collect_bc_rollout(agent_arch: str, opponent_arch: str | None = None,
                         level: int = 5, seed: int = 0,
-                        max_rounds: int = 30) -> list[tuple[dict, tuple]]:
-    """Run one BC episode. Returns list of (obs_dict, action_triplet)."""
+                        max_rounds: int = 30,
+                        include_end_pairs: bool = True
+                        ) -> list[tuple[dict, tuple]]:
+    """Run one BC episode. Returns list of (obs_dict, action_triplet).
+
+    ``include_end_pairs``: when True, record (obs, (0,0,0)) whenever the
+    expert returns action=None (signaling end-of-turn). This makes BC
+    learn explicit "end the turn" decisions but biases the corpus toward
+    skill_idx=0 (end-turn slot). When False (default), end-of-turn pairs
+    are dropped — the engine-side action mask still allows the policy to
+    end its turn when no other skill is feasible.
+    """
     env = CombatEnvV2(seed=seed)
     env.reset(agent_arch=agent_arch, opponent_arch=opponent_arch, level=level)
     expert = make_archetype_policy(agent_arch)
@@ -35,12 +45,6 @@ def collect_bc_rollout(agent_arch: str, opponent_arch: str | None = None,
         if not agent.is_alive() or not opp.is_alive():
             break
 
-        # Record up to _MAX_SUB_ACTIONS_PER_TURN agent sub-actions. Skip the
-        # turn-terminating pair: when expert returns action=None (or ended=True
-        # with no action), it's signaling "I'm done", not making a skill
-        # choice. Recording those collapses BC onto skill_idx=0 (the "end"
-        # skill) — measured 84% end-spam in bc_v4. Engine-side masking still
-        # lets the policy end its turn when no other skill is feasible.
         for _ in range(_MAX_SUB_ACTIONS_PER_TURN):
             obs_now = build_obs(env.ws, _AGENT_ID, env.resources)
             decision = expert.decide(
@@ -48,10 +52,10 @@ def collect_bc_rollout(agent_arch: str, opponent_arch: str | None = None,
                 env.ws.combat.round_number,
             )
             if decision.action is None or decision.fled:
+                if include_end_pairs and not decision.fled:
+                    pairs.append((obs_now, (0, 0, 0)))
                 break
             enc = encode_action(decision.action, env.ws, _AGENT_ID)
-            # Drop unmatched encodings (skill_idx < 0) — better no signal
-            # than wrong signal pointing the policy at skill 0 (end-turn).
             if enc[0] >= 0:
                 pairs.append((obs_now, enc))
             if decision.ended:
@@ -77,7 +81,8 @@ def collect_bc_rollout(agent_arch: str, opponent_arch: str | None = None,
     return pairs
 
 
-def collect_bc_dataset(n_episodes_per_arch: int = 50, seed: int = 0) -> dict:
+def collect_bc_dataset(n_episodes_per_arch: int = 50, seed: int = 0,
+                       include_end_pairs: bool = False) -> dict:
     """Roll out every archetype against every other; return a flat dataset."""
     rng = np.random.default_rng(seed)
     all_pairs: list[tuple[dict, tuple]] = []
@@ -86,7 +91,10 @@ def collect_bc_dataset(n_episodes_per_arch: int = 50, seed: int = 0) -> dict:
             opp_arch = ARCHETYPE_LIST[rng.integers(len(ARCHETYPE_LIST))]
             level = int(rng.integers(3, 9))
             ep_seed = int(rng.integers(0, 2**31))
-            all_pairs.extend(collect_bc_rollout(agent_arch, opp_arch, level, ep_seed))
+            all_pairs.extend(collect_bc_rollout(
+                agent_arch, opp_arch, level, ep_seed,
+                include_end_pairs=include_end_pairs,
+            ))
 
     # Stack into arrays
     obs_keys = list(all_pairs[0][0].keys())

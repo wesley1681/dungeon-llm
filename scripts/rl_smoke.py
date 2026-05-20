@@ -24,7 +24,7 @@ def evaluate(net, n_episodes: int = 20, device: str = "cpu") -> float:
         while not done:
             obs_t = {k: torch.from_numpy(v).unsqueeze(0).to(device) for k, v in obs.items()}
             with torch.no_grad():
-                s, e, g = net(obs_t)
+                _, s, e, g = net(obs_t)
             action = [int(s.argmax(-1)), int(e.argmax(-1)), int(g.argmax(-1))]
             obs, _, term, trunc, _ = env.step(action)
             done = term or trunc

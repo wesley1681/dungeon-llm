@@ -151,7 +151,7 @@ def check_resource_audit(n_trials: int = 1000, max_steps: int = 20):
         for step in range(max_steps):
             obs_t = {k: torch.from_numpy(v).unsqueeze(0) for k, v in obs.items()}
             with torch.no_grad():
-                sl, e, g = net(obs_t)
+                _, sl, e, g = net(obs_t)
             sl = apply_resource_mask(sl, env.resources, env.ws, _AGENT_ID)
             e = apply_entity_mask(e, obs_t)
             action = [int(torch.distributions.Categorical(logits=sl.squeeze(0)).sample()),

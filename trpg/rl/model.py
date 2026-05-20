@@ -1,13 +1,19 @@
 """PyTorch policy network for CombatEnvV2.
 
-Three-head output for the factored MultiDiscrete action:
-  - skill head over N_SKILL_SLOTS, masked by skill_mask
+Four-head output. The end/act binary head decouples "should I end my
+sub-turn?" from "which skill should I use if I act?". This prevents the
+~50% of expert pairs that are turn-terminations from collapsing the
+skill distribution onto skill_idx=0 (the end-turn slot).
+
+  - end head    scalar logit; sigmoid > 0.5 → end this sub-turn
+  - skill head  over N_SKILL_SLOTS; trained only on act pairs;
+                position 0 (end slot) is masked at inference
   - entity head over N_ENTITY_SLOTS
-  - grid head over N_GRID*N_GRID
+  - grid head   over N_GRID*N_GRID
 
 Encoder mixes a small Transformer for skills, an MLP for entities, a
 3x3 Conv for terrain, and an MLP for resources. Outputs are concatenated
-into a shared context and decoded into the three heads.
+into a shared context and decoded into the four heads.
 """
 from __future__ import annotations
 import torch
@@ -51,6 +57,7 @@ class CombatPolicyNet(nn.Module):
         )
 
         # Heads — policy
+        self.end_head = nn.Linear(hidden, 1)
         self.skill_head = nn.Linear(64 + hidden, 1)
         self.entity_head = nn.Linear(32 + hidden, 1)
         self.grid_head = nn.Linear(hidden, N_GRID * N_GRID)
@@ -82,8 +89,16 @@ class CombatPolicyNet(nn.Module):
         h   = self.trunk(ctx)
         return sk_emb, ent_emb, h, key_padding
 
-    def forward(self, obs: dict) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def forward(self, obs: dict) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Returns (end_logit, skill_logits, entity_logits, grid_logits).
+
+        end_logit:    [B] — sigmoid > 0.5 → end this sub-turn
+        skill_logits: [B, N_SKILL_SLOTS] — slot 0 (end) is for PPO compatibility
+                      and is masked at BC inference time
+        """
         sk_emb, ent_emb, h, key_padding = self._encode(obs)
+
+        end_logit = self.end_head(h).squeeze(-1)
 
         h_skill     = h.unsqueeze(1).expand(-1, N_SKILL_SLOTS, -1)
         skill_logits = self.skill_head(torch.cat([sk_emb, h_skill], dim=-1)).squeeze(-1)
@@ -93,12 +108,36 @@ class CombatPolicyNet(nn.Module):
         entity_logits = self.entity_head(torch.cat([ent_emb, h_ent], dim=-1)).squeeze(-1)
 
         grid_logits = self.grid_head(h)
-        return skill_logits, entity_logits, grid_logits
+        return end_logit, skill_logits, entity_logits, grid_logits
 
     def value(self, obs: dict) -> torch.Tensor:
         """Critic: estimate state value V(s). Returns [B]."""
         _, _, h, _ = self._encode(obs)
         return self.value_head(h).squeeze(-1)
+
+
+def pick_skill_idx(end_logit: "torch.Tensor",
+                   skill_logits: "torch.Tensor") -> int:
+    """Two-head inference: return final skill_idx for the action triplet.
+
+    Decision:
+      1. If every real skill (positions 1..N-1) is masked to -inf,
+         end is forced regardless of end_head.
+      2. Else if sigmoid(end_logit) > 0.5, end.
+      3. Else, argmax over masked real skills.
+
+    ``skill_logits`` is expected to already have unavailable slots masked
+    (via key_padding from forward and apply_resource_mask). Position 0
+    (end slot) is masked here so it never wins the act-branch argmax.
+    """
+    import torch
+    sl = skill_logits.clone()
+    sl[..., 0] = -1e9  # never pick end via skill argmax — end_head decides
+    if (sl <= -1e8).all(dim=-1).item():
+        return 0  # nothing feasible → forced end
+    if torch.sigmoid(end_logit).item() > 0.5:
+        return 0
+    return int(sl.argmax(dim=-1).item())
 
 
 def apply_entity_mask(entity_logits: "torch.Tensor", obs: dict) -> "torch.Tensor":

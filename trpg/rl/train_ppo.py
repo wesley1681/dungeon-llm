@@ -25,7 +25,7 @@ def _sample_action(net: CombatPolicyNet, obs_t: dict,
                    ws=None, agent_id: str = ""
                    ) -> tuple[torch.Tensor, torch.Tensor, float]:
     """Sample action, return (action[3], log_prob[3], value_scalar)."""
-    skill_l, entity_l, grid_l = net(obs_t)
+    _, skill_l, entity_l, grid_l = net(obs_t)
     if resources is not None:
         skill_l = apply_resource_mask(skill_l, resources, ws, agent_id)
     entity_l = apply_entity_mask(entity_l, obs_t)
@@ -87,7 +87,7 @@ def _worker_collect(args: tuple) -> dict:
     for _ in range(n_steps):
         obs_t = {k: torch.from_numpy(v).unsqueeze(0) for k, v in obs.items()}
         with torch.no_grad():
-            skill_l, entity_l, grid_l = net(obs_t)
+            _, skill_l, entity_l, grid_l = net(obs_t)
             skill_l  = apply_resource_mask(skill_l, env.resources, env.ws, _AGENT_ID)
             entity_l = apply_entity_mask(entity_l, obs_t)
             val      = net.value(obs_t).item()
@@ -282,7 +282,7 @@ def ppo_update(net: CombatPolicyNet, batch: dict,
             old_b  = old_lp[sel]
             ret_b  = returns[sel]
 
-            skill_l, entity_l, grid_l = net(obs_b)
+            _, skill_l, entity_l, grid_l = net(obs_b)
             dists = [torch.distributions.Categorical(logits=x)
                      for x in (skill_l, entity_l, grid_l)]
             new_lp    = torch.stack([d.log_prob(acts_b[:, i])

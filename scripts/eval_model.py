@@ -25,7 +25,7 @@ import torch
 from trpg.engine.skill import available_skills
 from trpg.engine.abilities import CLASS_ABILITIES
 from trpg.rl.env_v2 import CombatEnvV2, _AGENT_ID, _OPPONENT_ID, ARCHETYPE_LIST
-from trpg.rl.model import CombatPolicyNet, apply_resource_mask, apply_entity_mask
+from trpg.rl.model import CombatPolicyNet, apply_resource_mask, apply_entity_mask, pick_skill_idx
 
 
 def categorize(skill_id: str) -> str:
@@ -192,10 +192,11 @@ def run_episode(net, env, device, agent_arch=None, opp_arch=None) -> dict:
         obs_t = {k: torch.from_numpy(v).unsqueeze(0).to(device)
                  for k, v in obs.items()}
         with torch.no_grad():
-            s, e, g = net(obs_t)
+            end_l, s, e, g = net(obs_t)
         s = apply_resource_mask(s, env.resources, env.ws, _AGENT_ID)
         e = apply_entity_mask(e, obs_t)
-        action = [int(s[0].argmax()), int(e[0].argmax()), int(g.argmax())]
+        skill_idx = pick_skill_idx(end_l[0], s[0])
+        action = [skill_idx, int(e[0].argmax()), int(g.argmax())]
 
         skills_before = available_skills(agent, env.ws)
         if 0 <= action[0] < len(skills_before):

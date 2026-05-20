@@ -17,9 +17,10 @@ def test_bc_loss_step_returns_scalar():
         "terrain":    torch.randn(4, 20, 20),
     }
     actions = torch.tensor([[1, 3, 50], [2, 0, 100], [0, 3, 0], [3, 4, 200]])
-    loss = bc_loss_step(net, obs, actions, optim)
+    loss, acc = bc_loss_step(net, obs, actions, optim)
     assert loss.shape == ()
     assert torch.isfinite(loss)
+    assert set(acc.keys()) == {"end", "skill", "entity", "grid"}
 
 
 def test_train_bc_returns_history():

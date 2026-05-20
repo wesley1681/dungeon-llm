@@ -23,6 +23,9 @@ def main():
     parser.add_argument("--lr",       type=float, default=3e-4)
     parser.add_argument("--out",      type=str, default="models/bc_v1.pt")
     parser.add_argument("--seed",     type=int, default=0)
+    parser.add_argument("--include_end_pairs", action="store_true",
+                        help="include (obs, (0,0,0)) pairs when expert ends turn — "
+                             "raw / naive imitation baseline (biases toward end-spam)")
     args = parser.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -36,7 +39,8 @@ def main():
 
     print(f"\n== 資料收集：{len(ARCHETYPE_LIST)} 個 archetype × {args.episodes} episode ==")
     t0 = time.time()
-    ds = collect_bc_dataset(n_episodes_per_arch=args.episodes, seed=args.seed)
+    ds = collect_bc_dataset(n_episodes_per_arch=args.episodes, seed=args.seed,
+                            include_end_pairs=args.include_end_pairs)
     n_pairs = ds["actions"].shape[0]
     elapsed = time.time() - t0
     print(f"   收集了 {n_pairs:,} 筆 (obs, action)，耗時 {elapsed:.1f}s")
@@ -79,11 +83,12 @@ def main():
         while not done:
             obs_t = {k: torch.from_numpy(v).unsqueeze(0).to(device) for k, v in obs.items()}
             with torch.no_grad():
-                s, e, g = net(obs_t)
-            from trpg.rl.model import apply_resource_mask
+                end_l, s, e, g = net(obs_t)
+            from trpg.rl.model import apply_resource_mask, pick_skill_idx
             from trpg.rl.env_v2 import _AGENT_ID
             s = apply_resource_mask(s, env.resources, env.ws, _AGENT_ID)
-            action = [int(s[0].argmax(-1)), int(e.argmax(-1)), int(g.argmax(-1))]
+            skill_idx = pick_skill_idx(end_l[0], s[0])
+            action = [skill_idx, int(e.argmax(-1)), int(g.argmax(-1))]
             obs, _, term, trunc, _ = env.step(action)
             done = term or trunc
         if not env.ws.characters["opponent"].is_alive():

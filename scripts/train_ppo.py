@@ -70,7 +70,7 @@ def evaluate(net, n_episodes=100, device="cuda"):
             obs_t = {k: torch.from_numpy(v).unsqueeze(0).to(device)
                      for k, v in obs.items()}
             with torch.no_grad():
-                s, e, g = net(obs_t)
+                _, s, e, g = net(obs_t)
             from trpg.rl.env_v2 import _AGENT_ID
             s = apply_resource_mask(s, env.resources, env.ws, _AGENT_ID)
             e = apply_entity_mask(e, obs_t)
@@ -116,6 +116,9 @@ def main():
                         help="qualification games per pool opponent for new snapshots")
     parser.add_argument("--qual_threshold", type=float, default=0.55,
                         help="min win-rate vs current pool to accept a new snapshot")
+    parser.add_argument("--save_every_eval", action="store_true",
+                        help="save a numbered snapshot ppo_uNNN.pt at every eval, "
+                             "in addition to ppo_best.pt (preserves every stage)")
     args = parser.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -207,6 +210,11 @@ def main():
         if update % args.eval_every == 0:
             wr = evaluate(net, n_episodes=100, device=device)
             print(f"  => win-rate: {wr:.0%}  (best so far: {best_wr:.0%})")
+
+            if args.save_every_eval:
+                snap_path = out_dir / f"ppo_u{update:04d}.pt"
+                torch.save(net.state_dict(), str(snap_path))
+                print(f"  => snapshot: {snap_path} ({wr:.0%})")
 
             if wr >= best_wr + best_margin:
                 best_wr = wr
