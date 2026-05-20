@@ -91,6 +91,20 @@ def main():
             wins += 1
     win_rate = wins / n_eval
     print(f"   Win rate: {win_rate:.0%}  ({wins}/{n_eval})")
+
+    # ── Phase 4: 行為診斷 ────────────────────────────────────────────────────
+    # Aggregate win-rate hides per-archetype collapses (wizard never casts,
+    # everyone forgets to end turn, etc.). Run the skill-distribution probe
+    # so those failure modes show up before the model is shipped.
+    from trpg.rl.skill_probe import probe_and_report
+    print("\n== 行為診斷：per-archetype 技能分布 vs expert ==")
+    flags = probe_and_report(net, n_episodes=8, device=device,
+                              seed=98765, verbose=True)
+    if flags:
+        print(f"\n⚠️  {len(flags)} 個 category 崩潰 — 模型在這些情境沒模仿好 expert。")
+    else:
+        print("\n✓ 無 category 崩潰。")
+
     print(f"\nModel 存到: {out_path}")
 
 
