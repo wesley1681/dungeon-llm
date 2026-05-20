@@ -63,6 +63,20 @@ class ClassAbility:
     # (e.g. lay_on_hands_pool). Returns True when the ability can still be used.
     is_usable: Callable | None = None
 
+    def build_action(self, actor_id: str,
+                     target_entity_id: str | None = None,
+                     target_coord=None,
+                     char=None) -> dict | None:
+        """Build an engine action dict. Auto-embeds ``skill_id`` so downstream
+        code can identify the source ability without reverse-engineering.
+        """
+        if self.builder is None:
+            return None
+        action = self.builder(actor_id, target_entity_id, target_coord, char=char)
+        if action is not None:
+            action["skill_id"] = self.skill_id
+        return action
+
 
 # ── Catalog ──────────────────────────────────────────────────────────────────
 

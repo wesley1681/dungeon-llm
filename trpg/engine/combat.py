@@ -629,7 +629,19 @@ def _try_counterspell(caster: Character, spell_level: int,
 
 
 def execute_action(action: dict, world_state: WorldState) -> dict:
-    """Execute a parsed action JSON from the arbiter. Returns a result summary dict."""
+    """Execute a parsed action JSON from the arbiter. Returns a result summary dict.
+
+    Every action dict must carry a ``skill_id`` identifying the Skill/ClassAbility
+    that produced it. Build through ``Skill.build_action`` or
+    ``ClassAbility.build_action`` rather than handwriting dicts so this is
+    automatic. The check raises loudly to surface silent-bug paths.
+    """
+    if "skill_id" not in action:
+        raise ValueError(
+            f"action dict missing skill_id — build via Skill.build_action() "
+            f"or ClassAbility.build_action() instead of handwriting the dict. "
+            f"Got: {action!r}"
+        )
     t = action.get("type")
 
     # ── ATTACK ────────────────────────────────────────────────────────────────

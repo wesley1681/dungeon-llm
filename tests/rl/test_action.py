@@ -70,9 +70,11 @@ def test_encode_attack_action_roundtrip():
     skills = available_skills(ws.characters["a"], ws)
     weapon_idx = next(i for i, s in enumerate(skills) if s.skill_id.startswith("weapon:"))
     # Build the action the policy would emit
+    weapon_name = ws.characters["a"].weapons[0].name
     action_dict = {
-        "type": "ATTACK", "attacker": "a", "target": "b",
-        "weapon": ws.characters["a"].weapons[0].name,
+        "type": "ATTACK", "skill_id": f"weapon:{weapon_name}",
+        "attacker": "a", "target": "b",
+        "weapon": weapon_name,
         "consumes": ["action"],
     }
     enc = encode_action(action_dict, ws, "a")
@@ -87,7 +89,7 @@ def test_encode_move_action():
     skills = available_skills(ws.characters["a"], ws)
     move_idx = next(i for i, s in enumerate(skills) if s.skill_id == "move")
     action_dict = {
-        "type": "MOVE", "character": "a", "target": "b",
+        "type": "MOVE", "skill_id": "move", "character": "a", "target": "b",
         "consumes": ["movement"],
     }
     enc = encode_action(action_dict, ws, "a")

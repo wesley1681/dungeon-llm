@@ -243,7 +243,14 @@ class Skill:
     def build_action(self, actor_id: str,
                      target_entity_id: str | None = None,
                      target_coord: tuple[float, float] | None = None) -> dict | None:
-        return self.builder(actor_id, target_entity_id, target_coord)
+        """Build an engine action dict. Auto-embeds ``skill_id`` so downstream
+        code (BC encoder, engine validator) can identify the source skill
+        without reverse-engineering from the dict shape.
+        """
+        action = self.builder(actor_id, target_entity_id, target_coord)
+        if action is not None:
+            action["skill_id"] = self.skill_id
+        return action
 
 
 # ── Factory helpers ──────────────────────────────────────────────────────────
@@ -395,6 +402,15 @@ def hide_skill(char) -> Skill:
                  lambda a, t, c: {"type": "HIDE", "character": a, "consumes": ["action"]})
 
 
+def disengage_skill(char) -> Skill:
+    feats = SkillFeatures(
+        cost_action=1.0,
+        target_type=TargetType.SELF,
+    )
+    return Skill("disengage", "脫身", feats,
+                 lambda a, t, c: {"type": "DISENGAGE", "character": a, "consumes": ["action"]})
+
+
 def move_skill(char, budget_m: float = 9.0) -> Skill:
     feats = SkillFeatures(
         cost_movement=budget_m,
@@ -529,4 +545,5 @@ def available_skills(char, world_state=None) -> list[Skill]:
 
     out.append(dodge_skill(char))
     out.append(hide_skill(char))
+    out.append(disengage_skill(char))
     return out

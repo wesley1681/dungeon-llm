@@ -162,7 +162,7 @@ def test_divine_smite_applies_bonus_damage():
          patch("trpg.engine.combat.roll", side_effect=[5, 7, 4]):
         # rolls: 1d8 weapon (5), then 2d8 smite: 1d8 each (7, 4) = 11 total
         res = execute_action({
-            "type": "ATTACK", "attacker": "p", "target": "e",
+            "type": "ATTACK", "skill_id": "test_handwritten", "attacker": "p", "target": "e",
             "weapon": "長劍", "divine_smite_slot": 1, "consumes": ["action"],
         }, ws)
     assert res["hit"] is True
@@ -184,7 +184,7 @@ def test_divine_smite_does_not_fire_on_miss():
     ws.combat = CombatState(initiative_order=["p", "e"])
     with patch("trpg.engine.combat.roll_d20", return_value=5):
         res = execute_action({
-            "type": "ATTACK", "attacker": "p", "target": "e",
+            "type": "ATTACK", "skill_id": "test_handwritten", "attacker": "p", "target": "e",
             "weapon": "長劍", "divine_smite_slot": 1, "consumes": ["action"],
         }, ws)
     assert res["hit"] is False

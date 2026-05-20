@@ -97,26 +97,22 @@ class HeuristicCombatPolicy(CombatPolicy):
         d = actor.position.distance_to(target.position)
         reach = weapon.range_normal or 1.5
 
+        from .skill import available_skills
+        skills = available_skills(actor, ws)
+        weapon_skill_id = f"weapon:{weapon.name}"
+
         if d <= reach + 1e-6 and resources.get("action", 0) > 0:
-            return CombatDecision(action={
-                "type":     "ATTACK",
-                "attacker": actor_id,
-                "target":   target_id,
-                "weapon":   weapon.name,
-                "consumes": ["action"],
-            })
+            sk = next((s for s in skills if s.skill_id == weapon_skill_id), None)
+            if sk is not None:
+                return CombatDecision(action=sk.build_action(actor_id, target_id, target.position))
 
         # Only walk when actually out of reach — otherwise the MOVE handler
         # would return a 0m no-op (combat.py keeps a 1m gap from creature
         # targets), burning sub-actions on idle steps.
         if d > reach + 1e-6 and resources.get("movement", 0.0) > 1e-6:
-            return CombatDecision(action={
-                "type":        "MOVE",
-                "character":   actor_id,
-                "target":      target_id,
-                "description": "靠近",
-                "consumes":    ["movement"],
-            })
+            move_sk = next((s for s in skills if s.skill_id == "move"), None)
+            if move_sk is not None:
+                return CombatDecision(action=move_sk.build_action(actor_id, target_id, None))
 
         return CombatDecision(ended=True)
 
@@ -163,35 +159,36 @@ def _parse_command(text: str, actor_id: str, world_state) -> dict:
         raise ValueError("空指令")
     cmd = parts[0].lower()
 
+    from .skill import available_skills
+    actor = world_state.characters.get(actor_id)
+    skills = available_skills(actor, world_state) if actor else []
+
+    def _find(skill_id: str):
+        return next((s for s in skills if s.skill_id == skill_id), None)
+
     if cmd in ("attack", "攻擊"):
         if len(parts) < 2:
             raise ValueError("用法：攻擊 <目標> [武器]")
         target_id = _resolve_id(parts[1], world_state)
         if target_id is None:
             raise ValueError(f"找不到目標：{parts[1]}")
-        actor = world_state.characters.get(actor_id)
         weapon = parts[2] if len(parts) >= 3 else (
             actor.get_weapon().name if (actor and actor.weapons) else ""
         )
-        return {
-            "type":     "ATTACK",
-            "attacker": actor_id,
-            "target":   target_id,
-            "weapon":   weapon,
-            "consumes": ["action"],
-        }
+        sk = _find(f"weapon:{weapon}")
+        if sk is None:
+            raise ValueError(f"沒有可用武器：{weapon}")
+        return sk.build_action(actor_id, target_id, None)
 
     if cmd in ("move", "移動"):
+        move_sk = _find("move")
+        if move_sk is None:
+            raise ValueError("此時無法移動")
         if len(parts) == 2:
             target_id = _resolve_id(parts[1], world_state)
             if target_id is None:
                 raise ValueError(f"用法：移動 <x> <y> 或 移動 <目標>（找不到 {parts[1]}）")
-            return {
-                "type":      "MOVE",
-                "character": actor_id,
-                "target":    target_id,
-                "consumes":  ["movement"],
-            }
+            return move_sk.build_action(actor_id, target_id, None)
         if len(parts) >= 3:
             ax, ay = parts[1], parts[2]
             is_delta = any(s.startswith(("+", "-")) for s in (ax, ay))
@@ -200,49 +197,46 @@ def _parse_command(text: str, actor_id: str, world_state) -> dict:
                 y = float(ay)
             except ValueError:
                 raise ValueError(f"無效座標：{ax} {ay}")
-            key = "delta" if is_delta else "target_position"
-            return {
-                "type":      "MOVE",
-                "character": actor_id,
-                key:         [x, y],
-                "consumes":  ["movement"],
-            }
+            if is_delta:
+                # Move skill's builder doesn't support relative deltas — only
+                # absolute coords or target ids. Rebuild and swap the key.
+                action = move_sk.build_action(actor_id, None, (x, y))
+                if action is None:
+                    raise ValueError("移動失敗")
+                action.pop("target_position", None)
+                action["delta"] = [x, y]
+                return action
+            return move_sk.build_action(actor_id, None, (x, y))
         raise ValueError("用法：移動 <x> <y> 或 移動 <目標>")
 
     if cmd in ("spell", "施法"):
         if len(parts) < 3:
             raise ValueError("用法：施法 <咒名> <目標 或 x y>")
         spell_name = parts[1]
+        spell_sk = _find(f"spell:{spell_name}")
+        if spell_sk is None:
+            raise ValueError(f"沒有可用法術：{spell_name}（檢查法術位或集中限制）")
         if len(parts) >= 4:
             try:
                 x = float(parts[2])
                 y = float(parts[3])
-                return {
-                    "type":            "SPELL",
-                    "caster":          actor_id,
-                    "spell_name":      spell_name,
-                    "target_position": [x, y],
-                    "consumes":        ["action"],
-                }
+                return spell_sk.build_action(actor_id, None, (x, y))
             except ValueError:
                 pass   # not numeric — fall through to target-id interpretation
         target_id = _resolve_id(parts[2], world_state)
         if target_id is None:
             raise ValueError(f"找不到法術目標：{parts[2]}")
-        return {
-            "type":       "SPELL",
-            "caster":     actor_id,
-            "spell_name": spell_name,
-            "target":     target_id,
-            "consumes":   ["action"],
-        }
+        return spell_sk.build_action(actor_id, target_id, None)
 
     if cmd in _DODGE_WORDS:
-        return {"type": "DODGE", "character": actor_id, "consumes": ["action"]}
+        sk = _find("dodge")
+        return sk.build_action(actor_id, None, None) if sk else None
     if cmd in _HIDE_WORDS:
-        return {"type": "HIDE", "character": actor_id, "consumes": ["action"]}
+        sk = _find("hide")
+        return sk.build_action(actor_id, None, None) if sk else None
     if cmd in _DISENGAGE_WORDS:
-        return {"type": "DISENGAGE", "character": actor_id, "consumes": ["action"]}
+        sk = _find("disengage")
+        return sk.build_action(actor_id, None, None) if sk else None
 
     # ── 招式 <skill_id> [args] ────────────────────────────────────────────
     # Invoke a ClassAbility from the catalogue. Args interpretation depends
@@ -254,7 +248,6 @@ def _parse_command(text: str, actor_id: str, world_state) -> dict:
     if cmd in ("招式", "ability", "skill"):
         from .abilities import CLASS_ABILITIES
         from .skill import TargetType
-        actor = world_state.characters.get(actor_id)
         if len(parts) < 2:
             # No skill_id → list what this actor can invoke
             avail = []
@@ -311,9 +304,9 @@ def _parse_command(text: str, actor_id: str, world_state) -> dict:
             resolved = [_resolve_id(tok, world_state) or tok for tok in tokens]
             target_arg = ",".join(resolved)
 
-        action = ab.builder(actor_id, target_arg, coord_arg, char=actor)
+        action = ab.build_action(actor_id, target_arg, coord_arg, char=actor)
         if action is None:
-            raise ValueError(f"{skill_id}：builder 回傳 None（檢查 args 是否齊全）")
+            raise ValueError(f"{skill_id}：build_action 回傳 None（檢查 args 是否齊全）")
         # Deduct one use.
         if actor is not None and ab.max_uses > 0:
             actor.ability_uses[skill_id] = actor.ability_uses.get(skill_id, ab.max_uses) - 1
@@ -327,8 +320,13 @@ def _parse_command(text: str, actor_id: str, world_state) -> dict:
         except ValueError:
             raise ValueError(f"無效的骰值：{parts[1]}")
         tgt = _resolve_id(parts[2], world_state) or parts[2]
+        # PORTENT is a player-only reaction with a die_value parameter that
+        # doesn't fit the (actor, target, coord) Skill.builder signature. We
+        # set skill_id explicitly here so the engine validator passes; this
+        # is the one documented exception to "always go through Skill".
         return {
             "type":      "PORTENT",
+            "skill_id":  "portent",
             "caster":    actor_id,
             "target":    tgt,
             "die_value": die_val,
@@ -405,30 +403,33 @@ class _ArchetypeBase(CombatPolicy):
             return None
         t = ws.characters.get(target_id) if target_id else None
         c = coord or (t.position if t else actor.position)
-        return sk.builder(actor_id, target_id, c)
+        return sk.build_action(actor_id, target_id, c)
 
-    def _attack(self, actor_id: str, actor, target_id: str) -> dict | None:
+    def _attack(self, actor_id: str, actor, ws, target_id: str) -> dict | None:
         weapon = actor.get_weapon() if actor.weapons else None
         if not weapon:
             return None
-        return {"type": "ATTACK", "attacker": actor_id, "target": target_id,
-                "weapon": weapon.name, "consumes": ["action"]}
+        action = self._use_skill(actor_id, actor, ws,
+                                 f"weapon:{weapon.name}", target_id=target_id)
+        return action
 
-    def _smite_attack(self, actor_id: str, actor, target_id: str) -> dict | None:
+    def _smite_attack(self, actor_id: str, actor, ws, target_id: str) -> dict | None:
         """Attack with the lowest available spell slot for divine smite."""
         weapon = actor.get_weapon() if actor.weapons else None
         if not weapon:
             return None
         for slot in (1, 2, 3, 4):
             if actor.spell_slots.get(slot, 0) > 0:
-                return {"type": "ATTACK", "attacker": actor_id, "target": target_id,
-                        "weapon": weapon.name, "divine_smite_slot": slot,
-                        "consumes": ["action"]}
-        return self._attack(actor_id, actor, target_id)
+                action = self._use_skill(actor_id, actor, ws,
+                                         f"weapon:{weapon.name}", target_id=target_id)
+                if action is None:
+                    return None
+                action["divine_smite_slot"] = slot
+                return action
+        return self._attack(actor_id, actor, ws, target_id)
 
-    def _move_to(self, actor_id: str, target_id: str) -> dict:
-        return {"type": "MOVE", "character": actor_id, "target": target_id,
-                "description": "靠近", "consumes": ["movement"]}
+    def _move_to(self, actor_id: str, actor, ws, target_id: str) -> dict | None:
+        return self._use_skill(actor_id, actor, ws, "move", target_id=target_id)
 
 
 # ── Fighters ──────────────────────────────────────────────────────────────────
@@ -443,14 +444,14 @@ class BattleMasterPolicy(_ArchetypeBase):
             return CombatDecision(ended=True)
 
         if not self._in_reach(actor, tgt) and resources.get("movement", 0) > 1e-6:
-            return CombatDecision(action=self._move_to(actor_id, tid))
+            return CombatDecision(action=self._move_to(actor_id, actor, ws, tid))
 
         if resources.get("action", 0) > 0 and self._in_reach(actor, tgt):
             for m in self._MANEUVERS:
                 a = self._use_skill(actor_id, actor, ws, m, tid)
                 if a:
                     return CombatDecision(action=a)
-            a = self._attack(actor_id, actor, tid)
+            a = self._attack(actor_id, actor, ws, tid)
             if a:
                 return CombatDecision(action=a)
 
@@ -466,10 +467,10 @@ class ChampionPolicy(_ArchetypeBase):
             return CombatDecision(ended=True)
 
         if not self._in_reach(actor, tgt) and resources.get("movement", 0) > 1e-6:
-            return CombatDecision(action=self._move_to(actor_id, tid))
+            return CombatDecision(action=self._move_to(actor_id, actor, ws, tid))
 
         if resources.get("action", 0) > 0 and self._in_reach(actor, tgt):
-            a = self._attack(actor_id, actor, tid)
+            a = self._attack(actor_id, actor, ws, tid)
             if a:
                 return CombatDecision(action=a)
 
@@ -493,11 +494,11 @@ class _BarbarianBase(_ArchetypeBase):
                 return CombatDecision(action=a)
 
         if not self._in_reach(actor, tgt) and resources.get("movement", 0) > 1e-6:
-            return CombatDecision(action=self._move_to(actor_id, tid))
+            return CombatDecision(action=self._move_to(actor_id, actor, ws, tid))
 
         if resources.get("action", 0) > 0 and self._in_reach(actor, tgt):
             a = (self._use_skill(actor_id, actor, ws, "reckless_attack", tid)
-                 or self._attack(actor_id, actor, tid))
+                 or self._attack(actor_id, actor, ws, tid))
             if a:
                 return CombatDecision(action=a)
 
@@ -545,7 +546,7 @@ class _WizardBase(_ArchetypeBase):
 
         # Close gap if target out of spell range
         if d > 18.0 and resources.get("movement", 0) > 1e-6:
-            return CombatDecision(action=self._move_to(actor_id, tid))
+            return CombatDecision(action=self._move_to(actor_id, actor, ws, tid))
 
         return CombatDecision(ended=True)
 
@@ -608,14 +609,14 @@ class _ClericBase(_ArchetypeBase):
 
             # Sacred flame at range, or melee attack if adjacent
             if self._in_reach(actor, tgt):
-                a = self._attack(actor_id, actor, tid)
+                a = self._attack(actor_id, actor, ws, tid)
             else:
                 a = self._use_skill(actor_id, actor, ws, "sacred_flame", tid)
             if a:
                 return CombatDecision(action=a)
 
         if not self._in_reach(actor, tgt) and resources.get("movement", 0) > 1e-6:
-            return CombatDecision(action=self._move_to(actor_id, tid))
+            return CombatDecision(action=self._move_to(actor_id, actor, ws, tid))
 
         return CombatDecision(ended=True)
 
@@ -643,14 +644,14 @@ class LifeClericPolicy(_ClericBase):
                     return CombatDecision(action=a)
 
             if self._in_reach(actor, tgt):
-                a = self._attack(actor_id, actor, tid)
+                a = self._attack(actor_id, actor, ws, tid)
             else:
                 a = self._use_skill(actor_id, actor, ws, "sacred_flame", tid)
             if a:
                 return CombatDecision(action=a)
 
         if not self._in_reach(actor, tgt) and resources.get("movement", 0) > 1e-6:
-            return CombatDecision(action=self._move_to(actor_id, tid))
+            return CombatDecision(action=self._move_to(actor_id, actor, ws, tid))
 
         return CombatDecision(ended=True)
 
@@ -684,7 +685,7 @@ class _RogueBase(_ArchetypeBase):
 
         # Attack (sneak attack fires automatically when conditions met)
         if resources.get("action", 0) > 0 and in_melee:
-            a = self._attack(actor_id, actor, tid)
+            a = self._attack(actor_id, actor, ws, tid)
             if a:
                 return CombatDecision(action=a)
 
@@ -695,7 +696,7 @@ class _RogueBase(_ArchetypeBase):
                 if a:
                     return CombatDecision(action=a)
             if resources.get("movement", 0) > 1e-6:
-                return CombatDecision(action=self._move_to(actor_id, tid))
+                return CombatDecision(action=self._move_to(actor_id, actor, ws, tid))
 
         return CombatDecision(ended=True)
 
@@ -737,11 +738,11 @@ class ArcaneTricksterPolicy(_RogueBase):
                 return CombatDecision(action=a)
 
         if not in_melee and resources.get("movement", 0) > 1e-6:
-            return CombatDecision(action=self._move_to(actor_id, tid))
+            return CombatDecision(action=self._move_to(actor_id, actor, ws, tid))
 
         # Attack (sneak fires if hidden or target debuffed)
         if resources.get("action", 0) > 0 and in_melee:
-            a = self._attack(actor_id, actor, tid)
+            a = self._attack(actor_id, actor, ws, tid)
             if a:
                 return CombatDecision(action=a)
 
@@ -759,7 +760,7 @@ class DevotionPolicy(_ArchetypeBase):
             return CombatDecision(ended=True)
 
         if not self._in_reach(actor, tgt) and resources.get("movement", 0) > 1e-6:
-            return CombatDecision(action=self._move_to(actor_id, tid))
+            return CombatDecision(action=self._move_to(actor_id, actor, ws, tid))
 
         if resources.get("action", 0) > 0:
             # Round 1: sacred weapon buff (costs action)
@@ -775,7 +776,7 @@ class DevotionPolicy(_ArchetypeBase):
                     return CombatDecision(action=a)
 
             if self._in_reach(actor, tgt):
-                a = self._smite_attack(actor_id, actor, tid)
+                a = self._smite_attack(actor_id, actor, ws, tid)
                 if a:
                     return CombatDecision(action=a)
 
@@ -791,7 +792,7 @@ class VengeancePolicy(_ArchetypeBase):
             return CombatDecision(ended=True)
 
         if not self._in_reach(actor, tgt) and resources.get("movement", 0) > 1e-6:
-            return CombatDecision(action=self._move_to(actor_id, tid))
+            return CombatDecision(action=self._move_to(actor_id, actor, ws, tid))
 
         # Vow of enmity on target (bonus action, round 1)
         if round_num == 1 and not tgt.has_status("vow_target") and resources.get("bonus_action", 1) > 0:
@@ -806,7 +807,7 @@ class VengeancePolicy(_ArchetypeBase):
                     return CombatDecision(action=a)
 
             if self._in_reach(actor, tgt):
-                a = self._smite_attack(actor_id, actor, tid)
+                a = self._smite_attack(actor_id, actor, ws, tid)
                 if a:
                     return CombatDecision(action=a)
 

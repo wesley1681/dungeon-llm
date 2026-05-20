@@ -67,34 +67,34 @@ def decode_action(action: Sequence[int], ws: WorldState, agent_id: str) -> dict 
 
     tt = sk.features.target_type
     if tt == TargetType.SELF:
-        return sk.builder(agent_id, agent_id, agent.position)
+        return sk.build_action(agent_id, agent_id, agent.position)
     if tt in (TargetType.SINGLE_ALLY, TargetType.MULTI_ALLY):
         is_party = ws.is_party_ally(agent_id)
         if target_id is None or ws.is_party_ally(target_id) != is_party:
             target_id = agent_id
         target_pos = ws.characters[target_id].position
-        return sk.builder(agent_id, target_id, target_pos)
+        return sk.build_action(agent_id, target_id, target_pos)
     if tt in (TargetType.SINGLE_ENEMY, TargetType.MULTI_ENEMY):
         if target_id is None:
             return None
         target_pos = ws.characters[target_id].position
         if bf is not None and not bf.has_line_of_sight(agent.position, target_pos):
             return None   # LOS-blocked targets become a no-op turn end
-        return sk.builder(agent_id, target_id, target_pos)
+        return sk.build_action(agent_id, target_id, target_pos)
     if tt == TargetType.POINT:
         coord = _clamp_to_range(Vec2(coord_x, coord_y), agent.position,
                                 sk.features.range_m)
         if bf is not None:
             if bf.is_blocked(coord) or not bf.has_line_of_sight(agent.position, coord):
                 return None
-        return sk.builder(agent_id, None, coord)
+        return sk.build_action(agent_id, None, coord)
     # LINE/CONE fall back to POINT semantics
     coord = _clamp_to_range(Vec2(coord_x, coord_y), agent.position,
                             sk.features.range_m)
     if bf is not None:
         if bf.is_blocked(coord) or not bf.has_line_of_sight(agent.position, coord):
             return None
-    return sk.builder(agent_id, target_id, coord)
+    return sk.build_action(agent_id, target_id, coord)
 
 
 def _clamp_to_range(target: Vec2, origin: Vec2, range_m: float) -> Vec2:
@@ -135,84 +135,34 @@ def _xy_to_grid_cell(x: float, y: float) -> int:
     return ix * N_GRID + iy
 
 
-def _match_skill_idx(action_dict: dict, agent, agent_id: str, ws: WorldState) -> int:
-    """Find the skill_idx whose builder would have produced this action dict.
-
-    Strategy: match on action ``type`` plus the most-discriminative key
-    (``weapon_index`` / ``modifier`` / ``spell_name``). Falls back to skill_id
-    inference for MOVE-style actions.
-
-    For weapon/spell matches we prefer exact ``skill_id == "weapon:<name>"`` /
-    ``"spell:<name>"`` equality; a substring fallback only kicks in when no
-    exact match exists, to avoid collisions like "短劍" ⊂ "雙手短劍".
-    """
-    skills = available_skills(agent, ws)
-    a_type = action_dict.get("type")
-
-    # MOVE → 'move' skill
-    if a_type == "MOVE":
-        for i, s in enumerate(skills):
-            if s.skill_id == "move":
-                return i
-        return 0
-
-    if a_type == "ATTACK":
-        weapon_name = action_dict.get("weapon", "")
-        target_skill_id = f"weapon:{weapon_name}"
-        # Exact match first.
-        for i, s in enumerate(skills):
-            if s.skill_id == target_skill_id:
-                return i
-        # Substring fallback for safety.
-        for i, s in enumerate(skills):
-            if s.skill_id.startswith("weapon:") and weapon_name and weapon_name in s.skill_id:
-                return i
-        # Fall through: some ClassAbility builders also emit ATTACK
-        # (e.g. reckless_attack). Probe each builder with the real agent_id.
-        for i, s in enumerate(skills):
-            try:
-                probe = s.builder(agent_id, action_dict.get("target"), None)
-                if probe and probe.get("type") == "ATTACK":
-                    return i
-            except Exception:
-                continue
-        return 0
-
-    # SPELL by spell_name
-    if a_type == "SPELL":
-        spell_name = action_dict.get("spell_name", "")
-        target_skill_id = f"spell:{spell_name}"
-        for i, s in enumerate(skills):
-            if s.skill_id == target_skill_id:
-                return i
-        for i, s in enumerate(skills):
-            if s.skill_id.startswith("spell:") and spell_name and spell_name in s.skill_id:
-                return i
-
-    # APPLY_MOD by modifier name
-    if a_type == "APPLY_MOD":
-        mod = action_dict.get("modifier", "")
-        for i, s in enumerate(skills):
-            if s.skill_id == mod or s.skill_id.endswith(mod):
-                return i
-
-    # DODGE / HIDE / DISENGAGE — match by type name
-    for i, s in enumerate(skills):
-        if s.skill_id == a_type.lower():
-            return i
-    return 0
-
-
 def encode_action(action_dict: dict | None, ws: WorldState, agent_id: str) -> tuple[int, int, int]:
     """Reverse-map an engine action dict into [skill_idx, entity_idx, grid_cell].
 
-    Returns (0, 0, 0) for None / end-turn. Used by BC data collection.
+    Every action dict carries ``skill_id`` (auto-embedded by Skill.build_action
+    / ClassAbility.build_action, enforced by execute_action) so this is a
+    direct lookup — no pattern-matching, no reverse inference.
+
+    Returns (0, 0, 0) for None / end-turn. Returns (-1, -1, -1) when the
+    skill is no longer in the agent's current available list (e.g. ability
+    was used up after the expert committed to it).
     """
     if action_dict is None:
         return (0, 0, 0)
 
+    skill_id = action_dict.get("skill_id")
+    if not skill_id:
+        # Action dict was built outside the Skill abstraction — engine
+        # validator should have caught this. Bail loudly rather than guess.
+        raise ValueError(
+            f"encode_action: dict missing skill_id field — must be built via "
+            f"Skill.build_action() / ClassAbility.build_action(). Got: {action_dict!r}"
+        )
+
     agent = ws.characters[agent_id]
-    skill_idx = _match_skill_idx(action_dict, agent, agent_id, ws)
+    skills = available_skills(agent, ws)
+    skill_idx = next((i for i, s in enumerate(skills) if s.skill_id == skill_id), -1)
+    if skill_idx < 0:
+        return (-1, -1, -1)
 
     # Entity slot
     target_id = (action_dict.get("target") or action_dict.get("character")

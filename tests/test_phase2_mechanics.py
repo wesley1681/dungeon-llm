@@ -45,7 +45,7 @@ def test_sneak_attack_fires_when_ally_adjacent_to_target():
          patch("trpg.engine.combat.roll", side_effect=[4, 4, 3, 3]):
         # roll calls: d20=20 triggers crit → 2× weapon 1d6 (4,4), then 2× 1d6 sneak (3,3)
         res = execute_action(
-            {"type": "ATTACK", "attacker": "a", "target": "b",
+            {"type": "ATTACK", "skill_id": "test_handwritten", "attacker": "a", "target": "b",
              "weapon": "短劍", "consumes": ["action"]}, ws
         )
     assert res["hit"] is True
@@ -58,7 +58,7 @@ def test_sneak_attack_does_not_fire_without_condition():
     with patch("trpg.engine.combat.roll_d20", return_value=20), \
          patch("trpg.engine.combat.roll", return_value=4):
         res = execute_action(
-            {"type": "ATTACK", "attacker": "a", "target": "b",
+            {"type": "ATTACK", "skill_id": "test_handwritten", "attacker": "a", "target": "b",
              "weapon": "短劍", "consumes": ["action"]}, ws
         )
     assert res.get("sneak_attack_damage", 0) == 0
@@ -70,7 +70,7 @@ def test_sneak_attack_does_not_fire_without_sneak_dice():
     with patch("trpg.engine.combat.roll_d20", return_value=20), \
          patch("trpg.engine.combat.roll", return_value=4):
         res = execute_action(
-            {"type": "ATTACK", "attacker": "a", "target": "b",
+            {"type": "ATTACK", "skill_id": "test_handwritten", "attacker": "a", "target": "b",
              "weapon": "短劍", "consumes": ["action"]}, ws
         )
     assert res.get("sneak_attack_damage", 0) == 0
@@ -117,7 +117,7 @@ def _paladin_world():
 def test_lay_on_hands_heals_target_from_pool():
     ws, pal, ally = _paladin_world()
     res = execute_action(
-        {"type": "LAY_ON_HANDS", "caster": "p", "target": "a",
+        {"type": "LAY_ON_HANDS", "skill_id": "test_handwritten", "caster": "p", "target": "a",
          "amount": 10, "consumes": ["action"]}, ws
     )
     assert res["type"] == "LAY_ON_HANDS"
@@ -128,7 +128,7 @@ def test_lay_on_hands_heals_target_from_pool():
 def test_lay_on_hands_cannot_exceed_pool():
     ws, pal, ally = _paladin_world()
     res = execute_action(
-        {"type": "LAY_ON_HANDS", "caster": "p", "target": "a",
+        {"type": "LAY_ON_HANDS", "skill_id": "test_handwritten", "caster": "p", "target": "a",
          "amount": 20, "consumes": ["action"]}, ws
     )
     assert res["type"] == "ERROR"
@@ -175,7 +175,7 @@ def test_sculpt_spells_excludes_allies_from_aoe():
     ally_hp_before = ally.hp
     with patch("trpg.engine.combat.roll", return_value=4):
         res = execute_action({
-            "type": "SPELL", "caster": "s", "spell_name": "火球術",
+            "type": "SPELL", "skill_id": "test_handwritten", "caster": "s", "spell_name": "火球術",
             "target_position": [10.0, 10.0], "consumes": ["action"]
         }, ws)
     assert ally.hp == ally_hp_before, "sculpt_spells should protect ally"
@@ -256,7 +256,7 @@ def test_hunters_mark_adds_1d6_on_hit():
          patch("trpg.engine.combat.roll", side_effect=[5, 4]):
         # roll calls: weapon 1d8 (5), then 1d6 hunter's mark (4)
         res = execute_action(
-            {"type": "ATTACK", "attacker": "r", "target": "q",
+            {"type": "ATTACK", "skill_id": "test_handwritten", "attacker": "r", "target": "q",
              "weapon": "長劍", "consumes": ["action"]}, ws
         )
     assert res.get("hunters_mark_damage", 0) == 4
@@ -272,7 +272,7 @@ def test_hunters_mark_does_not_fire_on_unmarked_target():
     with patch("trpg.engine.combat.roll_d20", return_value=15), \
          patch("trpg.engine.combat.roll", return_value=4):
         res = execute_action(
-            {"type": "ATTACK", "attacker": "r", "target": "o",
+            {"type": "ATTACK", "skill_id": "test_handwritten", "attacker": "r", "target": "o",
              "weapon": "長劍", "consumes": ["action"]}, ws
         )
     assert res.get("hunters_mark_damage", 0) == 0
@@ -311,7 +311,7 @@ def test_portent_substitutes_save_roll():
     goblin.pending_portent = 1  # override: goblin rolls 1 on its next save
     # WIS mod = -1, DC = 8+2+3=13. Save total = 1+(-1) = 0 < 13 → fail → paralyzed
     res = execute_action(
-        {"type": "SPELL", "caster": "w", "spell_name": "定身術",
+        {"type": "SPELL", "skill_id": "test_handwritten", "caster": "w", "spell_name": "定身術",
          "target": "g", "consumes": ["action"]}, ws
     )
     assert goblin.has_status("paralyzed")
@@ -323,7 +323,7 @@ def test_portent_pending_portent_clears_after_use():
     goblin.pending_portent = 19  # high value → goblin succeeds most saves
     with patch("trpg.engine.combat.roll", return_value=5):
         execute_action(
-            {"type": "SPELL", "caster": "w", "spell_name": "定身術",
+            {"type": "SPELL", "skill_id": "test_handwritten", "caster": "w", "spell_name": "定身術",
              "target": "g", "consumes": ["action"]}, ws
         )
     assert goblin.pending_portent is None
@@ -333,7 +333,7 @@ def test_portent_action_applies_die_to_target():
     ws, wiz, goblin = _portent_wizard()
     wiz.portent_dice = [3, 18]
     res = execute_action(
-        {"type": "PORTENT", "caster": "w", "target": "g", "die_value": 3}, ws
+        {"type": "PORTENT", "skill_id": "test_handwritten", "caster": "w", "target": "g", "die_value": 3}, ws
     )
     assert res["type"] == "PORTENT"
     assert goblin.pending_portent == 3
@@ -369,7 +369,7 @@ def _counterspell_world():
 def test_counterspell_cancels_enemy_spell():
     ws, enemy_caster, defender = _counterspell_world()
     res = execute_action(
-        {"type": "SPELL", "caster": "ec", "spell_name": "火球術",
+        {"type": "SPELL", "skill_id": "test_handwritten", "caster": "ec", "spell_name": "火球術",
          "target_position": [5.0, 0.0], "consumes": ["action"]}, ws
     )
     assert res["type"] == "COUNTERSPELLED"
@@ -382,7 +382,7 @@ def test_counterspell_does_not_fire_when_reaction_used():
     defender.reaction_used = True
     with patch("trpg.engine.combat.roll", return_value=3):
         res = execute_action(
-            {"type": "SPELL", "caster": "ec", "spell_name": "火球術",
+            {"type": "SPELL", "skill_id": "test_handwritten", "caster": "ec", "spell_name": "火球術",
              "target_position": [5.0, 0.0], "consumes": ["action"]}, ws
         )
     assert res["type"] == "SPELL"

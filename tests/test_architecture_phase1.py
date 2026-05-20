@@ -142,7 +142,7 @@ def test_single_attack_returns_attack_type():
     ws, A, B = _combat_world(attacker_attacks=1)
     with patch("trpg.engine.combat.roll_d20", return_value=20):
         res = execute_action(
-            {"type": "ATTACK", "attacker": "a", "target": "b",
+            {"type": "ATTACK", "skill_id": "test_handwritten", "attacker": "a", "target": "b",
              "weapon": "長劍", "consumes": ["action"]}, ws
         )
     assert res["type"] == "ATTACK"
@@ -155,7 +155,7 @@ def test_extra_attack_returns_multi_attack_type():
     with patch("trpg.engine.combat.roll_d20", return_value=20), \
          patch("trpg.engine.combat.roll", return_value=4):
         res = execute_action(
-            {"type": "ATTACK", "attacker": "a", "target": "b",
+            {"type": "ATTACK", "skill_id": "test_handwritten", "attacker": "a", "target": "b",
              "weapon": "長劍", "consumes": ["action"]}, ws
         )
     assert res["type"] == "MULTI_ATTACK"
@@ -199,7 +199,7 @@ def test_cantrip_uses_1d8_at_level_3():
     # roll side_effect: save d20 roll (1 → fail), then 1 damage die
     with patch("trpg.engine.combat.roll", side_effect=[1, 8]):
         res = execute_action(
-            {"type": "SPELL", "caster": "c", "spell_name": "神聖光輝", "target": "t"}, ws
+            {"type": "SPELL", "skill_id": "test_handwritten", "caster": "c", "spell_name": "神聖光輝", "target": "t"}, ws
         )
     assert res["target_results"][0]["damage"] == 8
 
@@ -209,7 +209,7 @@ def test_cantrip_uses_2d8_at_level_5():
     # save d20 (1 → fail), then 2 damage dice each returning 4 = 8 total
     with patch("trpg.engine.combat.roll", side_effect=[1, 4, 4]):
         res = execute_action(
-            {"type": "SPELL", "caster": "c", "spell_name": "神聖光輝", "target": "t"}, ws
+            {"type": "SPELL", "skill_id": "test_handwritten", "caster": "c", "spell_name": "神聖光輝", "target": "t"}, ws
         )
     assert res["target_results"][0]["damage"] == 8
 
@@ -219,6 +219,6 @@ def test_cantrip_uses_3d8_at_level_11():
     # save d20 (1 → fail), then 3 dice each returning 3 = 9 total
     with patch("trpg.engine.combat.roll", side_effect=[1, 3, 3, 3]):
         res = execute_action(
-            {"type": "SPELL", "caster": "c", "spell_name": "神聖光輝", "target": "t"}, ws
+            {"type": "SPELL", "skill_id": "test_handwritten", "caster": "c", "spell_name": "神聖光輝", "target": "t"}, ws
         )
     assert res["target_results"][0]["damage"] == 9
