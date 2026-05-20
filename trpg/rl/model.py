@@ -59,18 +59,22 @@ class CombatPolicyNet(nn.Module):
         )
 
         # Spatial CNN over terrain + entity-grid overlay.
-        # Input channels: 1 (terrain) + N_ENTITY_GRID_CHANNELS (self/ally/enemy).
-        # Output: [B, _SPATIAL_C, N_GRID, N_GRID] — kept at full resolution so
-        # the grid_head can read per-cell features instead of a flat Linear
-        # learning the continuous→discrete map.
+        # Two 3x3 convs let the model reason about "is there a wall next to
+        # this cell" — neighbourhood-aware features. But CNN smoothing
+        # destroys the sharp entity position info (enemy at exactly cell X,
+        # 1.0 at that cell and 0 everywhere else gets blurred into a 7x7 blob
+        # after 2 layers). To preserve sharp positions, we *concatenate the
+        # raw entity_grid back* with the CNN output, so the grid_head can
+        # read either: smoothed terrain-aware features OR exact entity cells.
         spatial_in_c = 1 + N_ENTITY_GRID_CHANNELS
         self.spatial_cnn = nn.Sequential(
             nn.Conv2d(spatial_in_c, 16, kernel_size=3, padding=1), nn.ReLU(),
             nn.Conv2d(16, _SPATIAL_C, kernel_size=3, padding=1), nn.ReLU(),
-            nn.Conv2d(_SPATIAL_C, _SPATIAL_C, kernel_size=3, padding=1), nn.ReLU(),
         )
+        # Effective channel count for the grid_head: CNN output + raw entity overlay.
+        self._spatial_total_c = _SPATIAL_C + N_ENTITY_GRID_CHANNELS
         # Global terrain/entity summary for the trunk: pool spatial → 32-d.
-        self.spatial_global_proj = nn.Linear(_SPATIAL_C, 32)
+        self.spatial_global_proj = nn.Linear(self._spatial_total_c, 32)
 
         # Resources
         self.res_mlp = nn.Sequential(nn.Linear(4, 16), nn.ReLU())
@@ -90,11 +94,11 @@ class CombatPolicyNet(nn.Module):
         # entity_head: per (skill, entity) — Linear over (sk_emb, h, ent_emb).
         self.entity_head = nn.Linear(64 + hidden + 32, 1)
         # grid_head — spatial. Projects (sk_emb, h) to a per-skill query
-        # vector of dim _SPATIAL_C, then dot-products it against the per-cell
-        # spatial features to produce one logit per (skill, cell). This is
-        # the fix for the old flat Linear(192 → 400) that could not learn
-        # sharp continuous→cell discretisation.
-        self.grid_query_proj = nn.Linear(64 + hidden, _SPATIAL_C)
+        # vector matching the spatial feature channels (CNN output + raw
+        # entity overlay), then dot-products against per-cell features to
+        # produce one logit per (skill, cell). Replaces the flat Linear
+        # that capped at ~78% grid accuracy.
+        self.grid_query_proj = nn.Linear(64 + hidden, self._spatial_total_c)
         # Value head — critic (shared encoder, separate output)
         self.value_head = nn.Linear(hidden, 1)
 
@@ -122,10 +126,15 @@ class CombatPolicyNet(nn.Module):
         # Stack terrain (1 channel) with entity-grid overlay → spatial CNN.
         terrain_ch = terrain.unsqueeze(1)   # [B, 1, N_GRID, N_GRID]
         spatial_in = torch.cat([terrain_ch, entity_grid], dim=1)
-        spatial_feat = self.spatial_cnn(spatial_in)   # [B, _SPATIAL_C, N_GRID, N_GRID]
+        spatial_cnn_out = self.spatial_cnn(spatial_in)   # [B, _SPATIAL_C, N_GRID, N_GRID]
+        # Concatenate raw entity_grid back so the grid_head can read SHARP
+        # entity positions without the CNN's smoothing. Without this, the
+        # CNN blurs the 1.0-at-enemy-cell signal into a 7x7 blob and the
+        # grid_head can't produce sharp per-cell logits.
+        spatial_feat = torch.cat([spatial_cnn_out, entity_grid], dim=1)
         # Global spatial summary via average pool.
-        pooled = spatial_feat.mean(dim=(2, 3))        # [B, _SPATIAL_C]
-        terr_ctx = self.spatial_global_proj(pooled)   # [B, 32]
+        pooled = spatial_feat.mean(dim=(2, 3))           # [B, _spatial_total_c]
+        terr_ctx = self.spatial_global_proj(pooled)      # [B, 32]
 
         res_ctx = self.res_mlp(resources)
 
