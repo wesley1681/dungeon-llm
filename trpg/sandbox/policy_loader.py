@@ -26,9 +26,11 @@ def load_policy(spec: str) -> CombatPolicy:
         if not arch:
             raise ValueError("expert:<archetype> — archetype name missing")
         return make_archetype_policy(arch)
-    if spec.endswith(".pt") and os.path.exists(spec):
+    if spec.endswith(".pt"):
+        if not os.path.exists(spec):
+            raise ValueError(f"model file not found: {spec!r}")
         net = CombatPolicyNet()
-        net.load_state_dict(torch.load(spec, map_location="cpu"))
+        net.load_state_dict(torch.load(spec, map_location="cpu", weights_only=True))
         net.eval()
         return NeuralCombatPolicy(net, device="cpu")
     raise ValueError(
