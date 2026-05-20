@@ -1489,12 +1489,22 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
                 if caster_id:
                     affected_ids.append(caster_id)
 
-        # Sculpt Spells (Evocation Wizard L2): party allies excluded from AOE.
+        # Sculpt Spells (Evocation Wizard L2): the CASTER's own allies (same
+        # party side) are excluded from AOE. Original code keyed on
+        # `is_party_ally(cid)` which always means "PC party" — so an enemy
+        # evoker's sculpt was protecting the PCs instead of their own allies.
+        # Compare each target's side against the CASTER's side.
         if spell.aoe_radius_m > 0 and caster.sculpt_spells:
-            affected_ids = [
-                cid for cid in affected_ids
-                if not world_state.is_party_ally(cid)
-            ]
+            caster_id = next(
+                (cid for cid, c in world_state.characters.items() if c is caster),
+                None,
+            )
+            if caster_id is not None:
+                caster_in_party = world_state.is_party_ally(caster_id)
+                affected_ids = [
+                    cid for cid in affected_ids
+                    if world_state.is_party_ally(cid) != caster_in_party
+                ]
 
         # Roll saves, apply damage + on-fail status
         target_results = []
