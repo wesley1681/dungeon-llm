@@ -49,6 +49,13 @@ def _run_one_turn(actor_id: str, ws, decider, frontend) -> None:
             # Don't consume resources on ERROR — same as env_v2 step path
             continue
         consume_resources(resources, action, result)
+        # env_v2 parity: if MOVE went nowhere (stuck) or remaining budget can't
+        # reach a different cell, drain movement so the actor stops re-trying
+        # the same blocked move and falls through to other skills (or ends).
+        if (action.get("type") == "MOVE"
+                and (result.get("distance", 0) < 0.01
+                     or resources["movement"] < 0.5)):
+            resources["movement"] = 0.0
         # Decrement ability uses on success (mirrors env_v2.step)
         if skill_id is not None:
             ab = CLASS_ABILITIES.get(skill_id)
