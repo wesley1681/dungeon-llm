@@ -106,9 +106,11 @@ def test_console_prompt_action_picks_weapon_attack(monkeypatch):
     )
     fe = ConsoleFrontend()
     fe._console = Console(file=StringIO(), width=120, force_terminal=False)
-    # Find the index of the first weapon attack in the available_skills list.
+    # The menu filters out the "end" sentinel from available_skills() and
+    # numbers the remaining entries from 1. Mirror that filter to compute the
+    # expected menu position.
     from trpg.engine.skill import available_skills
-    skills = available_skills(ws.characters["agent"], ws)
+    skills = [s for s in available_skills(ws.characters["agent"], ws) if s.skill_id != "end"]
     weapon_idx = next(i for i, s in enumerate(skills) if s.skill_id.startswith("weapon:"))
     # The menu is 1-indexed (1..N), with 0 reserved for "end".
     inputs = iter([str(weapon_idx + 1), "1"])  # pick weapon, then target entity #1 (opponent)
@@ -129,7 +131,7 @@ def test_console_prompt_action_picks_move_to_coord(monkeypatch):
     fe = ConsoleFrontend()
     fe._console = Console(file=StringIO(), width=120, force_terminal=False)
     from trpg.engine.skill import available_skills
-    skills = available_skills(ws.characters["agent"], ws)
+    skills = [s for s in available_skills(ws.characters["agent"], ws) if s.skill_id != "end"]
     move_idx = next(i for i, s in enumerate(skills) if s.skill_id == "move")
     inputs = iter([str(move_idx + 1), "12 12"])
     monkeypatch.setattr("builtins.input", lambda *_: next(inputs))

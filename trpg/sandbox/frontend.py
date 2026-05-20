@@ -118,7 +118,9 @@ class ConsoleFrontend:
             (cid for cid, c in ws.characters.items() if c is actor), None
         )
 
-        skills = available_skills(actor, ws)
+        # available_skills() prepends an "end" sentinel at index 0; drop it
+        # from the menu since we offer a dedicated "0) end" option below.
+        skills = [s for s in available_skills(actor, ws) if s.skill_id != "end"]
         # Show the menu (0 = end; 1..N = skills)
         self._console.print(f"\n[bold]{actor.name} 的回合 — 資源: "
                             f"action={resources.get('action',0)} "

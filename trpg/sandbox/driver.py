@@ -107,7 +107,11 @@ def run_combat(ws, frontend, opponent_policy, *,
         return frontend.prompt_action(ws, actor, resources)
 
     def opp_decider(aid, actor, _ws, resources, round_num):
-        decision = opponent_policy.decide(aid, actor, ws, resources, round_num)
+        try:
+            decision = opponent_policy.decide(aid, actor, ws, resources, round_num)
+        except Exception as exc:
+            frontend.announce(f"[模型錯誤] {exc} — 強制結束回合")
+            return None
         return decision.action if not decision.ended else None
 
     rounds = 0
@@ -125,5 +129,10 @@ def run_combat(ws, frontend, opponent_policy, *,
             return {"outcome": "win", "rounds": rounds}
         if not ws.characters[agent_id].is_alive():
             return {"outcome": "loss", "rounds": rounds}
+        # env_v2 parity: round_end tick so rounds_remaining countdowns work
+        for cid in ws.combat.initiative_order:
+            c = ws.characters.get(cid)
+            if c and c.is_alive():
+                tick_status_effects(c, "round_end", rounds)
         if rounds >= max_rounds:
             return {"outcome": "truncated", "rounds": rounds}
