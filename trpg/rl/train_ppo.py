@@ -23,14 +23,27 @@ from .model import CombatPolicyNet, apply_resource_mask, apply_entity_mask
 def _sample_action(net: CombatPolicyNet, obs_t: dict,
                    resources: dict | None = None,
                    ws=None, agent_id: str = ""
-                   ) -> tuple[torch.Tensor, torch.Tensor, float]:
-    """Sample action hierarchically (skill → conditional entity/grid)."""
+                   ) -> tuple[torch.Tensor, torch.Tensor, float,
+                              "torch.Tensor", "torch.Tensor"]:
+    """Sample action hierarchically (skill → conditional entity/grid).
+
+    Returns (actions, log_probs, value, skill_mask_bool, entity_mask_bool).
+    The masks are stored alongside the action so ``ppo_update`` can
+    re-apply the *same* mask when recomputing log_probs — otherwise
+    new_lp (unmasked dist) and old_lp (masked dist) live in different
+    probability spaces and the PPO ratio becomes meaningless.
+    """
     _, skill_l, entity_l, grid_l = net(obs_t)
     # entity_l: [B, N_SKILL, N_ENTITY]; grid_l: [B, N_SKILL, N_GRID*N_GRID]
     if resources is not None:
         skill_l = apply_resource_mask(skill_l, resources, ws, agent_id)
     entity_l = apply_entity_mask(entity_l, obs_t)
     val = net.value(obs_t).item()
+
+    skill_mask_bool = (skill_l[0] <= -1e8)            # [N_SKILL]
+    # entity_l is [1, N_SKILL, N_ENTITY]; mask is per-entity, identical
+    # across the skill axis. Take it from slot 0.
+    entity_mask_bool = (entity_l[0, 0] <= -1e8)       # [N_ENTITY]
 
     skill_dist = torch.distributions.Categorical(logits=skill_l.squeeze(0))
     skill_a = skill_dist.sample()
@@ -46,7 +59,7 @@ def _sample_action(net: CombatPolicyNet, obs_t: dict,
 
     actions   = torch.stack([skill_a, ent_a, grid_a])
     log_probs = torch.stack([skill_lp, ent_lp, grid_lp])
-    return actions, log_probs, val
+    return actions, log_probs, val, skill_mask_bool, entity_mask_bool
 
 
 def _stack_obs(obs_list: list[dict]) -> dict:
@@ -95,6 +108,8 @@ def _worker_collect(args: tuple) -> dict:
         env.use_self_play_opponent(opp_net)
     obs, _ = env.reset()
     obs_list, action_list, lp_list, reward_list, value_list, done_list = [], [], [], [], [], []
+    skill_mask_list: list[np.ndarray] = []
+    entity_mask_list: list[np.ndarray] = []
 
     for _ in range(n_steps):
         obs_t = {k: torch.from_numpy(v).unsqueeze(0) for k, v in obs.items()}
@@ -103,6 +118,10 @@ def _worker_collect(args: tuple) -> dict:
             skill_l  = apply_resource_mask(skill_l, env.resources, env.ws, _AGENT_ID)
             entity_l = apply_entity_mask(entity_l, obs_t)
             val      = net.value(obs_t).item()
+            # Capture masks alongside the action so ppo_update can re-apply
+            # the same mask and compute new_lp in the same probability space.
+            sk_mask_bool  = (skill_l[0] <= -1e8)
+            ent_mask_bool = (entity_l[0, 0] <= -1e8)
             # Hierarchical sample: skill first, then conditional entity/grid.
             skill_dist = torch.distributions.Categorical(logits=skill_l.squeeze(0))
             skill_a    = skill_dist.sample()
@@ -120,6 +139,8 @@ def _worker_collect(args: tuple) -> dict:
         obs_list.append(obs)
         action_list.append(a_np)
         lp_list.append(log_prob.numpy())
+        skill_mask_list.append(sk_mask_bool.numpy())
+        entity_mask_list.append(ent_mask_bool.numpy())
         reward_list.append(float(reward))
         value_list.append(val)
         done_list.append(bool(term or trunc))
@@ -137,14 +158,16 @@ def _worker_collect(args: tuple) -> dict:
     advantages, returns = _compute_gae(rewards, values, dones, next_value,
                                        gamma, gae_lambda)
     return {
-        "obs":        {k: np.stack([o[k] for o in obs_list]) for k in obs_list[0]},
-        "actions":    np.array(action_list, dtype=np.int64),
-        "log_probs":  np.array(lp_list,     dtype=np.float32),
-        "rewards":    rewards,
-        "values":     values,
-        "returns":    returns,
-        "advantages": advantages,
-        "dones":      dones,
+        "obs":          {k: np.stack([o[k] for o in obs_list]) for k in obs_list[0]},
+        "actions":      np.array(action_list, dtype=np.int64),
+        "log_probs":    np.array(lp_list,     dtype=np.float32),
+        "skill_masks":  np.stack(skill_mask_list, axis=0).astype(np.bool_),
+        "entity_masks": np.stack(entity_mask_list, axis=0).astype(np.bool_),
+        "rewards":      rewards,
+        "values":       values,
+        "returns":      returns,
+        "advantages":   advantages,
+        "dones":        dones,
     }
 
 
@@ -184,11 +207,13 @@ def _collect_sequential(net, n_steps, device, seed, gamma, gae_lambda,
         env.use_self_play_opponent(opponent_net)
     obs, _ = env.reset()
     obs_list, action_list, lp_list, reward_list, value_list, done_list = [], [], [], [], [], []
+    skill_mask_list: list[np.ndarray] = []
+    entity_mask_list: list[np.ndarray] = []
 
     for _ in range(n_steps):
         obs_t = {k: torch.from_numpy(v).unsqueeze(0).to(device) for k, v in obs.items()}
         with torch.no_grad():
-            action, log_prob, val = _sample_action(
+            action, log_prob, val, sk_mask, ent_mask = _sample_action(
                 net, obs_t, env.resources, env.ws, _AGENT_ID)
         a_np   = action.cpu().numpy().tolist()
         obs2, reward, term, trunc, _ = env.step(a_np)
@@ -196,6 +221,8 @@ def _collect_sequential(net, n_steps, device, seed, gamma, gae_lambda,
         obs_list.append(obs)
         action_list.append(a_np)
         lp_list.append(log_prob.cpu().numpy())
+        skill_mask_list.append(sk_mask.cpu().numpy())
+        entity_mask_list.append(ent_mask.cpu().numpy())
         reward_list.append(float(reward))
         value_list.append(val)
         done_list.append(bool(term or trunc))
@@ -210,11 +237,13 @@ def _collect_sequential(net, n_steps, device, seed, gamma, gae_lambda,
     dones   = np.array(done_list,   dtype=np.float32)
     adv, ret = _compute_gae(rewards, values, dones, next_value, gamma, gae_lambda)
     return {
-        "obs":        _stack_obs(obs_list),
-        "actions":    np.array(action_list, dtype=np.int64),
-        "log_probs":  np.array(lp_list,     dtype=np.float32),
-        "rewards":    rewards, "values": values,
-        "returns":    ret, "advantages": adv, "dones": dones,
+        "obs":          _stack_obs(obs_list),
+        "actions":      np.array(action_list, dtype=np.int64),
+        "log_probs":    np.array(lp_list,     dtype=np.float32),
+        "skill_masks":  np.stack(skill_mask_list, axis=0).astype(np.bool_),
+        "entity_masks": np.stack(entity_mask_list, axis=0).astype(np.bool_),
+        "rewards":      rewards, "values": values,
+        "returns":      ret, "advantages": adv, "dones": dones,
     }
 
 
@@ -287,6 +316,12 @@ def ppo_update(net: CombatPolicyNet, batch: dict,
     returns = torch.from_numpy(batch["returns"]).to(device)
     adv     = torch.from_numpy(batch["advantages"]).to(device)
     adv     = (adv - adv.mean()) / (adv.std() + 1e-8)
+    # Stored action masks — used to put new_lp into the *same* probability
+    # space as the rollout-time old_lp. Without these the ratio is computed
+    # against unmasked distributions while old_lp came from masked ones, so
+    # ratio < 1 systematically and PPO pushes policy in a random direction.
+    sk_mask  = torch.from_numpy(batch["skill_masks"]).to(device)   # [N, N_SKILL]
+    ent_mask = torch.from_numpy(batch["entity_masks"]).to(device)  # [N, N_ENTITY]
 
     p_losses, v_losses, entropies = [], [], []
     idx = np.arange(n)
@@ -300,8 +335,14 @@ def ppo_update(net: CombatPolicyNet, batch: dict,
             acts_b = actions[sel]
             old_b  = old_lp[sel]
             ret_b  = returns[sel]
+            sk_mask_b  = sk_mask[sel]                 # [B, N_SKILL]
+            ent_mask_b = ent_mask[sel]                # [B, N_ENTITY]
 
             _, skill_l, entity_l, grid_l = net(obs_b)
+            # Re-apply rollout-time masks so the dist matches the one that
+            # produced old_lp.
+            skill_l  = skill_l.masked_fill(sk_mask_b, -1e9)
+            entity_l = entity_l.masked_fill(ent_mask_b.unsqueeze(1), -1e9)
             # entity_l: [B, N_SKILL, N_ENTITY]; grid_l: [B, N_SKILL, N_GRID*N_GRID]
             # Use the *recorded* skill index to gather the conditional logits
             # — this is what was sampled at rollout time, so the log_prob
