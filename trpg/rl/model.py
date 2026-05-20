@@ -53,9 +53,12 @@ class CombatPolicyNet(nn.Module):
         )
         self.skill_encoder = nn.TransformerEncoder(enc_layer, num_layers=2)
 
-        # Entities: shared MLP per row
+        # Entities: shared MLP per row. First layer is widened past ENTITY_DIM
+        # so the per-entity status multi-hot (sparse, ~27 bits) isn't crushed
+        # against the small projection. Output stays at 32 — downstream sizing
+        # unchanged.
         self.entity_mlp = nn.Sequential(
-            nn.Linear(ENTITY_DIM, 32), nn.ReLU(), nn.Linear(32, 32),
+            nn.Linear(ENTITY_DIM, 64), nn.ReLU(), nn.Linear(64, 32),
         )
 
         # Spatial CNN over terrain + entity-grid overlay.

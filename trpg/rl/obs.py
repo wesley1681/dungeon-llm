@@ -26,7 +26,17 @@ N_ENTITY_SLOTS = 6            # self + 2 allies + 3 enemies
 ARCHETYPE_OBS_LIST: tuple[str, ...] = tuple(sorted(ARCHETYPE_FACTORIES.keys()))
 N_ARCHETYPES = len(ARCHETYPE_OBS_LIST)   # 12
 
-ENTITY_DIM = 8 + N_ARCHETYPES + 1   # 21: base + archetype multi-hot + is_concentrating
+# Per-entity status multi-hot. Union of canonical D&D conditions and every
+# implemented buff/debuff in the engine registry so adding a new StatusEffect
+# subclass (with a MODIFIER_CLASSES entry) auto-extends the obs.
+# D&D-fair: these correspond to visible buff/condition icons at the table.
+RL_STATUS_NAMES: tuple[str, ...] = tuple(
+    sorted(set(STATUS_SLOTS) | set(MODIFIER_CLASSES.keys()))
+)
+N_RL_STATUS = len(RL_STATUS_NAMES)
+
+ENTITY_DIM = 7 + N_ARCHETYPES + N_RL_STATUS + 1
+# layout: 7 base + archetype multi-hot + status multi-hot + is_concentrating
 N_GRID = 30                   # battlefield grid resolution (1m cells)
 BATTLEFIELD_SIZE_M = 30.0     # matches Battlefield default
 GRID_CELL_SIZE_M = BATTLEFIELD_SIZE_M / N_GRID    # 1.0m
@@ -69,50 +79,6 @@ def terrain_obs(battlefield: Battlefield) -> np.ndarray:
     return grid
 
 
-# Status names in STATUS_SLOTS (canonical 5e conditions) that are NOT debuffs.
-# Used to derive `_DEBUFF_NAMES` for STATUS_SLOTS entries that don't have an
-# implementing StatusEffect subclass yet (so they have no `kind` field to
-# read). Tiny explicit list — extending STATUS_SLOTS with a new non-debuff
-# requires adding it here, but failures are explicit (RL obs flags it as a
-# debuff until corrected, which is preferable to silent misclassification).
-_NON_DEBUFF_SLOT_NAMES: frozenset[str] = frozenset({
-    "dodging",     # 5e Dodge action — defensive buff
-    "hidden",      # successful Hide — tactical buff
-    "invisible",   # buff: attackers vs you have disadvantage
-})
-
-
-def _debuff_names() -> frozenset[str]:
-    """All known status names that count as debuffs for RL observation.
-
-    Two sources, unioned:
-      1. `MODIFIER_CLASSES` entries whose `kind` is 'debuff' — the registry
-         of every status the engine can actually attach via APPLY_MOD.
-      2. `STATUS_SLOTS` entries minus `_NON_DEBUFF_SLOT_NAMES` — covers
-         canonical condition names that have no implementing subclass yet
-         (e.g. blinded, deafened, grappled) but can still be applied as
-         bare-string statuses via the LLM tag parser.
-
-    Adding a new debuff means appending it to STATUS_SLOTS (if novel) or
-    registering it in MODIFIER_CLASSES — no separate allowlist to update.
-    """
-    names: set[str] = set()
-    for cls in MODIFIER_CLASSES.values():
-        try:
-            fx = cls()
-        except TypeError:
-            fx = cls(applied_round=0)
-        if getattr(fx, "kind", "debuff") == "debuff":
-            names.add(fx.name)
-    for slot in STATUS_SLOTS:
-        if slot not in _NON_DEBUFF_SLOT_NAMES:
-            names.add(slot)
-    return frozenset(names)
-
-
-_DEBUFF_NAMES = _debuff_names()
-
-
 def partition_entities(ws: WorldState, agent_id: str) -> tuple[list[str], list[str]]:
     """Partition live characters (excluding self) into (allies, enemies_sorted_by_distance).
 
@@ -144,12 +110,16 @@ def _entity_row(char: Character, self_char: Character,
     coordinates to [0, 1]. Distance is normalised by the diagonal so that
     the max possible distance maps to 1.0.
 
-    Layout (ENTITY_DIM = 8 + N_ARCHETYPES + 1):
-        [0..7]  base features
-        [8..8+N_ARCHETYPES-1]  archetype multi-hot (D&D-fair: visible from look)
-        [-1]    is_concentrating (D&D-fair: DM normally tells players)
+    Layout (ENTITY_DIM = 7 + N_ARCHETYPES + N_RL_STATUS + 1):
+        [0..6]  base features (no debuff bit — replaced by status multi-hot)
+        [7..7+N_ARCHETYPES-1]              archetype multi-hot
+        [7+N_ARCHETYPES..+N_RL_STATUS-1]   status multi-hot (per-status bits;
+                                            replaces the old single has_debuff
+                                            so timing-dependent buffs like
+                                            vow_target / sacred_weapon_buff /
+                                            raging are visible to the policy)
+        [-1]                                is_concentrating
     """
-    has_debuff = any(char.has_status(name) for name in _DEBUFF_NAMES)
     bf_diag = (bf_size_x ** 2 + bf_size_y ** 2) ** 0.5 or 1.0
     base = np.array([
         char.hp / max(1, char.max_hp),
@@ -159,7 +129,6 @@ def _entity_row(char: Character, self_char: Character,
         1.0 if is_enemy else 0.0,
         1.0 if char.is_alive() else 0.0,
         1.0 if is_self else 0.0,
-        1.0 if has_debuff else 0.0,
     ], dtype=np.float32)
 
     # Archetype multi-hot. Multi-hot rather than one-hot so a hypothetical
@@ -173,9 +142,14 @@ def _entity_row(char: Character, self_char: Character,
         if part in ARCHETYPE_OBS_LIST:
             arch_oh[ARCHETYPE_OBS_LIST.index(part)] = 1.0
 
+    status_mh = np.zeros(N_RL_STATUS, dtype=np.float32)
+    for i, name in enumerate(RL_STATUS_NAMES):
+        if char.has_status(name):
+            status_mh[i] = 1.0
+
     is_concentrating = np.array([1.0 if char.concentrating_on else 0.0],
                                  dtype=np.float32)
-    return np.concatenate([base, arch_oh, is_concentrating])
+    return np.concatenate([base, arch_oh, status_mh, is_concentrating])
 
 
 def entities_obs(ws: WorldState, agent_id: str) -> np.ndarray:

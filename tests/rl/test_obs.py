@@ -27,7 +27,9 @@ from trpg.rl.obs import (
 def test_schema_constants():
     assert N_SKILL_SLOTS == 20
     assert N_ENTITY_SLOTS == 6
-    assert ENTITY_DIM == 21   # 8 base + 12 archetype multi-hot + 1 is_concentrating
+    from trpg.rl.obs import N_RL_STATUS
+    # 7 base + 12 archetype multi-hot + N_RL_STATUS status multi-hot + 1 concentrating
+    assert ENTITY_DIM == 7 + 12 + N_RL_STATUS + 1
     assert N_GRID == 30
     assert GRID_CELL_SIZE_M == 1.0
     assert BATTLEFIELD_SIZE_M == 30.0
@@ -153,13 +155,19 @@ def test_entities_obs_sorts_enemies_by_distance():
     assert obs[3, 3] < obs[4, 3], "closer enemy should have smaller dist_norm"
 
 
-def test_entities_obs_has_debuff_flag():
-    """has_debuff flag is set when a debuff status is on the character."""
+def test_entities_obs_status_multi_hot():
+    """Status multi-hot lights the bit matching the attached status."""
+    from trpg.rl.obs import RL_STATUS_NAMES, N_ARCHETYPES
     ws = _build_1v1_world()
     ws.characters["b"].status_effects.append(Paralyzed())
     obs = entities_obs(ws, "a")
-    # enemy "b" is at slot 3, has_debuff is column 7
-    assert obs[3, 7] == 1.0
+    status_start = 7 + N_ARCHETYPES
+    para_idx = status_start + RL_STATUS_NAMES.index("paralyzed")
+    # enemy "b" is at slot 3; only paralyzed bit should be set in status block
+    assert obs[3, para_idx] == 1.0
+    for i, name in enumerate(RL_STATUS_NAMES):
+        if name != "paralyzed":
+            assert obs[3, status_start + i] == 0.0
 
 
 def test_entities_obs_dead_chars_excluded():

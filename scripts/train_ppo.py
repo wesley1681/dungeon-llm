@@ -32,6 +32,7 @@ def qualify_candidate(candidate, pool, games_per_opp: int, threshold: float,
     """
     if not pool:
         return True, 1.0   # empty pool: candidate is seed, no test needed
+    from trpg.rl.model import pick_action
     candidate.to(device).eval()
     wins = 0
     total = 0
@@ -46,10 +47,11 @@ def qualify_candidate(candidate, pool, games_per_opp: int, threshold: float,
                 obs_t = {k: torch.from_numpy(v).unsqueeze(0).to(device)
                          for k, v in obs.items()}
                 with torch.no_grad():
-                    s, e, gg = candidate(obs_t)
+                    end_l, s, e, gg = candidate(obs_t)
                 s = apply_resource_mask(s, env.resources, env.ws, _AGENT_ID)
                 e = apply_entity_mask(e, obs_t)
-                action = [int(s[0].argmax()), int(e[0].argmax()), int(gg.argmax())]
+                action = list(pick_action(end_l[0], s[0], e[0], gg[0],
+                                           ws=env.ws, agent_id=_AGENT_ID))
                 obs, _, term, trunc, _ = env.step(action)
                 done = term or trunc
             if not env.ws.characters["opponent"].is_alive():

@@ -32,7 +32,9 @@ _GRID_TARGET_TYPES = (
 def bc_loss_step(net: CombatPolicyNet, obs: dict,
                  actions: torch.Tensor,
                  target_types: torch.Tensor,
-                 optim: torch.optim.Optimizer) -> tuple[torch.Tensor, dict]:
+                 optim: torch.optim.Optimizer,
+                 skill_weight: torch.Tensor | None = None,
+                 ) -> tuple[torch.Tensor, dict]:
     """One gradient step. Returns (loss, per-head accuracy dict).
 
     Hierarchical conditional loss:
@@ -40,6 +42,11 @@ def bc_loss_step(net: CombatPolicyNet, obs: dict,
       skill_head:  act pairs                          (multiclass CE)
       entity_head: pairs where target_type ∈ {SINGLE_*, MULTI_*}
       grid_head:   pairs where target_type ∈ {POINT, LINE, CONE}
+
+    ``skill_weight`` (optional, shape [N_SKILL_SLOTS]) re-weights the skill
+    cross-entropy by class — used to counter dataset imbalance where rare
+    abilities (vow_of_enmity, rage, sacred_weapon — fired ~once per fight)
+    get drowned by the ~80% weapon-attack samples.
     """
     net.train()
     end_logit, skill_logits, entity_logits, grid_logits = net(obs)
@@ -66,7 +73,8 @@ def bc_loss_step(net: CombatPolicyNet, obs: dict,
     chosen_grid_logits   = grid_logits[batch_idx, skill_target]     # [B, N_GRID*N_GRID]
 
     zero = torch.zeros((), device=end_logit.device)
-    skill_loss  = (F.cross_entropy(skill_logits[act_mask],  actions[act_mask, 0])
+    skill_loss  = (F.cross_entropy(skill_logits[act_mask],  actions[act_mask, 0],
+                                    weight=skill_weight)
                    if act_mask.any() else zero)
     entity_loss = (F.cross_entropy(chosen_entity_logits[entity_mask],
                                    actions[entity_mask, 1])
@@ -111,6 +119,27 @@ def train_bc(dataset: dict, *, epochs: int = 10, batch_size: int = 64,
     n = actions.shape[0]
     idx = np.arange(n)
 
+    # Inverse-frequency class weight for the skill_head, sqrt-softened.
+    # Pure inverse-frequency (1/count) gives the rarest skills ~50x the
+    # weight of common ones, which causes degenerate "always hide" /
+    # "always vow" policies. Taking sqrt compresses the dynamic range to
+    # ~7x — rare skills still boosted, but not enough to spam them.
+    # Skills never seen in the dataset get weight 0 (no gradient, no NaN).
+    from .obs import N_SKILL_SLOTS
+    act_actions = actions[actions[:, 0] > 0, 0]
+    counts = torch.bincount(act_actions, minlength=N_SKILL_SLOTS).float()
+    n_active_classes = (counts > 0).sum().clamp(min=1)
+    n_act = counts.sum().clamp(min=1)
+    raw_w = n_act / (n_active_classes * counts.clamp(min=1))
+    skill_weight = torch.where(
+        counts > 0, raw_w.sqrt(), torch.zeros_like(counts)
+    ).to(device)
+    if verbose:
+        top = sorted(enumerate(counts.tolist()), key=lambda x: -x[1])[:6]
+        print(f"   class-weight (inverse-freq): top counts {top}")
+        print(f"   resulting weights (top→bottom): "
+              + ", ".join(f"idx{i}:{skill_weight[i]:.2f}" for i, _ in top))
+
     net = CombatPolicyNet().to(device)
     optim = torch.optim.Adam(net.parameters(), lr=lr)
 
@@ -126,7 +155,8 @@ def train_bc(dataset: dict, *, epochs: int = 10, batch_size: int = 64,
                      for k, v in dataset["obs"].items()}
             act_b = actions[sel].to(device)
             tt_b  = target_types[sel].to(device)
-            loss, acc = bc_loss_step(net, obs_b, act_b, tt_b, optim)
+            loss, acc = bc_loss_step(net, obs_b, act_b, tt_b, optim,
+                                       skill_weight=skill_weight)
             ep_losses.append(float(loss))
             ep_acc_end.append(acc["end"])
             if acc["skill"] == acc["skill"]:  # nan check
