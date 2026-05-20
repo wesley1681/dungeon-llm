@@ -212,6 +212,17 @@ def _format_result(actor, result: dict) -> list[str]:
         to_str = f"({to.x:.1f},{to.y:.1f})" if hasattr(to, "x") else "?"
         tag = " [瞬移]" if result.get("teleport") else ""
         lines.append(f"[{name}] 移動{tag} {from_str} → {to_str}  距離 {dist:.1f}m")
+        td = result.get("terrain_damage", 0)
+        if td:
+            hp = f"{result.get('target_hp', '?')}/{result.get('target_max_hp', '?')}"
+            lines.append(f"  └ 途經危險地形: {td}傷  HP {hp}")
+        for ev in result.get("path_events", []):
+            kind = ev.get("kind")
+            pos = ev.get("pos", ("?", "?"))
+            zh = {"hit_wall": "撞牆停下",
+                  "out_of_bounds": "撞邊界停下",
+                  "budget_exhausted": "移動額度用盡"}.get(kind, kind)
+            lines.append(f"  └ {zh} @ ({pos[0]:.1f},{pos[1]:.1f})")
         for oa in result.get("opportunity_attacks", []):
             ao = oa.get("attacker", "?")
             if oa.get("hit"):

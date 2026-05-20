@@ -299,6 +299,93 @@ def tick_terrain_damage(char: Character, battlefield) -> int:
     return apply_damage(char, DANGEROUS_TERRAIN_DAMAGE, dtype="environment")
 
 
+def _walk_path(old_pos: Vec2, intended_pos: Vec2, budget_m: float,
+                battlefield) -> tuple[Vec2, float, float, list[dict]]:
+    """Walk from old_pos toward intended_pos along a straight ray, respecting
+    walls, dangerous terrain, and difficult terrain along the path.
+
+    Returns (final_pos, phys_dist_travelled, effective_cost, terrain_events).
+    `terrain_events` is a list of {kind, pos, ...} dicts describing things
+    that happened along the path (entered_dangerous, hit_wall, etc.) so the
+    caller can surface them in the result.
+
+    Stops early if:
+      - the next sample would enter a BLOCKED cell (wall) — final_pos is the
+        last clear point along the ray
+      - effective_cost would exceed budget_m — final_pos is the point at
+        which budget runs out (accounts for terrain multipliers)
+
+    If battlefield is None (no terrain), reduces to a budget-clamped straight
+    line.
+    """
+    delta = intended_pos - old_pos
+    max_dist = delta.length()
+    if max_dist < 1e-9:
+        return (old_pos, 0.0, 0.0, [])
+    if battlefield is None:
+        if max_dist <= budget_m + 1e-6:
+            return (intended_pos, max_dist, max_dist, [])
+        return (old_pos + delta.normalized() * budget_m,
+                budget_m, budget_m, [])
+
+    direction = delta.normalized()
+    # Step at half the engine grid resolution so we never skip across a 1-cell
+    # wall (e.g. a 1m-wide pillar with cells at 0.5m).
+    step_m = max(0.1, battlefield.grid_resolution / 2.0)
+
+    cur_pos = old_pos
+    cur_dist = 0.0
+    cur_cost = 0.0
+    events: list[dict] = []
+    visited_cells: set[tuple[int, int]] = set()
+
+    n_max_steps = int(max_dist / step_m) + 2
+    for i in range(1, n_max_steps + 1):
+        next_dist = min(i * step_m, max_dist)
+        next_pos = old_pos + direction * next_dist
+        if not battlefield.in_bounds(next_pos):
+            events.append({"kind": "out_of_bounds",
+                           "pos": (next_pos.x, next_pos.y)})
+            return (cur_pos, cur_dist, cur_cost, events)
+        if battlefield.is_blocked(next_pos):
+            events.append({"kind": "hit_wall",
+                           "pos": (next_pos.x, next_pos.y)})
+            return (cur_pos, cur_dist, cur_cost, events)
+
+        mult = battlefield.terrain_multiplier(next_pos)
+        seg_phys = next_dist - cur_dist
+        seg_cost = seg_phys * mult
+        if cur_cost + seg_cost > budget_m + 1e-6:
+            # Budget runs out partway through this segment — pro-rate.
+            remaining = budget_m - cur_cost
+            if remaining > 1e-6 and mult > 0:
+                allowed_phys = remaining / mult
+                cur_pos = cur_pos + direction * allowed_phys
+                cur_dist += allowed_phys
+                cur_cost = budget_m
+            events.append({"kind": "budget_exhausted",
+                           "pos": (cur_pos.x, cur_pos.y)})
+            return (cur_pos, cur_dist, cur_cost, events)
+
+        # Damage on first entry into a dangerous cell — once per cell, not
+        # once per sample. Sampling sub-cell means we'd otherwise double-roll.
+        cell = battlefield._cell(next_pos)
+        if cell not in visited_cells:
+            visited_cells.add(cell)
+            if battlefield.is_dangerous(next_pos):
+                events.append({"kind": "entered_dangerous",
+                               "pos": (next_pos.x, next_pos.y),
+                               "dice": DANGEROUS_TERRAIN_DAMAGE})
+
+        cur_pos = next_pos
+        cur_dist = next_dist
+        cur_cost += seg_cost
+        if cur_dist >= max_dist - 1e-6:
+            return (cur_pos, cur_dist, cur_cost, events)
+
+    return (cur_pos, cur_dist, cur_cost, events)
+
+
 def make_saving_throw(character: Character, stat: str, dc: int,
                       breakdown: dict | None = None,
                       world_state=None) -> tuple[bool, int]:
@@ -1199,27 +1286,28 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
         else:
             return {"type": "ERROR", "message": "MOVE 需要 target、direction、target_position 或 delta"}
 
-        # Clamp to movement budget, accounting for destination terrain cost.
-        # Difficult / dangerous terrain doubles the effective movement spent.
-        delta_vec = new_pos - old_pos
-        phys_dist = delta_vec.length()
-        mult = battlefield.terrain_multiplier(new_pos) if battlefield is not None else 1.0
-        if mult == float("inf"):
-            # Endpoint is BLOCKED — caller picked a wall as destination.
-            return {"type": "ERROR",
-                    "message": f"目的座標 ({new_pos.x:.1f}, {new_pos.y:.1f}) 被障礙物佔據"}
-        effective_cost = phys_dist * mult
-        if effective_cost > MOVE_BUDGET_M + 1e-6:
-            # Rescale physical distance so the cost matches the budget.
-            phys_dist = MOVE_BUDGET_M / mult
-            new_pos = old_pos + delta_vec.normalized() * phys_dist
-            mult = battlefield.terrain_multiplier(new_pos) if battlefield is not None else mult
-            effective_cost = phys_dist * mult
-
-        # Battlefield bounds gate (BLOCKED is already caught above)
-        if battlefield is not None and not battlefield.in_bounds(new_pos):
-            return {"type": "ERROR",
-                    "message": f"目的座標 ({new_pos.x:.1f}, {new_pos.y:.1f}) 超出戰場邊界"}
+        # Path-trace: walk the ray from old_pos toward the intended new_pos,
+        # stopping at walls, applying dangerous-terrain damage per cell
+        # entered, and accumulating difficult-terrain cost along the way.
+        # Pre-fix this was a teleport-on-ground that only sampled the
+        # endpoint — so walking across lava without ending in lava dealt 0
+        # damage, and my own LOS-removal for MOVE briefly let actors walk
+        # through walls. Path-tracing closes both gaps.
+        intended_pos = new_pos
+        new_pos, phys_dist, effective_cost, path_events = _walk_path(
+            old_pos, intended_pos, effective_budget, battlefield,
+        )
+        mult = (effective_cost / phys_dist) if phys_dist > 1e-9 else 1.0
+        # Apply accumulated dangerous-terrain damage. Done after the walk
+        # so dropping below 0 HP from terrain doesn't desync the path.
+        terrain_damage = 0
+        for ev in path_events:
+            if ev.get("kind") == "entered_dangerous":
+                rolled = roll(ev.get("dice", DANGEROUS_TERRAIN_DAMAGE))
+                terrain_damage += apply_damage(
+                    char, rolled, dtype="environment",
+                    world_state=world_state,
+                )
 
         # ── Opportunity attacks ───────────────────────────────────────────────
         # If a creature moves out of an enemy's melee reach (1.5m), that enemy
@@ -1280,6 +1368,20 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
             "terrain_mult":      mult,
             "description":       action.get("description", "移動"),
         }
+        if terrain_damage:
+            result["terrain_damage"] = terrain_damage
+            result["target_hp"] = char.hp
+            result["target_max_hp"] = char.max_hp
+        if path_events:
+            # Skip the noisy "entered_dangerous" entries (the rolled damage
+            # is already summarised above) — surface only the structural
+            # events that explain why the actor didn't reach the requested
+            # destination.
+            interesting = [e for e in path_events
+                           if e.get("kind") in ("hit_wall", "out_of_bounds",
+                                                 "budget_exhausted")]
+            if interesting:
+                result["path_events"] = interesting
         if oa_results:
             result["opportunity_attacks"] = oa_results
         return result
