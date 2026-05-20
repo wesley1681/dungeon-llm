@@ -101,6 +101,7 @@ class CombatEnvV2:
 
         # Start-of-turn ticks for the agent
         agent_char.reaction_used = False
+        agent_char.leveled_spell_cast_this_turn = False
         tick_status_effects(agent_char, "self_turn_start", 1)
         tick_terrain_damage(agent_char, self.ws.combat.battlefield)
 
@@ -195,6 +196,7 @@ class CombatEnvV2:
             if agent.is_alive():
                 self.resources = {"action": 1, "bonus_action": 1, "movement": MOVE_BUDGET_M}
                 agent.reaction_used = False
+                agent.leveled_spell_cast_this_turn = False
                 tick_status_effects(agent, "self_turn_start", self.ws.combat.round_number)
                 tick_terrain_damage(agent, self.ws.combat.battlefield)
 
@@ -220,6 +222,7 @@ class CombatEnvV2:
         if not opp.is_alive():
             return
         opp.reaction_used = False
+        opp.leveled_spell_cast_this_turn = False
         tick_status_effects(opp, "self_turn_start", self.ws.combat.round_number)
         tick_terrain_damage(opp, self.ws.combat.battlefield)
         resources = {"action": 1, "bonus_action": 1, "movement": MOVE_BUDGET_M}

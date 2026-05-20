@@ -168,6 +168,7 @@ class CombatEnv:
         """Apply start-of-turn ticks: refresh reaction budget then dangerous
         terrain damage. Returns the damage dealt (0 if none)."""
         char.reaction_used = False
+        char.leveled_spell_cast_this_turn = False
         return tick_terrain_damage(char, self.ws.combat.battlefield)
 
     def _advance_to_agent_turn(self) -> None:

@@ -628,6 +628,20 @@ def _try_counterspell(caster: Character, spell_level: int,
     return False, "", 0
 
 
+def _check_leveled_spell_limit(caster: Character, slot_level: int) -> dict | None:
+    """5e: one leveled spell per turn. Returns ERROR dict if caster already
+    cast a leveled spell this turn, else None. Cantrip (slot_level == 0) is
+    always allowed. Caller is responsible for setting the flag on success
+    via ``caster.leveled_spell_cast_this_turn = True``.
+    """
+    if slot_level <= 0:
+        return None
+    if getattr(caster, "leveled_spell_cast_this_turn", False):
+        return {"type": "ERROR",
+                "message": f"{caster.name} 本回合已施過有環法術 (5e 一回合限一個)"}
+    return None
+
+
 def execute_action(action: dict, world_state: WorldState) -> dict:
     """Execute a parsed action JSON from the arbiter. Returns a result summary dict.
 
@@ -792,6 +806,9 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
         if slot_level > 0 and caster.spell_slots.get(slot_level, 0) <= 0:
             return {"type": "ERROR",
                     "message": f"{caster.name} 沒有 {slot_level} 環法術位"}
+        err = _check_leveled_spell_limit(caster, slot_level)
+        if err is not None:
+            return err
 
         range_m = float(action.get("range_m", 1.5))
         d = caster.position.distance_to(target.position)
@@ -803,6 +820,7 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
         healed = apply_heal(target, dice)
         if slot_level > 0:
             caster.spell_slots[slot_level] -= 1
+            caster.leveled_spell_cast_this_turn = True
 
         return {
             "type":          "HEAL",
@@ -841,6 +859,9 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
         if slot_level > 0 and attacker.spell_slots.get(slot_level, 0) <= 0:
             return {"type": "ERROR",
                     "message": f"{attacker.name} 沒有 {slot_level} 環法術位"}
+        err = _check_leveled_spell_limit(attacker, slot_level)
+        if err is not None:
+            return err
 
         range_m = float(action.get("range_m", 0.0))
         damage_per = action.get("damage_per", "1d4")
@@ -902,6 +923,7 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
 
         if slot_level > 0:
             attacker.spell_slots[slot_level] -= 1
+            attacker.leveled_spell_cast_this_turn = True
 
         return {
             "type":           "AUTO_DAMAGE",
@@ -929,6 +951,9 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
         if slot_level > 0 and caster.spell_slots.get(slot_level, 0) <= 0:
             return {"type": "ERROR",
                     "message": f"{caster.name} 沒有 {slot_level} 環法術位"}
+        err = _check_leveled_spell_limit(caster, slot_level)
+        if err is not None:
+            return err
 
         target_ids = action.get("targets", [])
         max_targets = int(action.get("max_targets", len(target_ids) or 1))
@@ -972,6 +997,7 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
 
         if slot_level > 0:
             caster.spell_slots[slot_level] -= 1
+            caster.leveled_spell_cast_this_turn = True
         spell_name = action.get("spell_name", mod_name)
         if action.get("requires_concentration"):
             if caster.concentrating_on:
@@ -1080,7 +1106,11 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
                 if char.spell_slots.get(slot_level, 0) <= 0:
                     return {"type": "ERROR",
                             "message": f"{char.name} 沒有 {slot_level} 環法術位"}
+                err = _check_leveled_spell_limit(char, slot_level)
+                if err is not None:
+                    return err
                 char.spell_slots[slot_level] -= 1
+                char.leveled_spell_cast_this_turn = True
             char.position = new_pos
             return {
                 "type":              "MOVE",
@@ -1391,6 +1421,12 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
                     return {"type": "ERROR",
                             "message": f"{caster.name} 沒有 {slot_level} 環法術位"}
 
+        # 5e: one leveled spell per turn (cantrips exempt). Reject early so
+        # we don't consume a slot or roll any dice.
+        err = _check_leveled_spell_limit(caster, slot_level)
+        if err is not None:
+            return err
+
         # Resolve AOE center position. Two ways:
         #   1. target_position: explicit [x, y] (lets the caster place AOE
         #      between creatures, away from allies, etc.) — takes priority.
@@ -1574,6 +1610,7 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
         # Decrement slot after successful cast (cantrips skip this)
         if slot_level > 0:
             caster.spell_slots[slot_level] = caster.spell_slots.get(slot_level, 0) - 1
+            caster.leveled_spell_cast_this_turn = True
 
         # Concentration: replace any prior concentration spell with this one,
         # cleaning up any effects from the old spell first.

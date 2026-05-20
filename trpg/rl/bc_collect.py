@@ -90,6 +90,7 @@ def collect_bc_rollout(agent_arch: str, opponent_arch: str | None = None,
         if agent.is_alive():
             env.resources = {"action": 1, "bonus_action": 1, "movement": MOVE_BUDGET_M}
             agent.reaction_used = False
+            agent.leveled_spell_cast_this_turn = False
             tick_status_effects(agent, "self_turn_start", env.ws.combat.round_number)
             tick_terrain_damage(agent, env.ws.combat.battlefield)
     return pairs

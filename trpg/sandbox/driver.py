@@ -34,6 +34,7 @@ def _run_one_turn(actor_id: str, ws, decider, frontend,
     if not actor.is_alive():
         return
     actor.reaction_used = False
+    actor.leveled_spell_cast_this_turn = False
     round_num = ws.combat.round_number
     tick_status_effects(actor, "self_turn_start", round_num)
     tick_terrain_damage(actor, ws.combat.battlefield)
@@ -50,6 +51,25 @@ def _run_one_turn(actor_id: str, ws, decider, frontend,
                                         resources_before, resources, ws))
                 frontend.announce(f"[{actor.name}] 結束回合")
             break
+        # Pre-execute resource gate: consume_resources floors silently at 0,
+        # and execute_action doesn't know about per-turn budgets — so without
+        # this check you could cast two action-cost spells in one turn by
+        # picking them sequentially while bonus_action / movement still has
+        # value. Refuse early instead.
+        consumes = action.get("consumes") or []
+        missing = []
+        if "action" in consumes and resources.get("action", 0) <= 0:
+            missing.append("action")
+        if "bonus_action" in consumes and resources.get("bonus_action", 0) <= 0:
+            missing.append("bonus_action")
+        if missing:
+            msg = f"資源不足: {','.join(missing)}"
+            frontend.announce(f"[{actor.name}] 動作失敗: {msg}")
+            if event_log is not None:
+                event_log(_build_event(round_num, sub_idx, actor, action,
+                                        {"type": "ERROR", "message": msg},
+                                        resources_before, resources, ws))
+            continue
         result = execute_action(action, ws)
         skill_id = action.get("skill_id")
         if result.get("type") == "ERROR":

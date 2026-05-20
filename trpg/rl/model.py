@@ -313,6 +313,9 @@ def apply_resource_mask(skill_logits: "torch.Tensor",
     has_move   = resources.get("movement", 0.0) > 1e-6
     has_action = resources.get("action", 0) > 0
     has_bonus  = resources.get("bonus_action", 0) > 0
+    # 5e one-leveled-spell-per-turn: once the actor has cast a leveled spell
+    # this turn, mask out all other leveled-spell skills (cantrips still OK).
+    leveled_locked = getattr(agent, "leveled_spell_cast_this_turn", False)
     skills = available_skills(agent, ws)
     for i, sk in enumerate(skills):
         if i >= skill_logits.shape[-1]:
@@ -330,6 +333,9 @@ def apply_resource_mask(skill_logits: "torch.Tensor",
             skill_logits[..., i] = -1e9
             continue
         if sk.features.cost_bonus > 0 and not has_bonus:
+            skill_logits[..., i] = -1e9
+            continue
+        if leveled_locked and getattr(sk.features, "cost_slot_level", 0) > 0:
             skill_logits[..., i] = -1e9
             continue
         tt = sk.features.target_type

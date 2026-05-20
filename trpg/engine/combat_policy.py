@@ -401,6 +401,12 @@ class _ArchetypeBase(CombatPolicy):
         sk = next((s for s in available_skills(actor, ws) if s.skill_id == skill_id), None)
         if sk is None:
             return None
+        # 5e: one leveled spell per turn. Don't even build the action if the
+        # rule would force the engine to ERROR — that ERROR would otherwise
+        # be recorded as a BC label, teaching the model the wrong move.
+        if (getattr(sk.features, "cost_slot_level", 0) > 0
+                and getattr(actor, "leveled_spell_cast_this_turn", False)):
+            return None
         t = ws.characters.get(target_id) if target_id else None
         c = coord or (t.position if t else actor.position)
         return sk.build_action(actor_id, target_id, c)

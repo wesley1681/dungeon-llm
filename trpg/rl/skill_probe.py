@@ -101,6 +101,7 @@ def run_expert_episodes(agent_arch: str, n: int, seed: int) -> Counter:
             if not agent.is_alive() or not opp.is_alive():
                 break
             agent.reaction_used = False
+            agent.leveled_spell_cast_this_turn = False
             tick_status_effects(agent, "self_turn_start",
                                  env.ws.combat.round_number)
             tick_terrain_damage(agent, env.ws.combat.battlefield)

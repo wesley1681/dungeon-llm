@@ -52,6 +52,10 @@ class Character:
     # 自動檢查並可能消耗。
     reactions: list = field(default_factory=list)
     reaction_used: bool = False   # 已使用本回合反應？self_turn_start 重置
+    # 5e 規則：一回合只能施一個「有環法術」（非戲法）。戲法 + 任意一個有環
+    # 法術可以共存，兩個有環則不行（例如 misty_step + fireball 違規）。
+    # 每回合在 self_turn_start 重置；execute_action 在消耗法術位前檢查。
+    leveled_spell_cast_this_turn: bool = False
     # 此角色會使用的 ClassAbility skill_id 清單（如 ["second_wind","rage"]）。
     # HumanInputPolicy 用「招式」指令時會檢查這份清單。
     known_abilities: list = field(default_factory=list)
