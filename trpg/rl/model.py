@@ -195,7 +195,9 @@ def apply_resource_mask(skill_logits: "torch.Tensor",
         except Exception:
             pass
 
-    has_move = resources.get("movement", 0.0) > 1e-6
+    has_move   = resources.get("movement", 0.0) > 1e-6
+    has_action = resources.get("action", 0) > 0
+    has_bonus  = resources.get("bonus_action", 0) > 0
     skills = available_skills(agent, ws)
     for i, sk in enumerate(skills):
         if i >= skill_logits.shape[-1]:
@@ -203,6 +205,17 @@ def apply_resource_mask(skill_logits: "torch.Tensor",
         if sk.skill_id == "move":
             if not has_move:
                 skill_logits[..., i] = -1e9
+            continue
+        # Resource cost gates — engine accepts these without complaint when
+        # consumes is empty, but the skill genuinely needs the slot to do
+        # anything meaningful. Without this gate the policy can spam rage /
+        # other bonus-action skills 3-4 times per turn while bonus_action is
+        # already 0 (observed in watch_model with bc_v8 berserker).
+        if sk.features.cost_action > 0 and not has_action:
+            skill_logits[..., i] = -1e9
+            continue
+        if sk.features.cost_bonus > 0 and not has_bonus:
+            skill_logits[..., i] = -1e9
             continue
         tt = sk.features.target_type
         if tt == TargetType.SELF:
