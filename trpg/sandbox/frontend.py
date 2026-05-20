@@ -98,6 +98,118 @@ class ConsoleFrontend:
             text.append("\n")
         self._console.print(text)
 
+        from rich.table import Table
+        card = Table.grid(padding=(0, 2))
+        card.add_column()
+        card.add_column()
+        card.add_row(_char_card(agent, "blue"), _char_card(opp, "red"))
+        self._console.print(card)
+
     def prompt_action(self, ws, actor, resources: dict) -> dict | None:
-        # Implemented in Task 8. The stub raises so a missing impl is loud.
-        raise NotImplementedError("ConsoleFrontend.prompt_action — implemented in Task 8")
+        from ..engine.skill import available_skills, TargetType
+        from ..rl.obs import partition_entities
+
+        ENTITY_TT = (TargetType.SINGLE_ENEMY, TargetType.SINGLE_ALLY,
+                     TargetType.MULTI_ENEMY, TargetType.MULTI_ALLY)
+        GRID_TT = (TargetType.POINT, TargetType.LINE, TargetType.CONE)
+
+        # Resolve actor's char_id via reverse lookup
+        actor_id = next(
+            (cid for cid, c in ws.characters.items() if c is actor), None
+        )
+
+        skills = available_skills(actor, ws)
+        # Show the menu (0 = end; 1..N = skills)
+        self._console.print(f"\n[bold]{actor.name} 的回合 — 資源: "
+                            f"action={resources.get('action',0)} "
+                            f"bonus={resources.get('bonus_action',0)} "
+                            f"move={resources.get('movement',0):.1f}m[/]")
+        self._console.print("[dim]  0) end (結束回合)[/]")
+        for i, sk in enumerate(skills, start=1):
+            self._console.print(f"  {i:2d}) {sk.skill_id}   "
+                                f"({sk.features.target_type.name})")
+
+        # Skill selection
+        while True:
+            raw = input("選擇動作 # > ").strip()
+            try:
+                idx = int(raw)
+            except ValueError:
+                self._console.print(f"[red]請輸入數字，不是 {raw!r}[/]")
+                continue
+            if idx == 0:
+                return None
+            if 1 <= idx <= len(skills):
+                break
+            self._console.print(f"[red]超出範圍 (0..{len(skills)})[/]")
+
+        sk = skills[idx - 1]
+        tt = sk.features.target_type
+
+        # Target
+        if tt == TargetType.SELF:
+            return sk.build_action(actor_id, actor_id, None)
+
+        if tt in ENTITY_TT:
+            allies, enemies = partition_entities(ws, actor_id)
+            # Entity slot list: 0=self, 1..=allies, then enemies
+            slots = {0: actor_id}
+            for k, aid in enumerate(allies[:2], start=1):
+                slots[k] = aid
+            for k, eid in enumerate(enemies[:3], start=len(allies[:2]) + 1):
+                slots[k] = eid
+            self._console.print("[dim]目標:[/]")
+            for k, cid in slots.items():
+                c = ws.characters[cid]
+                self._console.print(
+                    f"  {k}) {c.name} (HP {c.hp}/{c.max_hp})"
+                )
+            while True:
+                raw = input("目標 # > ").strip()
+                try:
+                    tidx = int(raw)
+                except ValueError:
+                    self._console.print(f"[red]請輸入數字[/]")
+                    continue
+                if tidx in slots:
+                    return sk.build_action(actor_id, slots[tidx], None)
+                self._console.print(f"[red]目標不存在[/]")
+
+        if tt in GRID_TT:
+            while True:
+                raw = input("目標座標 (x y) > ").strip().split()
+                if len(raw) != 2:
+                    self._console.print(f"[red]需要兩個數字 x y[/]")
+                    continue
+                try:
+                    x, y = float(raw[0]), float(raw[1])
+                except ValueError:
+                    self._console.print(f"[red]無效座標[/]")
+                    continue
+                from ..engine.vec2 import Vec2
+                return sk.build_action(actor_id, None, Vec2(x, y))
+
+        # Fallback (should not reach)
+        return sk.build_action(actor_id, None, None)
+
+
+def _char_card(char, color: str) -> "Text":
+    from rich.text import Text
+    t = Text()
+    t.append(f"{char.name}  (HP {char.hp}/{char.max_hp}  AC {char.ac})\n",
+             style=f"bold {color}")
+    # HP bar
+    bar_w = 20
+    filled = int(bar_w * max(0, char.hp) / max(1, char.max_hp))
+    t.append("HP " + "█" * filled + "░" * (bar_w - filled) + "\n",
+             style=color)
+    # Spell slots
+    if char.spell_slots:
+        slot_repr = " ".join(
+            f"L{lvl}:" + "●" * n
+            for lvl, n in sorted(char.spell_slots.items())
+        )
+        t.append(f"法位 {slot_repr}\n", style="cyan")
+    if getattr(char, "concentrating_on", None):
+        t.append(f"集中: {char.concentrating_on}\n", style="magenta")
+    return t

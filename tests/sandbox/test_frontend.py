@@ -81,3 +81,86 @@ def test_console_render_arena_walls():
     fe = ConsoleFrontend()
     text = _render_to_string(fe, ws)
     assert "█" in text   # wall glyph
+
+
+def test_console_prompt_action_returns_end_on_zero(monkeypatch):
+    ws = build_world_state(
+        agent_arch="berserker", opponent_arch="berserker", level=3,
+        agent_pos=Vec2(15.0, 15.5), opp_pos=Vec2(15.0, 16.5),  # adjacent
+        terrain="empty",
+    )
+    fe = ConsoleFrontend()
+    fe._console = Console(file=StringIO(), width=120, force_terminal=False)
+    inputs = iter(["0"])  # 0 = end turn
+    monkeypatch.setattr("builtins.input", lambda *_: next(inputs))
+    action = fe.prompt_action(ws, ws.characters["agent"],
+                               {"action": 1, "bonus_action": 1, "movement": 9.0})
+    assert action is None
+
+
+def test_console_prompt_action_picks_weapon_attack(monkeypatch):
+    ws = build_world_state(
+        agent_arch="berserker", opponent_arch="berserker", level=3,
+        agent_pos=Vec2(15.0, 15.5), opp_pos=Vec2(15.0, 16.5),  # adjacent
+        terrain="empty",
+    )
+    fe = ConsoleFrontend()
+    fe._console = Console(file=StringIO(), width=120, force_terminal=False)
+    # Find the index of the first weapon attack in the available_skills list.
+    from trpg.engine.skill import available_skills
+    skills = available_skills(ws.characters["agent"], ws)
+    weapon_idx = next(i for i, s in enumerate(skills) if s.skill_id.startswith("weapon:"))
+    # The menu is 1-indexed (1..N), with 0 reserved for "end".
+    inputs = iter([str(weapon_idx + 1), "1"])  # pick weapon, then target entity #1 (opponent)
+    monkeypatch.setattr("builtins.input", lambda *_: next(inputs))
+    action = fe.prompt_action(ws, ws.characters["agent"],
+                               {"action": 1, "bonus_action": 1, "movement": 9.0})
+    assert action is not None
+    assert action["type"] == "ATTACK"
+    assert action["target"] == "opponent"
+
+
+def test_console_prompt_action_picks_move_to_coord(monkeypatch):
+    ws = build_world_state(
+        agent_arch="berserker", opponent_arch="berserker", level=3,
+        agent_pos=Vec2(10.0, 10.0), opp_pos=Vec2(20.0, 20.0),
+        terrain="empty",
+    )
+    fe = ConsoleFrontend()
+    fe._console = Console(file=StringIO(), width=120, force_terminal=False)
+    from trpg.engine.skill import available_skills
+    skills = available_skills(ws.characters["agent"], ws)
+    move_idx = next(i for i, s in enumerate(skills) if s.skill_id == "move")
+    inputs = iter([str(move_idx + 1), "12 12"])
+    monkeypatch.setattr("builtins.input", lambda *_: next(inputs))
+    action = fe.prompt_action(ws, ws.characters["agent"],
+                               {"action": 1, "bonus_action": 1, "movement": 9.0})
+    assert action is not None
+    assert action["type"] == "MOVE"
+
+
+def test_console_prompt_action_reprompts_on_bad_index(monkeypatch):
+    ws = build_world_state(
+        agent_arch="berserker", opponent_arch="berserker", level=3,
+        agent_pos=Vec2(15.0, 15.5), opp_pos=Vec2(15.0, 16.5),
+        terrain="empty",
+    )
+    fe = ConsoleFrontend()
+    fe._console = Console(file=StringIO(), width=120, force_terminal=False)
+    # First two inputs are garbage; third is "end"
+    inputs = iter(["abc", "999", "0"])
+    monkeypatch.setattr("builtins.input", lambda *_: next(inputs))
+    action = fe.prompt_action(ws, ws.characters["agent"],
+                               {"action": 1, "bonus_action": 1, "movement": 9.0})
+    assert action is None
+
+
+def test_render_includes_character_card():
+    ws = build_world_state(
+        agent_arch="evocation", opponent_arch="berserker", level=5,
+        agent_pos=Vec2(5.0, 5.0), opp_pos=Vec2(25.0, 25.0), terrain="empty",
+    )
+    fe = ConsoleFrontend()
+    text = _render_to_string(fe, ws)
+    # Agent name should appear somewhere (in the card)
+    assert ws.characters["agent"].name in text
