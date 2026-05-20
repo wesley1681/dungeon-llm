@@ -14,6 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.stdout.reconfigure(encoding="utf-8")
 
 import argparse
+import json
 from trpg.engine.vec2 import Vec2
 from trpg.scenarios.archetypes import ARCHETYPE_FACTORIES
 from trpg.sandbox.setup import build_world_state, apply_loadout, list_catalog
@@ -108,6 +109,10 @@ def main() -> None:
     parser.add_argument("--model", required=True,
                         help="path/to/checkpoint.pt | expert:<arch> | random")
     parser.add_argument("--max-rounds", type=int, default=20)
+    parser.add_argument("--log", default=None,
+                        help="JSONL file: every sub-action snapshot (action, "
+                             "result, positions, resources, HP, slots). Use to "
+                             "audit weird outcomes after the fight.")
     args = parser.parse_args()
 
     print("=== Sparring Sandbox 設定 ===\n")
@@ -130,9 +135,23 @@ def main() -> None:
     frontend = ConsoleFrontend()
 
     print("\n=== 戰鬥開始 ===\n")
-    outcome = run_combat(ws, frontend, opp_policy, max_rounds=args.max_rounds)
+    log_fp = open(args.log, "w", encoding="utf-8") if args.log else None
+    def event_log(ev: dict) -> None:
+        json.dump(ev, log_fp, ensure_ascii=False, default=str)
+        log_fp.write("\n")
+        log_fp.flush()
+    try:
+        outcome = run_combat(
+            ws, frontend, opp_policy, max_rounds=args.max_rounds,
+            event_log=event_log if log_fp else None,
+        )
+    finally:
+        if log_fp:
+            log_fp.close()
     frontend.render(ws, "agent", "opponent")
     print(f"\n結果: {outcome['outcome']}  (rounds={outcome['rounds']})")
+    if args.log:
+        print(f"事件日誌已寫入: {args.log}")
 
 
 if __name__ == "__main__":
