@@ -24,16 +24,28 @@ def _sample_action(net: CombatPolicyNet, obs_t: dict,
                    resources: dict | None = None,
                    ws=None, agent_id: str = ""
                    ) -> tuple[torch.Tensor, torch.Tensor, float]:
-    """Sample action, return (action[3], log_prob[3], value_scalar)."""
+    """Sample action hierarchically (skill → conditional entity/grid)."""
     _, skill_l, entity_l, grid_l = net(obs_t)
+    # entity_l: [B, N_SKILL, N_ENTITY]; grid_l: [B, N_SKILL, N_GRID*N_GRID]
     if resources is not None:
         skill_l = apply_resource_mask(skill_l, resources, ws, agent_id)
     entity_l = apply_entity_mask(entity_l, obs_t)
     val = net.value(obs_t).item()
-    dists = [torch.distributions.Categorical(logits=x.squeeze(0))
-             for x in (skill_l, entity_l, grid_l)]
-    actions   = torch.stack([d.sample()         for d    in dists])
-    log_probs = torch.stack([d.log_prob(a)      for d, a in zip(dists, actions)])
+
+    skill_dist = torch.distributions.Categorical(logits=skill_l.squeeze(0))
+    skill_a = skill_dist.sample()
+    skill_lp = skill_dist.log_prob(skill_a)
+
+    ent_dist = torch.distributions.Categorical(logits=entity_l[0, skill_a, :])
+    ent_a = ent_dist.sample()
+    ent_lp = ent_dist.log_prob(ent_a)
+
+    grid_dist = torch.distributions.Categorical(logits=grid_l[0, skill_a, :])
+    grid_a = grid_dist.sample()
+    grid_lp = grid_dist.log_prob(grid_a)
+
+    actions   = torch.stack([skill_a, ent_a, grid_a])
+    log_probs = torch.stack([skill_lp, ent_lp, grid_lp])
     return actions, log_probs, val
 
 
@@ -91,10 +103,17 @@ def _worker_collect(args: tuple) -> dict:
             skill_l  = apply_resource_mask(skill_l, env.resources, env.ws, _AGENT_ID)
             entity_l = apply_entity_mask(entity_l, obs_t)
             val      = net.value(obs_t).item()
-            dists    = [torch.distributions.Categorical(logits=x.squeeze(0))
-                       for x in (skill_l, entity_l, grid_l)]
-            action    = torch.stack([d.sample()    for d    in dists])
-            log_prob  = torch.stack([d.log_prob(a) for d, a in zip(dists, action)])
+            # Hierarchical sample: skill first, then conditional entity/grid.
+            skill_dist = torch.distributions.Categorical(logits=skill_l.squeeze(0))
+            skill_a    = skill_dist.sample()
+            ent_dist   = torch.distributions.Categorical(logits=entity_l[0, skill_a, :])
+            ent_a      = ent_dist.sample()
+            grid_dist  = torch.distributions.Categorical(logits=grid_l[0, skill_a, :])
+            grid_a     = grid_dist.sample()
+            action     = torch.stack([skill_a, ent_a, grid_a])
+            log_prob   = torch.stack([skill_dist.log_prob(skill_a),
+                                       ent_dist.log_prob(ent_a),
+                                       grid_dist.log_prob(grid_a)])
         a_np   = action.numpy().tolist()
         obs2, reward, term, trunc, _ = env.step(a_np)
 
@@ -283,11 +302,28 @@ def ppo_update(net: CombatPolicyNet, batch: dict,
             ret_b  = returns[sel]
 
             _, skill_l, entity_l, grid_l = net(obs_b)
-            dists = [torch.distributions.Categorical(logits=x)
-                     for x in (skill_l, entity_l, grid_l)]
-            new_lp    = torch.stack([d.log_prob(acts_b[:, i])
-                                     for i, d in enumerate(dists)], dim=-1)
-            entropy   = torch.stack([d.entropy() for d in dists], dim=-1).mean()
+            # entity_l: [B, N_SKILL, N_ENTITY]; grid_l: [B, N_SKILL, N_GRID*N_GRID]
+            # Use the *recorded* skill index to gather the conditional logits
+            # — this is what was sampled at rollout time, so the log_prob
+            # ratios stay consistent between rollout and update.
+            B_now = skill_l.shape[0]
+            bidx = torch.arange(B_now, device=skill_l.device)
+            sk_chosen = acts_b[:, 0]
+            cond_ent  = entity_l[bidx, sk_chosen]    # [B, N_ENTITY]
+            cond_grid = grid_l[bidx, sk_chosen]      # [B, N_GRID*N_GRID]
+
+            skill_dist = torch.distributions.Categorical(logits=skill_l)
+            ent_dist   = torch.distributions.Categorical(logits=cond_ent)
+            grid_dist  = torch.distributions.Categorical(logits=cond_grid)
+
+            new_lp = torch.stack([
+                skill_dist.log_prob(acts_b[:, 0]),
+                ent_dist.log_prob(acts_b[:, 1]),
+                grid_dist.log_prob(acts_b[:, 2]),
+            ], dim=-1)
+            entropy = torch.stack([skill_dist.entropy(),
+                                   ent_dist.entropy(),
+                                   grid_dist.entropy()], dim=-1).mean()
             ratio     = (new_lp - old_b).exp()
             adv_exp   = adv_b.unsqueeze(-1)
             policy_loss = -torch.min(ratio * adv_exp,

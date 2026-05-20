@@ -34,13 +34,13 @@ class NeuralCombatPolicy(CombatPolicy):
         obs = build_obs(world_state, actor_id, resources)
         obs_t = {k: torch.from_numpy(v).unsqueeze(0).to(self.device)
                  for k, v in obs.items()}
-        from .model import pick_skill_idx
+        from .model import pick_action
         with torch.no_grad():
             end_l, skill_l, entity_l, grid_l = self.net(obs_t)
         skill_l  = apply_resource_mask(skill_l, resources, world_state, actor_id)
         entity_l = apply_entity_mask(entity_l, obs_t)
-        skill_idx = pick_skill_idx(end_l[0], skill_l[0])
-        action = [skill_idx, int(entity_l[0].argmax()), int(grid_l.argmax())]
+        action = list(pick_action(end_l[0], skill_l[0], entity_l[0], grid_l[0],
+                                  ws=world_state, agent_id=actor_id))
         action_dict = decode_action(action, world_state, actor_id)
         if action_dict is None:
             return CombatDecision(ended=True)

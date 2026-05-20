@@ -21,8 +21,8 @@ def test_model_forward_output_shapes():
     end_logit, skill_logits, entity_logits, grid_logits = net(obs)
     assert end_logit.shape == (4,)
     assert skill_logits.shape == (4, N_SKILL_SLOTS)
-    assert entity_logits.shape == (4, N_ENTITY_SLOTS)
-    assert grid_logits.shape == (4, N_GRID * N_GRID)
+    assert entity_logits.shape == (4, N_SKILL_SLOTS, N_ENTITY_SLOTS)
+    assert grid_logits.shape == (4, N_SKILL_SLOTS, N_GRID * N_GRID)
 
 
 def test_model_skill_mask_zeros_padding():

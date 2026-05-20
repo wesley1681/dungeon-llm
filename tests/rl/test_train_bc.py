@@ -17,7 +17,9 @@ def test_bc_loss_step_returns_scalar():
         "terrain":    torch.randn(4, 20, 20),
     }
     actions = torch.tensor([[1, 3, 50], [2, 0, 100], [0, 3, 0], [3, 4, 200]])
-    loss, acc = bc_loss_step(net, obs, actions, optim)
+    # All four target_types: end (-1), entity-targeted (1), grid-targeted (5), self (0)
+    target_types = torch.tensor([1, 5, -1, 0])
+    loss, acc = bc_loss_step(net, obs, actions, target_types, optim)
     assert loss.shape == ()
     assert torch.isfinite(loss)
     assert set(acc.keys()) == {"end", "skill", "entity", "grid"}
@@ -33,7 +35,8 @@ def test_train_bc_returns_history():
         "terrain":    np.zeros((10, 20, 20), dtype=np.float32),
     }
     actions = np.random.randint(0, 5, (10, 3)).astype(np.int64)
-    dataset = {"obs": obs_batch, "actions": actions}
+    target_types = np.random.randint(-1, 6, (10,)).astype(np.int64)
+    dataset = {"obs": obs_batch, "actions": actions, "target_types": target_types}
     history = train_bc(dataset, epochs=2, batch_size=4, lr=1e-3, device="cpu")
     assert "losses" in history
     assert len(history["losses"]) >= 2

@@ -24,8 +24,11 @@ def evaluate(net, n_episodes: int = 20, device: str = "cpu") -> float:
         while not done:
             obs_t = {k: torch.from_numpy(v).unsqueeze(0).to(device) for k, v in obs.items()}
             with torch.no_grad():
-                _, s, e, g = net(obs_t)
-            action = [int(s.argmax(-1)), int(e.argmax(-1)), int(g.argmax(-1))]
+                end_l, s, e, g = net(obs_t)
+            from trpg.rl.model import pick_action
+            from trpg.rl.env_v2 import _AGENT_ID
+            action = list(pick_action(end_l[0], s[0], e[0], g[0],
+                                       ws=env.ws, agent_id=_AGENT_ID))
             obs, _, term, trunc, _ = env.step(action)
             done = term or trunc
         if env.ws.characters["agent"].is_alive():

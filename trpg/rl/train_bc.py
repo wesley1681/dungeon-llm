@@ -1,7 +1,15 @@
 """Behaviour-cloning training loop.
 
-Treats action prediction as three independent classification tasks
-(skill / entity / grid). Cross-entropy loss summed across the three heads.
+Hierarchical 4-head action factorisation:
+  - end_head:    trains on ALL pairs (binary: end vs act)
+  - skill_head:  trains on ACT pairs (multiclass over real skills)
+  - entity_head: trains on pairs where the chosen skill targets a creature
+                 (SINGLE_ENEMY/ALLY, MULTI_ENEMY/ALLY)
+  - grid_head:   trains on pairs where the chosen skill targets a position
+                 (POINT, LINE, CONE)
+
+Per-head conditional loss eliminates the marginal-vs-joint pollution: each
+head only sees samples where its output is meaningful for the chosen skill.
 """
 from __future__ import annotations
 import numpy as np
@@ -9,34 +17,63 @@ import torch
 import torch.nn.functional as F
 
 from .model import CombatPolicyNet
+from ..engine.skill import TargetType
+
+
+_ENTITY_TARGET_TYPES = (
+    int(TargetType.SINGLE_ENEMY), int(TargetType.SINGLE_ALLY),
+    int(TargetType.MULTI_ENEMY),  int(TargetType.MULTI_ALLY),
+)
+_GRID_TARGET_TYPES = (
+    int(TargetType.POINT), int(TargetType.LINE), int(TargetType.CONE),
+)
 
 
 def bc_loss_step(net: CombatPolicyNet, obs: dict,
                  actions: torch.Tensor,
+                 target_types: torch.Tensor,
                  optim: torch.optim.Optimizer) -> tuple[torch.Tensor, dict]:
     """One gradient step. Returns (loss, per-head accuracy dict).
 
-    Two-head decomposition:
-      - end_head: binary CE over all pairs (target = action[:,0] == 0)
-      - skill_head / entity_head / grid_head: multiclass CE over act-only
-        pairs (action[:,0] != 0). End pairs don't carry meaningful
-        target/coord, so excluding them keeps those heads clean.
+    Hierarchical conditional loss:
+      end_head:    all pairs                          (binary CE)
+      skill_head:  act pairs                          (multiclass CE)
+      entity_head: pairs where target_type ∈ {SINGLE_*, MULTI_*}
+      grid_head:   pairs where target_type ∈ {POINT, LINE, CONE}
     """
     net.train()
     end_logit, skill_logits, entity_logits, grid_logits = net(obs)
+    # entity_logits: [B, N_SKILL, N_ENTITY], grid_logits: [B, N_SKILL, N_GRID*N_GRID]
 
     is_end = (actions[:, 0] == 0)
     end_target = is_end.float()
     end_loss = F.binary_cross_entropy_with_logits(end_logit, end_target)
 
     act_mask = ~is_end
-    if act_mask.any():
-        skill_loss  = F.cross_entropy(skill_logits[act_mask],  actions[act_mask, 0])
-        entity_loss = F.cross_entropy(entity_logits[act_mask], actions[act_mask, 1])
-        grid_loss   = F.cross_entropy(grid_logits[act_mask],   actions[act_mask, 2])
-    else:
-        zero = torch.zeros((), device=end_logit.device)
-        skill_loss = entity_loss = grid_loss = zero
+    entity_mask = torch.zeros_like(is_end)
+    grid_mask   = torch.zeros_like(is_end)
+    for tt in _ENTITY_TARGET_TYPES:
+        entity_mask = entity_mask | (target_types == tt)
+    for tt in _GRID_TARGET_TYPES:
+        grid_mask = grid_mask | (target_types == tt)
+
+    # Gather the per-skill heads using the *target* skill index (teacher
+    # forcing). At inference the caller will gather using argmax skill.
+    B = end_logit.shape[0]
+    skill_target = actions[:, 0].clamp(min=0)
+    batch_idx = torch.arange(B, device=end_logit.device)
+    chosen_entity_logits = entity_logits[batch_idx, skill_target]   # [B, N_ENTITY]
+    chosen_grid_logits   = grid_logits[batch_idx, skill_target]     # [B, N_GRID*N_GRID]
+
+    zero = torch.zeros((), device=end_logit.device)
+    skill_loss  = (F.cross_entropy(skill_logits[act_mask],  actions[act_mask, 0])
+                   if act_mask.any() else zero)
+    entity_loss = (F.cross_entropy(chosen_entity_logits[entity_mask],
+                                   actions[entity_mask, 1])
+                   if entity_mask.any() else zero)
+    grid_loss   = (F.cross_entropy(chosen_grid_logits[grid_mask],
+                                   actions[grid_mask, 2])
+                   if grid_mask.any() else zero)
 
     loss = end_loss + skill_loss + entity_loss + grid_loss
     optim.zero_grad()
@@ -45,14 +82,15 @@ def bc_loss_step(net: CombatPolicyNet, obs: dict,
 
     with torch.no_grad():
         end_pred = (torch.sigmoid(end_logit) > 0.5)
+        def _acc(logits, targets, mask):
+            if not mask.any():
+                return float("nan")
+            return (logits.argmax(-1) == targets)[mask].float().mean().item()
         acc = {
             "end":    (end_pred == is_end).float().mean().item(),
-            "skill":  ((skill_logits.argmax(-1)  == actions[:, 0])[act_mask]
-                       .float().mean().item() if act_mask.any() else float("nan")),
-            "entity": ((entity_logits.argmax(-1) == actions[:, 1])[act_mask]
-                       .float().mean().item() if act_mask.any() else float("nan")),
-            "grid":   ((grid_logits.argmax(-1)   == actions[:, 2])[act_mask]
-                       .float().mean().item() if act_mask.any() else float("nan")),
+            "skill":  _acc(skill_logits,        actions[:, 0], act_mask),
+            "entity": _acc(chosen_entity_logits, actions[:, 1], entity_mask),
+            "grid":   _acc(chosen_grid_logits,   actions[:, 2], grid_mask),
         }
     return loss.detach(), acc
 
@@ -69,6 +107,7 @@ def train_bc(dataset: dict, *, epochs: int = 10, batch_size: int = 64,
         device = "cpu"
 
     actions = torch.from_numpy(dataset["actions"]).long()
+    target_types = torch.from_numpy(dataset["target_types"]).long()
     n = actions.shape[0]
     idx = np.arange(n)
 
@@ -86,7 +125,8 @@ def train_bc(dataset: dict, *, epochs: int = 10, batch_size: int = 64,
             obs_b = {k: torch.from_numpy(v[sel]).to(device)
                      for k, v in dataset["obs"].items()}
             act_b = actions[sel].to(device)
-            loss, acc = bc_loss_step(net, obs_b, act_b, optim)
+            tt_b  = target_types[sel].to(device)
+            loss, acc = bc_loss_step(net, obs_b, act_b, tt_b, optim)
             ep_losses.append(float(loss))
             ep_acc_end.append(acc["end"])
             if acc["skill"] == acc["skill"]:  # nan check

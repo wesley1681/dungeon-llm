@@ -61,7 +61,7 @@ def watch(net, agent_arch, opponent_arch, level, seed, device):
             prev_round = round_num
 
         # Get model's top-3 skill probabilities
-        from trpg.rl.model import apply_resource_mask, pick_skill_idx
+        from trpg.rl.model import apply_resource_mask, pick_action
         obs_t = {k: torch.from_numpy(v).unsqueeze(0).to(device) for k, v in obs.items()}
         with torch.no_grad():
             end_l, skill_l, entity_l, grid_l = net(obs_t)
@@ -71,8 +71,8 @@ def watch(net, agent_arch, opponent_arch, level, seed, device):
         skill_probs = torch.softmax(skill_l[0], dim=-1).cpu().numpy()
         top3_skills = sorted(enumerate(skill_probs), key=lambda x: -x[1])[:3]
 
-        skill_idx = pick_skill_idx(end_l[0], skill_l[0])
-        action = [skill_idx, int(entity_l[0].argmax(-1)), int(grid_l.argmax(-1))]
+        action = list(pick_action(end_l[0], skill_l[0], entity_l[0], grid_l[0],
+                                  ws=env.ws, agent_id=_AGENT_ID))
         chosen_skill = action[0]
         chosen_entity = action[1]
 

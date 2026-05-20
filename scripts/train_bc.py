@@ -84,11 +84,11 @@ def main():
             obs_t = {k: torch.from_numpy(v).unsqueeze(0).to(device) for k, v in obs.items()}
             with torch.no_grad():
                 end_l, s, e, g = net(obs_t)
-            from trpg.rl.model import apply_resource_mask, pick_skill_idx
+            from trpg.rl.model import apply_resource_mask, pick_action
             from trpg.rl.env_v2 import _AGENT_ID
             s = apply_resource_mask(s, env.resources, env.ws, _AGENT_ID)
-            skill_idx = pick_skill_idx(end_l[0], s[0])
-            action = [skill_idx, int(e.argmax(-1)), int(g.argmax(-1))]
+            action = list(pick_action(end_l[0], s[0], e[0], g[0],
+                                       ws=env.ws, agent_id=_AGENT_ID))
             obs, _, term, trunc, _ = env.step(action)
             done = term or trunc
         if not env.ws.characters["opponent"].is_alive():

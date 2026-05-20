@@ -70,11 +70,13 @@ def evaluate(net, n_episodes=100, device="cuda"):
             obs_t = {k: torch.from_numpy(v).unsqueeze(0).to(device)
                      for k, v in obs.items()}
             with torch.no_grad():
-                _, s, e, g = net(obs_t)
+                end_l, s, e, g = net(obs_t)
             from trpg.rl.env_v2 import _AGENT_ID
+            from trpg.rl.model import pick_action
             s = apply_resource_mask(s, env.resources, env.ws, _AGENT_ID)
             e = apply_entity_mask(e, obs_t)
-            action = [int(s[0].argmax()), int(e.argmax()), int(g.argmax())]
+            action = list(pick_action(end_l[0], s[0], e[0], g[0],
+                                       ws=env.ws, agent_id=_AGENT_ID))
             obs, _, term, trunc, _ = env.step(action)
             done = term or trunc
         # Only count as win if opponent actually died (truncation = draw, not win)
