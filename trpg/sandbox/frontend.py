@@ -80,17 +80,25 @@ class ConsoleFrontend:
         n_rows = int(bf.height)
         ax, ay = int(agent.position.x), int(agent.position.y)
         ox, oy = int(opp.position.x), int(opp.position.y)
+        # Viewport: bbox of both characters + PAD cells of padding, clamped to
+        # field bounds. Keeps the rendered grid compact when fighters are close
+        # (most of a fight) and expands automatically when they're far apart.
+        PAD = 4
+        x_lo = max(0, min(ax, ox) - PAD)
+        x_hi = min(n_cols, max(ax, ox) + PAD + 1)
+        y_lo = max(0, min(ay, oy) - PAD)
+        y_hi = min(n_rows, max(ay, oy) + PAD + 1)
         # Top axis: two rows — tens digit (only at every multiple of 10),
         # then ones digit (every-other column). Distinguishes x=0 / 10 / 20.
         text.append("    " + "".join(
-            str(x // 10) if x % 10 == 0 and x > 0 else " " for x in range(n_cols)
+            str(x // 10) if x % 10 == 0 and x > 0 else " " for x in range(x_lo, x_hi)
         ) + "\n")
         text.append("    " + "".join(
-            str(x % 10) if x % 2 == 0 else " " for x in range(n_cols)
+            str(x % 10) if x % 2 == 0 else " " for x in range(x_lo, x_hi)
         ) + "\n")
-        for y in range(n_rows):
+        for y in range(y_lo, y_hi):
             text.append(f"{y:3d} ")
-            for x in range(n_cols):
+            for x in range(x_lo, x_hi):
                 if (x, y) == (ax, ay):
                     text.append("A", style="bold blue")
                 elif (x, y) == (ox, oy):
