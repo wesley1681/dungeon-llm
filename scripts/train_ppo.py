@@ -94,6 +94,17 @@ def main():
                              "or 'scratch' for random init")
     parser.add_argument("--updates", type=int, default=100,
                         help="PPO update iterations")
+    parser.add_argument("--value_warmup", type=int, default=0,
+                        help="updates spent training only V(s) before the "
+                             "policy gradient is enabled. Needed when starting "
+                             "from a BC checkpoint — BC never trained value_head, "
+                             "so its initial output is random and contaminates "
+                             "the first batch of advantage estimates.")
+    parser.add_argument("--kl_coef", type=float, default=0.0,
+                        help="KL anchor strength. Loss adds kl_coef·KL(π‖π_ref) "
+                             "where π_ref is the BC checkpoint we started from. "
+                             "Prevents PPO from drifting arbitrarily far from BC "
+                             "over many updates. Try 0.01-0.1.")
     parser.add_argument("--steps",   type=int, default=1024,
                         help="steps per rollout")
     parser.add_argument("--epochs",  type=int, default=4,
@@ -146,6 +157,17 @@ def main():
     best_path = out_dir / "ppo_best.pt"
     torch.save(net.state_dict(), str(best_path))
     print(f"  => baseline saved as best: {best_path} ({wr:.0%})")
+
+    # Frozen reference policy for KL anchor — a copy of the loaded BC model.
+    # Kept on the training device so the forward pass runs in lockstep with
+    # the current policy. eval() + no_grad inside ppo_update prevents updates.
+    reference_net = None
+    if args.kl_coef > 0.0:
+        from copy import deepcopy
+        reference_net = deepcopy(net).to(device).eval()
+        for p in reference_net.parameters():
+            p.requires_grad_(False)
+        print(f"  [kl-anchor] reference policy frozen, kl_coef={args.kl_coef}")
     # Required margin to overwrite best — 3% guards against sample noise so
     # the "best" checkpoint reflects a real improvement, not a lucky eval.
     best_margin = 0.03
@@ -201,15 +223,21 @@ def main():
                                     seed=update, device=device,
                                     use_heuristic_opponent=use_heuristic,
                                     opponent_net=active_opponent)
+        is_warmup = update <= args.value_warmup
         info = ppo_update(net, batch, optim,
                           n_epochs=args.epochs, batch_size=args.batch,
                           ent_coef=args.ent_coef,
-                          device=device)
+                          device=device,
+                          value_only=is_warmup,
+                          reference_net=reference_net,
+                          kl_coef=args.kl_coef)
 
-        print(f"Update {update:4d}/{args.updates}  "
+        tag = " [warmup]" if is_warmup else ""
+        kl_tag = f"  kl={info.get('kl', 0):.4f}" if args.kl_coef > 0 else ""
+        print(f"Update {update:4d}/{args.updates}{tag}  "
               f"policy={info['policy_loss']:+.4f}  "
               f"value={info['value_loss']:.4f}  "
-              f"entropy={info['entropy']:.3f}")
+              f"entropy={info['entropy']:.3f}{kl_tag}")
 
         if update % args.eval_every == 0:
             wr = evaluate(net, n_episodes=100, device=device)

@@ -184,9 +184,21 @@ class CombatPolicyNet(nn.Module):
 
         return end_logit, skill_logits, entity_logits, grid_logits
 
-    def value(self, obs: dict) -> torch.Tensor:
-        """Critic: estimate state value V(s). Returns [B]."""
+    def value(self, obs: dict, detach_encoder: bool = False) -> torch.Tensor:
+        """Critic: estimate state value V(s). Returns [B].
+
+        ``detach_encoder=True`` stops the value-head gradient at h, so the
+        encoder is not modified by the value MSE. With shared encoder PPO,
+        value targets sit in [-10, +5] and policy_loss magnitudes are
+        ~0.005 — vf_coef * MSE then dominates the encoder gradient by 3+
+        orders of magnitude, dragging the encoder toward fitting V(s) at
+        the expense of the policy heads that share it. Detaching here
+        gives the encoder pure policy-gradient signal; value_head still
+        learns on top of the current encoder representation.
+        """
         _, _, h, _, _ = self._encode(obs)
+        if detach_encoder:
+            h = h.detach()
         return self.value_head(h).squeeze(-1)
 
 

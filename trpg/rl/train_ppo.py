@@ -351,8 +351,20 @@ def ppo_update(net: CombatPolicyNet, batch: dict,
                n_epochs: int = 4, batch_size: int = 64,
                clip: float = 0.2, vf_coef: float = 0.5,
                ent_coef: float = 0.01, max_grad_norm: float = 0.5,
-               device: str = "cuda") -> dict:
-    """One PPO minibatch update with value loss + entropy bonus."""
+               device: str = "cuda",
+               value_only: bool = False,
+               reference_net: CombatPolicyNet | None = None,
+               kl_coef: float = 0.0) -> dict:
+    """One PPO minibatch update with value loss + entropy bonus.
+
+    ``value_only=True`` zeroes out the policy-gradient and entropy terms
+    so the optimizer only fits the value head against the GAE returns —
+    used for the first few updates to warm up V(s) before its outputs
+    start driving advantage estimates. Without warmup, V(s) is at random
+    init from BC (which never trained value_head), so early advantages
+    are pure noise and the policy drifts in a meaningless direction
+    before V(s) catches up.
+    """
     if device == "cuda" and not torch.cuda.is_available():
         device = "cpu"
     net.to(device).train()
@@ -370,7 +382,9 @@ def ppo_update(net: CombatPolicyNet, batch: dict,
     sk_mask  = torch.from_numpy(batch["skill_masks"]).to(device)   # [N, N_SKILL]
     ent_mask = torch.from_numpy(batch["entity_masks"]).to(device)  # [N, N_ENTITY]
 
-    p_losses, v_losses, entropies = [], [], []
+    p_losses, v_losses, entropies, kl_vals = [], [], [], []
+    if reference_net is not None:
+        reference_net.to(device).eval()
     idx = np.arange(n)
     for _ in range(n_epochs):
         np.random.shuffle(idx)
@@ -430,8 +444,47 @@ def ppo_update(net: CombatPolicyNet, batch: dict,
             adv_exp   = adv_b.unsqueeze(-1)
             policy_loss = -torch.min(ratio * adv_exp,
                                      torch.clamp(ratio, 1-clip, 1+clip) * adv_exp).mean()
-            value_loss  = F.mse_loss(net.value(obs_b), ret_b)
-            loss        = policy_loss + vf_coef * value_loss - ent_coef * entropy
+            # Detach encoder for the value path so vf_coef * MSE doesn't
+            # dominate encoder gradients. value_head still gets its full
+            # signal; encoder is updated only by policy gradient.
+            value_loss  = F.mse_loss(net.value(obs_b, detach_encoder=True), ret_b)
+
+            # Optional KL anchor against a frozen reference policy (typically
+            # the BC checkpoint we started from). Without it, PPO is free to
+            # wander arbitrarily far from BC over many updates — small
+            # policy_loss values like +0.005 still accumulate to a different
+            # policy after 100 updates, which is what destroyed earlier runs.
+            kl_total = torch.zeros((), device=end_l.device)
+            if reference_net is not None and kl_coef > 0.0:
+                with torch.no_grad():
+                    ref_end_l, ref_skill_l, ref_entity_l, ref_grid_l = reference_net(obs_b)
+                    ref_skill_l  = ref_skill_l.masked_fill(sk_mask_b, -1e9)
+                    ref_entity_l = ref_entity_l.masked_fill(ent_mask_b.unsqueeze(1), -1e9)
+                    ref_skill_l_play = ref_skill_l.clone()
+                    ref_skill_l_play[..., 0] = -1e9
+                    ref_cond_ent  = ref_entity_l[bidx, sk_chosen]
+                    ref_cond_grid = ref_grid_l[bidx, sk_chosen]
+                    ref_end_dist   = torch.distributions.Bernoulli(logits=ref_end_l)
+                    ref_skill_dist = torch.distributions.Categorical(logits=ref_skill_l_play)
+                    ref_ent_dist   = torch.distributions.Categorical(logits=ref_cond_ent)
+                    ref_grid_dist  = torch.distributions.Categorical(logits=ref_cond_grid)
+                kl_end   = torch.distributions.kl_divergence(end_dist, ref_end_dist)
+                kl_skill = torch.distributions.kl_divergence(skill_dist, ref_skill_dist)
+                kl_ent   = torch.distributions.kl_divergence(ent_dist, ref_ent_dist)
+                kl_grid  = torch.distributions.kl_divergence(grid_dist, ref_grid_dist)
+                # Ended steps had no policy choice on skill/ent/grid — mask out.
+                kl_skill = kl_skill.masked_fill(ended_steps, 0.0)
+                kl_ent   = kl_ent.masked_fill(ended_steps, 0.0)
+                kl_grid  = kl_grid.masked_fill(ended_steps, 0.0)
+                kl_total = (kl_end + kl_skill + kl_ent + kl_grid).mean()
+
+            if value_only:
+                loss = vf_coef * value_loss
+            else:
+                loss = (policy_loss
+                        + vf_coef * value_loss
+                        - ent_coef * entropy
+                        + kl_coef * kl_total)
 
             optim.zero_grad()
             loss.backward()
@@ -441,9 +494,11 @@ def ppo_update(net: CombatPolicyNet, batch: dict,
             p_losses.append(policy_loss.item())
             v_losses.append(value_loss.item())
             entropies.append(entropy.item())
+            kl_vals.append(float(kl_total.item()))
 
     return {
         "policy_loss": float(np.mean(p_losses)),
         "value_loss":  float(np.mean(v_losses)),
         "entropy":     float(np.mean(entropies)),
+        "kl":          float(np.mean(kl_vals)),
     }
