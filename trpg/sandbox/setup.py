@@ -18,10 +18,9 @@ def build_world_state(*, agent_arch: str, opponent_arch: str, level: int,
     """Construct a ready-to-fight WorldState with custom positions + terrain.
 
     Mirrors env_v2.reset()'s wiring (char_id, is_npc, initiative_order) so the
-    model sees the same shape it was trained on. Differences:
-      - agent is a PC (is_npc=False) — the user controls them
+    model sees the same shape it was trained on. Differences from env_v2.reset():
       - positions come from caller, not setup_combat_positions defaults
-      - terrain is a named preset
+      - terrain is a named preset (env_v2 uses a hardcoded LAYOUTS list)
     """
     if agent_arch not in ARCHETYPE_FACTORIES:
         raise KeyError(f"unknown agent archetype: {agent_arch!r}")
