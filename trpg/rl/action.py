@@ -85,7 +85,14 @@ def decode_action(action: Sequence[int], ws: WorldState, agent_id: str) -> dict 
         coord = _clamp_to_range(Vec2(coord_x, coord_y), agent.position,
                                 sk.features.range_m)
         if bf is not None:
-            if bf.is_blocked(coord) or not bf.has_line_of_sight(agent.position, coord):
+            if bf.is_blocked(coord):
+                return None
+            # Movement doesn't require line of sight to the destination —
+            # you walk on the ground, so a pillar between you and your
+            # target doesn't stop you from walking around it. LOS gating
+            # only applies to ranged abilities (spells, AOEs).
+            if sk.skill_id != "move" and not bf.has_line_of_sight(
+                    agent.position, coord):
                 return None
         return sk.build_action(agent_id, None, coord)
     # LINE/CONE fall back to POINT semantics
