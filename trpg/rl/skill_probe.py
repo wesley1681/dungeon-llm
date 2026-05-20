@@ -188,17 +188,17 @@ def probe_and_report(net, *, n_episodes: int = 10, device: str = "cpu",
             m_pct = 100 * m_cats[c] / m_total
             if e_pct >= expert_threshold_pct and m_pct < model_threshold_pct:
                 flags.append(
-                    f"  {arch}: expert {c} {e_pct:.0f}% → model {m_pct:.0f}%"
+                    f"  {arch}: expert {c} {e_pct:.0f}% -> model{m_pct:.0f}%"
                 )
     if verbose:
         if flags:
             print(f"\n!!! COLLAPSE FLAGS "
-                  f"(expert ≥ {expert_threshold_pct:.0f}% but model "
+                  f"(expert >= {expert_threshold_pct:.0f}% but model "
                   f"< {model_threshold_pct:.0f}%):")
             for f in flags:
                 print(f)
         else:
             print(f"\nNo collapses detected "
-                  f"(model ≥ {model_threshold_pct:.0f}% wherever "
-                  f"expert ≥ {expert_threshold_pct:.0f}%).")
+                  f"(model >= {model_threshold_pct:.0f}% wherever "
+                  f"expert >= {expert_threshold_pct:.0f}%).")
     return flags
