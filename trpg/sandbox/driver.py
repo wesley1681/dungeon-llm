@@ -42,11 +42,7 @@ def _run_one_turn(actor_id: str, ws, decider, frontend) -> None:
             break
         # Snapshot skill list before mutation (matches env_v2 step ordering)
         skills_before = available_skills(actor, ws)
-        try:
-            action = decider(actor_id, actor, ws, resources, round_num)
-        except StopIteration:
-            # ScriptedFrontend exhausted — treat as voluntary end of turn
-            break
+        action = decider(actor_id, actor, ws, resources, round_num)
         if action is None:
             break
         result = execute_action(action, ws)

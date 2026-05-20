@@ -28,7 +28,9 @@ def test_run_combat_returns_outcome_dict():
         agent_pos=Vec2(15.0, 15.5), opp_pos=Vec2(15.0, 16.5),  # adjacent
         terrain="empty",
     )
-    fe = ScriptedFrontend([None])  # immediately end turn
+    # max_rounds=2 means the user may be prompted twice; supply one None
+    # per round so the iterator doesn't run short.
+    fe = ScriptedFrontend([None, None])
     opp_pol = HeuristicCombatPolicy()
     out = run_combat(ws, fe, opp_pol, max_rounds=2)
     assert "outcome" in out
