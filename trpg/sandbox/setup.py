@@ -55,3 +55,66 @@ def build_world_state(*, agent_arch: str, opponent_arch: str, level: int,
     opp.position = opp_pos
     TERRAIN_PRESETS[terrain](bf)
     return ws
+
+
+# ── Catalog + loadout helpers ─────────────────────────────────────────────────
+
+from ..engine.abilities import CLASS_ABILITIES
+from ..engine.items import WEAPON_DEFS
+from ..engine.spells import SPELLS
+
+
+def list_catalog() -> dict[str, list[str]]:
+    """Return the full skill catalog grouped by kind.
+
+    - weapons:   keys of WEAPON_DEFS
+    - spells:    keys of SPELLS
+    - abilities: keys of CLASS_ABILITIES restricted to engine_ready & not is_reaction
+                 (reactions can't be triggered from the action menu in the sandbox)
+    """
+    return {
+        "weapons": sorted(WEAPON_DEFS.keys()),
+        "spells":  sorted(SPELLS.keys()),
+        "abilities": sorted(
+            sid for sid, ab in CLASS_ABILITIES.items()
+            if ab.engine_ready and not ab.is_reaction
+        ),
+    }
+
+
+def apply_loadout(char, *, add: list[str], remove: list[str]) -> None:
+    """Mutate ``char`` to add and remove skills by string id.
+
+    Resolution rules:
+      - if id is in WEAPON_DEFS → weapon
+      - elif id is in SPELLS    → spell name (stored as string)
+      - elif id is in CLASS_ABILITIES → ability (also seeds ability_uses if max_uses > 0)
+      - else → ValueError
+
+    add and remove are processed in that order (remove last, so you can swap
+    a weapon by name without a 0-length intermediate state).
+    """
+    for sid in add:
+        if sid in WEAPON_DEFS:
+            char.weapons.append(WEAPON_DEFS[sid])
+        elif sid in SPELLS:
+            char.spells.append(sid)
+        elif sid in CLASS_ABILITIES:
+            ab = CLASS_ABILITIES[sid]
+            if sid not in char.known_abilities:
+                char.known_abilities.append(sid)
+            if ab.max_uses > 0:
+                char.ability_uses[sid] = ab.max_uses
+        else:
+            raise ValueError(f"unknown skill id: {sid!r}")
+
+    for sid in remove:
+        if sid in WEAPON_DEFS:
+            char.weapons[:] = [w for w in char.weapons if w.name != sid]
+        elif sid in SPELLS and sid in char.spells:
+            char.spells.remove(sid)
+        elif sid in CLASS_ABILITIES and sid in char.known_abilities:
+            char.known_abilities.remove(sid)
+            char.ability_uses.pop(sid, None)
+        else:
+            raise ValueError(f"unknown skill id: {sid!r}")
