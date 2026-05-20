@@ -429,7 +429,45 @@ class _ArchetypeBase(CombatPolicy):
         return self._attack(actor_id, actor, ws, target_id)
 
     def _move_to(self, actor_id: str, actor, ws, target_id: str) -> dict | None:
-        return self._use_skill(actor_id, actor, ws, "move", target_id=target_id)
+        """Build a MOVE action toward target_id, avoiding blocked terrain.
+
+        `_use_skill("move", target_id=...)` builds an action whose
+        target_position IS the target character's exact position — if the
+        target is standing in a wall cell (player can do this via sandbox
+        bug, or wall-targeted spells), engine returns ERROR. Driver retries
+        the same MOVE 10x silently. Worse, BC training records the failed
+        MOVE as a label — model would learn "blunder into walls".
+
+        This helper computes a safe waypoint along the line of sight (capped
+        at MOVE_BUDGET_M, walked back along the ray if it lands in a wall)
+        and passes that explicit coord. Returns None if no cell along the
+        ray is reachable.
+        """
+        from .combat import MOVE_BUDGET_M
+        from .vec2 import Vec2
+        bf = ws.combat.battlefield if ws.combat else None
+        target_char = ws.characters.get(target_id) if target_id else None
+        # No battlefield (e.g. abstract combat) — fall back to original behaviour
+        if bf is None or target_char is None:
+            return self._use_skill(actor_id, actor, ws, "move", target_id=target_id)
+
+        CLOSE_GAP_M = 1.0   # mirrors engine.combat MOVE handler
+        old_pos = actor.position
+        delta = target_char.position - old_pos
+        dist = delta.length()
+        if dist <= CLOSE_GAP_M + 1e-6:
+            return None   # already in/inside the close gap — nothing to do
+
+        travel = min(dist - CLOSE_GAP_M, MOVE_BUDGET_M)
+        direction = delta.normalized()
+
+        # Try the full straight-line waypoint first; if blocked, walk back.
+        try_steps = [travel] + [i * 0.5 for i in range(int(travel / 0.5), 0, -1)]
+        for t in try_steps:
+            try_pos = old_pos + direction * t
+            if bf.in_bounds(try_pos) and not bf.is_blocked(try_pos):
+                return self._use_skill(actor_id, actor, ws, "move", coord=Vec2(try_pos.x, try_pos.y))
+        return None
 
 
 # ── Fighters ──────────────────────────────────────────────────────────────────
@@ -763,8 +801,10 @@ class DevotionPolicy(_ArchetypeBase):
             return CombatDecision(action=self._move_to(actor_id, actor, ws, tid))
 
         if resources.get("action", 0) > 0:
-            # Round 1: sacred weapon buff (costs action)
-            if round_num == 1 and not actor.has_status("sacred_weapon_buff"):
+            # Sacred weapon buff (1 action; lasts 10 rounds). 5e rules don't
+            # restrict it to round 1 — open it anytime you're about to start
+            # attacking and haven't buffed yet.
+            if not actor.has_status("sacred_weapon_buff"):
                 a = self._use_skill(actor_id, actor, ws, "sacred_weapon_dev", actor_id)
                 if a:
                     return CombatDecision(action=a)
@@ -794,8 +834,10 @@ class VengeancePolicy(_ArchetypeBase):
         if not self._in_reach(actor, tgt) and resources.get("movement", 0) > 1e-6:
             return CombatDecision(action=self._move_to(actor_id, actor, ws, tid))
 
-        # Vow of enmity on target (bonus action, round 1)
-        if round_num == 1 and not tgt.has_status("vow_target") and resources.get("bonus_action", 1) > 0:
+        # Vow of enmity on target (bonus action; lasts 10 rounds). 5e rules
+        # don't restrict it to round 1 — open it any turn the target isn't
+        # yet vowed and bonus action is free.
+        if not tgt.has_status("vow_target") and resources.get("bonus_action", 1) > 0:
             a = self._use_skill(actor_id, actor, ws, "vow_of_enmity_ven", tid)
             if a:
                 return CombatDecision(action=a)

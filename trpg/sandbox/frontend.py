@@ -190,6 +190,8 @@ class ConsoleFrontend:
                 self._console.print(f"[red]目標不存在[/]")
 
         if tt in GRID_TT:
+            from ..engine.vec2 import Vec2
+            bf = ws.combat.battlefield if ws.combat else None
             while True:
                 raw = input("目標座標 (x y) > ").strip().split()
                 if len(raw) != 2:
@@ -200,8 +202,15 @@ class ConsoleFrontend:
                 except ValueError:
                     self._console.print(f"[red]無效座標[/]")
                     continue
-                from ..engine.vec2 import Vec2
-                return sk.build_action(actor_id, None, Vec2(x, y))
+                p = Vec2(x, y)
+                if bf is not None:
+                    if not bf.in_bounds(p):
+                        self._console.print(f"[red]座標 ({x:g}, {y:g}) 超出戰場邊界[/]")
+                        continue
+                    if bf.is_blocked(p):
+                        self._console.print(f"[red]座標 ({x:g}, {y:g}) 是障礙物，無法選擇[/]")
+                        continue
+                return sk.build_action(actor_id, None, p)
 
         # Fallback (should not reach)
         return sk.build_action(actor_id, None, None)
