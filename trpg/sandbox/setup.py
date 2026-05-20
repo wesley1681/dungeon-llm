@@ -109,7 +109,7 @@ def apply_loadout(char, *, add: list[str], remove: list[str]) -> None:
             raise ValueError(f"unknown skill id: {sid!r}")
 
     for sid in remove:
-        if sid in WEAPON_DEFS:
+        if sid in WEAPON_DEFS and any(w.name == sid for w in char.weapons):
             char.weapons[:] = [w for w in char.weapons if w.name != sid]
         elif sid in SPELLS and sid in char.spells:
             char.spells.remove(sid)

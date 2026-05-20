@@ -107,3 +107,11 @@ def test_apply_loadout_unknown_skill_raises():
     char = ARCHETYPE_FACTORIES["evocation"](level=5)
     with pytest.raises(ValueError, match="unknown skill"):
         apply_loadout(char, add=["wibblefrobnitz"], remove=[])
+
+
+def test_apply_loadout_remove_absent_weapon_raises():
+    from trpg.scenarios.archetypes import ARCHETYPE_FACTORIES
+    char = ARCHETYPE_FACTORIES["evocation"](level=5)  # wizard, no longsword
+    # 長劍 (longsword) is in WEAPON_DEFS but not on a wizard
+    with pytest.raises(ValueError, match="unknown skill"):
+        apply_loadout(char, add=[], remove=["長劍"])
