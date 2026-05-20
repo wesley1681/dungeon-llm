@@ -29,7 +29,9 @@ def _ask(prompt: str, default: str) -> str:
     return raw or default
 
 
-def _ask_position(label: str, default: Vec2) -> Vec2:
+def _ask_position(label: str, default: Vec2, bf=None) -> Vec2:
+    """Prompt for a (x, y). When ``bf`` is given, reject in-wall / OOB
+    positions so the spawned character doesn't start trapped in a wall."""
     while True:
         raw = _ask(f"{label} 座標 (x y)", f"{default.x:.0f} {default.y:.0f}")
         parts = raw.split()
@@ -37,9 +39,18 @@ def _ask_position(label: str, default: Vec2) -> Vec2:
             print(f"  需要兩個數字 (x y)，收到: {raw!r}")
             continue
         try:
-            return Vec2(float(parts[0]), float(parts[1]))
+            p = Vec2(float(parts[0]), float(parts[1]))
         except ValueError:
             print(f"  無效座標: {raw!r}")
+            continue
+        if bf is not None:
+            if not bf.in_bounds(p):
+                print(f"  座標 ({p.x:g}, {p.y:g}) 超出戰場邊界 (0..{bf.width:g})")
+                continue
+            if bf.is_blocked(p):
+                print(f"  座標 ({p.x:g}, {p.y:g}) 是障礙物 (地形：{bf.terrain_at(p).name})")
+                continue
+        return p
 
 
 def _ask_int(prompt: str, default: str) -> int:
@@ -119,9 +130,15 @@ def main() -> None:
     agent_arch = _ask_archetype("你的", "evocation")
     opponent_arch = _ask_archetype("對手", "berserker")
     level = _ask_int("等級", "5")
-    agent_pos = _ask_position("你的", Vec2(8.0, 15.0))
-    opp_pos = _ask_position("對手", Vec2(22.0, 15.0))
+    # Ask terrain BEFORE positions so we can validate spawn coords against
+    # the chosen walls — otherwise the player could spawn inside a wall by
+    # picking a corner before knowing the preset puts a wall there.
     terrain = _ask_terrain("empty")
+    from trpg.engine.vec2 import Battlefield
+    preview_bf = Battlefield(width=30.0, height=30.0, grid_resolution=0.5)
+    TERRAIN_PRESETS[terrain](preview_bf)
+    agent_pos = _ask_position("你的", Vec2(8.0, 15.0), bf=preview_bf)
+    opp_pos = _ask_position("對手", Vec2(22.0, 15.0), bf=preview_bf)
 
     ws = build_world_state(
         agent_arch=agent_arch, opponent_arch=opponent_arch, level=level,
