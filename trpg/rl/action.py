@@ -172,10 +172,21 @@ def encode_action(action_dict: dict | None, ws: WorldState, agent_id: str) -> tu
     else:
         entity_idx = 0
 
-    # Grid cell (for POINT-target spells and MOVE-with-coord)
+    # Grid cell — the spatial label the grid_head learns to predict.
+    # Priority:
+    #   1. explicit target_position in the action (POINT spells, MOVE-to-coord)
+    #   2. target entity's position (MOVE-toward-entity — engine resolves the
+    #      destination from target_id, but encode_action needs an explicit
+    #      cell so BC's grid_head sees the right supervision)
+    #   3. fallback 0 (only for actions where grid genuinely is unused)
     if "target_position" in action_dict:
         x, y = action_dict["target_position"][0], action_dict["target_position"][1]
         grid_cell = _xy_to_grid_cell(float(x), float(y))
+    elif (isinstance(target_id, str)
+          and target_id != agent_id
+          and target_id in ws.characters):
+        tpos = ws.characters[target_id].position
+        grid_cell = _xy_to_grid_cell(float(tpos.x), float(tpos.y))
     else:
         grid_cell = 0
     return (skill_idx, entity_idx, grid_cell)
