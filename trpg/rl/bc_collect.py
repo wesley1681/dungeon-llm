@@ -29,7 +29,6 @@ TT_END = -1
 def collect_bc_rollout(agent_arch: str, opponent_arch: str | None = None,
                         level: int = 5, seed: int = 0,
                         max_rounds: int = 30,
-                        include_end_pairs: bool = True
                         ) -> list[tuple[dict, tuple, int]]:
     """Run one BC episode. Returns list of (obs_dict, action_triplet, target_type).
 
@@ -38,9 +37,11 @@ def collect_bc_rollout(agent_arch: str, opponent_arch: str | None = None,
     training — entity_head only sees entity-targeted skills, grid_head
     only sees POINT/LINE/CONE skills.
 
-    ``include_end_pairs``: when True, record (obs, (0,0,0), TT_END)
-    whenever the expert returns action=None. The end_head trains on all
-    pairs; skill/entity/grid heads only train on relevant subsets.
+    End pairs (obs when expert returns action=None) are always recorded as
+    ``(obs, (0, 0, 0), TT_END)``. The multi-head architecture's end_head
+    needs them to learn when to stop, and the skill/entity/grid heads route
+    around them via target_type masking — so they no longer pollute skill
+    learning the way they did before the heads were split.
     """
     env = CombatEnvV2(seed=seed)
     env.reset(agent_arch=agent_arch, opponent_arch=opponent_arch, level=level)
@@ -60,7 +61,7 @@ def collect_bc_rollout(agent_arch: str, opponent_arch: str | None = None,
                 env.ws.combat.round_number,
             )
             if decision.action is None or decision.fled:
-                if include_end_pairs and not decision.fled:
+                if not decision.fled:
                     pairs.append((obs_now, (0, 0, 0), TT_END))
                 break
             enc = encode_action(decision.action, env.ws, _AGENT_ID)
@@ -94,8 +95,7 @@ def collect_bc_rollout(agent_arch: str, opponent_arch: str | None = None,
     return pairs
 
 
-def collect_bc_dataset(n_episodes_per_arch: int = 50, seed: int = 0,
-                       include_end_pairs: bool = True) -> dict:
+def collect_bc_dataset(n_episodes_per_arch: int = 50, seed: int = 0) -> dict:
     """Roll out every archetype against every other; return a flat dataset.
 
     Returns dict with keys:
@@ -112,7 +112,6 @@ def collect_bc_dataset(n_episodes_per_arch: int = 50, seed: int = 0,
             ep_seed = int(rng.integers(0, 2**31))
             all_pairs.extend(collect_bc_rollout(
                 agent_arch, opp_arch, level, ep_seed,
-                include_end_pairs=include_end_pairs,
             ))
 
     # Stack into arrays

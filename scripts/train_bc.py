@@ -23,9 +23,6 @@ def main():
     parser.add_argument("--lr",       type=float, default=3e-4)
     parser.add_argument("--out",      type=str, default="models/bc_v1.pt")
     parser.add_argument("--seed",     type=int, default=0)
-    parser.add_argument("--include_end_pairs", action="store_true",
-                        help="include (obs, (0,0,0)) pairs when expert ends turn — "
-                             "raw / naive imitation baseline (biases toward end-spam)")
     args = parser.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -39,8 +36,7 @@ def main():
 
     print(f"\n== 資料收集：{len(ARCHETYPE_LIST)} 個 archetype × {args.episodes} episode ==")
     t0 = time.time()
-    ds = collect_bc_dataset(n_episodes_per_arch=args.episodes, seed=args.seed,
-                            include_end_pairs=args.include_end_pairs)
+    ds = collect_bc_dataset(n_episodes_per_arch=args.episodes, seed=args.seed)
     n_pairs = ds["actions"].shape[0]
     elapsed = time.time() - t0
     print(f"   收集了 {n_pairs:,} 筆 (obs, action)，耗時 {elapsed:.1f}s")
