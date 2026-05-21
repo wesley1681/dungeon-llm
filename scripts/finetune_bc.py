@@ -89,6 +89,15 @@ def main():
     target_types = torch.from_numpy(ds["target_types"]).long()
     idx = np.arange(n)
 
+    from trpg.rl.obs import N_SKILL_SLOTS
+    act_actions = actions[actions[:, 0] > 0, 0]
+    counts = torch.bincount(act_actions, minlength=N_SKILL_SLOTS).float()
+    n_active = (counts > 0).sum().clamp(min=1)
+    n_act = counts.sum().clamp(min=1)
+    raw_w = n_act / (n_active * counts.clamp(min=1))
+    skill_weight = torch.where(counts > 0, raw_w.sqrt(), torch.zeros_like(counts)).to(device)
+    print(f"   skill_weight computed ({int(n_active)} active slots)")
+
     print(f"\n== Finetune: {args.epochs} epochs, batch={args.batch}, "
           f"lr={args.lr} ==")
     for epoch in range(args.epochs):
@@ -101,7 +110,8 @@ def main():
             loss, acc = bc_loss_step(net, obs_b,
                                       actions[sel].to(device),
                                       target_types[sel].to(device),
-                                      optim)
+                                      optim,
+                                      skill_weight=skill_weight)
             ep_losses.append(float(loss))
             for k in ep_accs:
                 if acc[k] == acc[k]:
