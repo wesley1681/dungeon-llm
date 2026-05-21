@@ -93,7 +93,12 @@ class CombatPolicyNet(nn.Module):
         # end_head: scalar binary "end vs act"
         self.end_head = nn.Linear(hidden, 1)
         # skill_head: per-skill-slot logit (existing)
-        self.skill_head = nn.Linear(64 + hidden, 1)
+        # Projects skill embeddings (64-d) to entity space (32-d) so each
+        # skill can attend over entity embeddings in forward(), giving
+        # skill_head per-entity resolution without mean-pooling dilution.
+        self.skill_ent_attn_proj = nn.Linear(64, 32)
+        # skill_head input: sk_emb(64) + h(hidden) + sk_ent_ctx(32)
+        self.skill_head = nn.Linear(64 + hidden + 32, 1)
         # entity_head: per (skill, entity) — Linear over (sk_emb, h, ent_emb).
         self.entity_head = nn.Linear(64 + hidden + 32, 1)
         # grid_head — spatial. Projects (sk_emb, h) to a per-skill query
@@ -158,9 +163,17 @@ class CombatPolicyNet(nn.Module):
 
         end_logit = self.end_head(h).squeeze(-1)
 
+        # Skill-to-entity attention: each skill queries entity embeddings so
+        # skill_head can condition on per-entity status (e.g. vow_target).
+        sk_query    = self.skill_ent_attn_proj(sk_emb)                              # [B, S, 32]
+        attn_scores = torch.bmm(sk_query, ent_emb.transpose(1, 2)) * (32 ** -0.5)  # [B, S, E]
+        sk_ent_ctx  = torch.bmm(torch.softmax(attn_scores, dim=-1), ent_emb)        # [B, S, 32]
+
         # skill_head: per skill slot
-        h_skill     = h.unsqueeze(1).expand(-1, N_SKILL_SLOTS, -1)
-        skill_logits = self.skill_head(torch.cat([sk_emb, h_skill], dim=-1)).squeeze(-1)
+        h_skill      = h.unsqueeze(1).expand(-1, N_SKILL_SLOTS, -1)
+        skill_logits = self.skill_head(
+            torch.cat([sk_emb, h_skill, sk_ent_ctx], dim=-1)
+        ).squeeze(-1)
         skill_logits = skill_logits.masked_fill(key_padding, -1e9)
 
         # entity_head per (skill, entity): combine (sk_emb[skill], h, ent_emb[entity])

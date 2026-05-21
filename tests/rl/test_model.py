@@ -34,3 +34,18 @@ def test_model_skill_mask_zeros_padding():
     _, skill_logits, _, _ = net(obs)
     # Padded slots should have very negative logits
     assert (skill_logits[:, 5:] < -1e8).all()
+
+
+def test_skill_ent_attn_proj_exists():
+    net = CombatPolicyNet()
+    assert hasattr(net, "skill_ent_attn_proj"), "skill_ent_attn_proj layer missing"
+    assert net.skill_ent_attn_proj.in_features == 64
+    assert net.skill_ent_attn_proj.out_features == 32
+
+
+def test_skill_head_input_size():
+    """skill_head must accept sk_emb(64) + h(128) + sk_ent_ctx(32) = 224 dims."""
+    net = CombatPolicyNet()
+    assert net.skill_head.in_features == 64 + 128 + 32, (
+        f"Expected 224, got {net.skill_head.in_features}"
+    )
