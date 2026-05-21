@@ -321,61 +321,6 @@ def from_weapon(weapon, char) -> Skill:
     )
 
 
-def from_spell(spell, char) -> Skill:
-    """Project a Spell onto a Skill. Currently AOE-save spells only — extend
-    when spell_attack and utility variants land in spells.py."""
-    save_dc = 8 + char.proficiency_bonus + char.stats.modifier(char.spellcasting_ability)
-    available_slots = sum(
-        char.spell_slots[lvl]
-        for lvl in char.spell_slots
-        if lvl >= spell.level
-    )
-
-    feats = SkillFeatures(
-        expected_damage=_expected_dice(spell.damage_dice),
-        range_m=spell.range_m,
-        aoe_radius_m=spell.aoe_radius_m,
-        save_dc=float(save_dc),
-        save_stat=_save_stat_index(spell.save_ability),
-        cost_action=1.0,
-        cost_slot_level=float(spell.level),
-        remaining_uses=float(available_slots),
-        target_type=TargetType.POINT if spell.aoe_radius_m > 0 else TargetType.SINGLE_ENEMY,
-    )
-
-    is_aoe = spell.aoe_radius_m > 0
-
-    def builder(actor_id, target_id, coord):
-        action = {
-            "type":       "SPELL",
-            "caster":     actor_id,
-            "spell_name": spell.name,
-            "consumes":   ["action"],
-        }
-        # AOE spells use a coordinate centre. Single-target spells use a
-        # character id — otherwise the engine reads target_position and
-        # treats the cast as point-blank coords, which loses creature-specific
-        # context (e.g. concentration target tracking, save vs. THIS creature).
-        if is_aoe and coord is not None:
-            c = Vec2.coerce(coord)
-            action["target_position"] = [float(c.x), float(c.y)]
-        elif target_id:
-            action["target"] = target_id
-        elif coord is not None:
-            c = Vec2.coerce(coord)
-            action["target_position"] = [float(c.x), float(c.y)]
-        else:
-            return None
-        return action
-
-    return Skill(
-        skill_id=f"spell:{spell.name}",
-        display_name=spell.name,
-        features=feats,
-        builder=builder,
-    )
-
-
 def _status_multihot(*names: str) -> tuple[bool, ...]:
     return tuple(slot in names for slot in STATUS_SLOTS)
 
@@ -464,7 +409,7 @@ def available_skills(char, world_state=None) -> list[Skill]:
     """List everything `char` can invoke this turn. Order is stable across
     calls so the policy's skill_idx stays consistent within an episode.
 
-    Order: [END, MOVE, weapons..., spells..., class_abilities..., DODGE, HIDE]
+    Order: [END, MOVE, weapons..., class_abilities..., DODGE, HIDE]
 
     ClassAbility filtering:
       - engine_ready=True and not is_reaction
@@ -472,7 +417,6 @@ def available_skills(char, world_state=None) -> list[Skill]:
       - ab.archetype_id == "" or ab.archetype_id == char.archetype_id
       - max_uses == 0 (unlimited) or remaining uses > 0
     """
-    from .spells import SPELLS
     from .abilities import CLASS_ABILITIES
 
     out: list[Skill] = [end_turn_skill()]
@@ -491,27 +435,6 @@ def available_skills(char, world_state=None) -> list[Skill]:
         if w.ammo and not char.has_ammo(w.ammo):
             continue
         out.append(from_weapon(w, char))
-
-    if char.spells and char.spellcasting_ability:
-        for name in char.spells:
-            spell = SPELLS.get(name)
-            if spell is None:
-                continue
-            # Skip leveled spells when no slot of sufficient level is available.
-            if spell.level > 0:
-                has_slot = any(
-                    char.spell_slots.get(lvl, 0) > 0
-                    for lvl in char.spell_slots
-                    if lvl >= spell.level
-                )
-                if not has_slot:
-                    continue
-            # Skip concentration spells when already concentrating — the engine
-            # would replace the active concentration, which is rarely worth the
-            # extra slot/action spend and lets the policy spam re-casts.
-            if spell.requires_concentration and char.concentrating_on:
-                continue
-            out.append(from_spell(spell, char))
 
     # Class abilities from known_abilities, filtered to what's usable now.
     for skill_id in (char.known_abilities or []):
