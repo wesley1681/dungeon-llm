@@ -78,8 +78,7 @@ def _ask_loadout_edits(label: str, char) -> None:
     catalog = list_catalog()
     print("\n  目前技能:")
     print(f"    武器: {[w.name for w in char.weapons]}")
-    print(f"    法術: {char.spells}")
-    print(f"    特性: {char.known_abilities}")
+    print(f"    招式: {char.known_abilities}")
     print("\n  指令: a <skill_id> 新增 / r <skill_id> 移除 / l 列出 catalog / d 完成")
     while True:
         raw = input("  > ").strip().split(maxsplit=1)

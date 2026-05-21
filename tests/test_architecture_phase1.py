@@ -179,7 +179,7 @@ def _cantrip_world(caster_level: int):
     caster = Character(
         name="C", race="", class_="牧師", level=caster_level,
         stats=Stats(INT=14), hp=20, max_hp=20, ac=12, is_npc=False,
-        spells=["神聖光輝"], spellcasting_ability="INT", spell_slots={},
+        spellcasting_ability="INT", spell_slots={},
     )
     target = Character(
         name="T", race="", class_="", level=1,

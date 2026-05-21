@@ -61,10 +61,11 @@ from trpg.sandbox.setup import list_catalog, apply_loadout
 from trpg.engine.abilities import CLASS_ABILITIES
 
 
-def test_list_catalog_returns_three_buckets():
+def test_list_catalog_returns_two_buckets():
     cat = list_catalog()
-    assert set(cat) == {"weapons", "spells", "abilities"}
-    assert "火球術" in cat["spells"]
+    assert set(cat) == {"weapons", "abilities"}
+    # Spells live in the abilities bucket now (their ClassAbility ids)
+    assert "fireball_ev" in cat["abilities"]
     assert any(w == "長劍" for w in cat["weapons"])
     # Only engine-ready, non-reaction abilities should appear
     for sid in cat["abilities"]:
@@ -72,13 +73,13 @@ def test_list_catalog_returns_three_buckets():
         assert ab.engine_ready and not ab.is_reaction
 
 
-def test_apply_loadout_adds_spell():
+def test_apply_loadout_adds_spell_ability():
     from trpg.scenarios.archetypes import ARCHETYPE_FACTORIES
     char = ARCHETYPE_FACTORIES["berserker"](level=5)
-    initial_spells = list(char.spells)
-    apply_loadout(char, add=["火球術"], remove=[])
-    assert "火球術" in char.spells
-    assert len(char.spells) == len(initial_spells) + 1
+    initial = list(char.known_abilities)
+    apply_loadout(char, add=["fireball_ev"], remove=[])
+    assert "fireball_ev" in char.known_abilities
+    assert len(char.known_abilities) == len(initial) + 1
 
 
 def test_apply_loadout_removes_weapon():

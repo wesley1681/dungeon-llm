@@ -157,7 +157,7 @@ def test_sculpt_spells_default_false():
 def test_sculpt_spells_excludes_allies_from_aoe():
     caster = Character(name="S", race="", class_="法師", level=7,
                        stats=Stats(INT=14), hp=20, max_hp=20, ac=12, is_npc=False,
-                       spells=["火球術"], spellcasting_ability="INT",
+                       spellcasting_ability="INT",
                        spell_slots={3: 2})
     caster.sculpt_spells = True
     ally = Character(name="R", race="", class_="", level=7,
@@ -291,7 +291,6 @@ def _portent_wizard():
     from trpg.engine.character import CombatState
     wiz = Character(name="W", race="", class_="法師", level=2,
                     stats=Stats(INT=16), hp=12, max_hp=12, ac=12, is_npc=False,
-                    spells=["定身術", "神聖光輝"],
                     spellcasting_ability="INT", spell_slots={1: 4, 2: 3})
     goblin = Character(name="G", race="", class_="", level=1,
                        stats=Stats(WIS=8), hp=7, max_hp=7, ac=13,
@@ -347,11 +346,11 @@ def _counterspell_world():
     enemy_caster = Character(name="EC", race="", class_="法師", level=5,
                              stats=Stats(INT=16), hp=20, max_hp=20, ac=12,
                              is_npc=True, attitude=0,
-                             spells=["火球術"], spellcasting_ability="INT",
+                             spellcasting_ability="INT",
                              spell_slots={3: 1})
     defender = Character(name="D", race="", class_="法師", level=5,
                          stats=Stats(INT=14), hp=20, max_hp=20, ac=12, is_npc=False,
-                         spells=[], spellcasting_ability="INT",
+                         spellcasting_ability="INT",
                          spell_slots={3: 2},
                          reactions=["counterspell"])
     party_member = Character(name="PM", race="", class_="", level=1,

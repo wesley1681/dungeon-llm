@@ -33,7 +33,6 @@ class Character:
     max_hp: int
     ac: int
     spell_slots: dict = field(default_factory=dict)
-    spells: list = field(default_factory=list)        # list[str] — spell names; look up via engine.spells.SPELLS
     spellcasting_ability: str = ""                    # "INT"/"WIS"/"CHA"; "" = non-caster
     weapons: list = field(default_factory=list)       # list[Weapon]
     consumables: list = field(default_factory=list)   # list[Consumable]

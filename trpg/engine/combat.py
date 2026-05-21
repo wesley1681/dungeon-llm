@@ -78,7 +78,7 @@ def setup_combat_positions(world_state: WorldState, combat: CombatState) -> None
             party_ids.append(cid)
             continue
         has_ranged = any(w.range_type == "遠程" for w in char.weapons)
-        is_caster = bool(char.spells and char.spellcasting_ability)
+        is_caster = bool(char.spellcasting_ability)
         (ranged_ids if (has_ranged or is_caster) else melee_ids).append(cid)
 
     def place(ids: list[str], x: float) -> None:
@@ -1494,8 +1494,6 @@ def execute_action(action: dict, world_state: WorldState) -> dict:
         spell = SPELLS.get(spell_name)
         if not spell:
             return {"type": "ERROR", "message": f"未知法術：{spell_name}"}
-        if spell_name not in caster.spells:
-            return {"type": "ERROR", "message": f"{caster.name} 不會「{spell_name}」"}
         if not caster.spellcasting_ability:
             return {"type": "ERROR", "message": f"{caster.name} 不是施法者"}
 
@@ -2121,14 +2119,28 @@ class CombatContext:
 
 
 def _spells_str(char) -> str:
-    if not char.spells or not char.spellcasting_ability:
+    """Build a human-readable summary of every spell available to the caster.
+
+    Walks `known_abilities`: any ability whose display_name matches a SPELLS
+    entry is a spell. The Spell object provides level/range/damage/save info
+    for the formatted line."""
+    if not char.spellcasting_ability:
         return ""
     from .spells import SPELLS
+    from .abilities import CLASS_ABILITIES
+    seen: set[str] = set()
     parts = []
-    for name in char.spells:
+    for skill_id in (char.known_abilities or []):
+        ab = CLASS_ABILITIES.get(skill_id)
+        if ab is None:
+            continue
+        name = ab.display_name
+        if name in seen:
+            continue
         spell = SPELLS.get(name)
         if not spell:
             continue
+        seen.add(name)
         available = [lvl for lvl in sorted(char.spell_slots)
                      if lvl >= spell.level and char.spell_slots[lvl] > 0]
         if available:

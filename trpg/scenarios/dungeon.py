@@ -75,7 +75,6 @@ def build_world_state() -> WorldState:
         gear=["盜賊工具", "繩索 15 尺"],
         proficiencies=["DEX", "INT", "潛行", "開鎖", "察覺", "欺騙"],
         # 測試用：把 12 招的相關資源都裝齊（多職業混血）
-        spells=["神聖光輝", "治療術", "定身術", "霧步"],
         spell_slots={1: 3, 2: 2},
         spellcasting_ability="INT",
         reactions=["shield_spell"],
@@ -159,10 +158,10 @@ def build_world_state() -> WorldState:
         stats=Stats(STR=8, DEX=12, CON=12, INT=10, WIS=16, CHA=9),
         hp=18, max_hp=18, ac=12,
         weapons=[Weapon("骨杖", "1d6", "鈍擊", "近戰", range_normal=1.5)],
-        spells=["火球術"],
         spell_slots={1: 3, 2: 2, 3: 1},
         spellcasting_ability="WIS",
         proficiencies=["WIS", "奧秘"],
+        known_abilities=["fireball_ev"],
         is_npc=True,
         attitude=0,
     )
