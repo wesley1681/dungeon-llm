@@ -414,8 +414,9 @@ def available_skills(char, world_state=None) -> list[Skill]:
     Ability filtering:
       - engine_ready=True and not is_reaction
       - char.level >= ab.min_level
-      - ab.archetype_id == "" or ab.archetype_id == char.archetype_id
       - max_uses == 0 (unlimited) or remaining uses > 0
+      - "who can use it" is decided entirely by char.known_abilities; the
+        ability definition no longer carries class_id / archetype_id.
     """
     from .abilities import ABILITY_REGISTRY
 
@@ -444,8 +445,6 @@ def available_skills(char, world_state=None) -> list[Skill]:
         if not ab.engine_ready or ab.is_reaction:
             continue
         if char.level < ab.min_level:
-            continue
-        if ab.archetype_id and ab.archetype_id != char.archetype_id:
             continue
         if ab.max_uses > 0:
             remaining = char.ability_uses.get(skill_id, ab.max_uses)

@@ -10,19 +10,8 @@ def test_class_ability_has_min_level():
     assert ab.min_level == 1
 
 
-def test_class_ability_has_archetype_id():
-    ab = ABILITY_REGISTRY["trip_attack"]
-    assert hasattr(ab, "archetype_id")
-    assert ab.archetype_id == "battle_master"
-
-
 def test_action_surge_min_level_2():
     assert ABILITY_REGISTRY["action_surge"].min_level == 2
-
-
-def test_base_class_abilities_have_empty_archetype():
-    for sid in ("second_wind", "magic_missile", "cure_wounds", "rage"):
-        assert ABILITY_REGISTRY[sid].archetype_id == ""
 
 
 def _make_wizard(level: int = 3, int_score: int = 14) -> Character:

@@ -4,15 +4,13 @@ from trpg.engine.spells import SPELLS
 from trpg.engine.status import MODIFIER_CLASSES
 
 
-def _check_registered(skill_ids: list, class_id: str, archetype_id: str,
+def _check_registered(skill_ids: list, class_id: str = "", archetype_id: str = "",
                        min_level: int = None):
+    """class_id and archetype_id are kept as parameters for call-site clarity but
+    no longer asserted (those fields were removed from Ability)."""
     for sid in skill_ids:
         ab = ABILITY_REGISTRY.get(sid)
         assert ab is not None, f"'{sid}' missing from ABILITY_REGISTRY"
-        assert ab.class_id == class_id, f"{sid}: expected class_id='{class_id}', got '{ab.class_id}'"
-        assert ab.archetype_id == archetype_id, (
-            f"{sid}: expected archetype_id='{archetype_id}', got '{ab.archetype_id}'"
-        )
         if min_level is not None:
             assert ab.min_level == min_level, (
                 f"{sid}: expected min_level={min_level}, got {ab.min_level}"

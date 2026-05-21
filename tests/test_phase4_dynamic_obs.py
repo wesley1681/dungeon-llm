@@ -70,14 +70,19 @@ def test_available_skills_includes_class_abilities():
     assert "action_surge" in skill_ids   # archetype_id="" → always included
 
 
-def test_available_skills_excludes_wrong_archetype():
+def test_available_skills_filtered_by_known_abilities_only():
+    """After Ability dropped class_id/archetype_id, only known_abilities decides
+    what a character can use. A battle_master that has trip_attack in known_abilities
+    can use it; remove it from known_abilities and it's gone."""
     char = _make_battle_master()
-    char.archetype_id = "champion"
     skills = available_skills(char)
     skill_ids = [s.skill_id for s in skills]
-    assert "menacing_attack" not in skill_ids  # archetype="battle_master" ≠ "champion"
+    assert "trip_attack" in skill_ids
+    char.known_abilities = [sid for sid in char.known_abilities if sid != "trip_attack"]
+    skills = available_skills(char)
+    skill_ids = [s.skill_id for s in skills]
     assert "trip_attack" not in skill_ids
-    assert "second_wind" in skill_ids           # archetype="" → always included
+    assert "second_wind" in skill_ids
 
 
 def test_available_skills_excludes_below_min_level():
