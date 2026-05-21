@@ -566,17 +566,38 @@ class _WizardBase(_ArchetypeBase):
     def _spell_priority(self, actor, tgt, distance: float) -> list[str]:
         return ["magic_missile"]
 
-    def decide(self, actor_id, actor, ws, resources, round_num):
+    @staticmethod
+    def _away_from(actor_pos, threat_pos, distance_m: float, battlefield) -> "Vec2":
+        """Return a position `distance_m` away from threat, clamped to battlefield."""
         from .vec2 import Vec2
+        import math
+        dx = actor_pos.x - threat_pos.x
+        dy = actor_pos.y - threat_pos.y
+        mag = math.sqrt(dx * dx + dy * dy)
+        if mag > 1e-6:
+            nx, ny = dx / mag, dy / mag
+        else:
+            nx, ny = 1.0, 0.0
+        raw = Vec2(actor_pos.x + nx * distance_m, actor_pos.y + ny * distance_m)
+        if battlefield is None:
+            return raw
+        margin = 0.5
+        return Vec2(
+            max(margin, min(battlefield.width  - margin, raw.x)),
+            max(margin, min(battlefield.height - margin, raw.y)),
+        )
+
+    def decide(self, actor_id, actor, ws, resources, round_num):
         tid, tgt = self._nearest_enemy(actor, ws, actor_id)
         if tid is None:
             return CombatDecision(ended=True)
 
         d = actor.position.distance_to(tgt.position)
+        bf = ws.combat.battlefield if ws.combat else None
 
-        # Cornered in melee → misty step away (bonus action)
-        if d <= 1.5 + 1e-6 and resources.get("bonus_action", 1) > 0:
-            away = Vec2(actor.position.x + 9.0, actor.position.y)
+        # Cornered (≤3m) → misty step away from enemy direction (bonus action)
+        if d <= 3.0 and resources.get("bonus_action", 1) > 0:
+            away = self._away_from(actor.position, tgt.position, 9.0, bf)
             a = self._use_skill(actor_id, actor, ws, "misty_step", None, away)
             if a:
                 return CombatDecision(action=a)
@@ -588,7 +609,14 @@ class _WizardBase(_ArchetypeBase):
                 if a:
                     return CombatDecision(action=a)
 
-        # Close gap if target out of spell range
+        # After spending action: back away if enemy is closing in
+        if d < 9.0 and resources.get("movement", 0) > 1e-6:
+            retreat = self._away_from(actor.position, tgt.position, 9.0, bf)
+            move_a = self._use_skill(actor_id, actor, ws, "move", None, retreat)
+            if move_a:
+                return CombatDecision(action=move_a)
+
+        # Close gap if target is out of spell range
         if d > 18.0 and resources.get("movement", 0) > 1e-6:
             return CombatDecision(action=self._move_to(actor_id, actor, ws, tid))
 
