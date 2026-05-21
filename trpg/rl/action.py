@@ -146,7 +146,7 @@ def encode_action(action_dict: dict | None, ws: WorldState, agent_id: str) -> tu
     """Reverse-map an engine action dict into [skill_idx, entity_idx, grid_cell].
 
     Every action dict carries ``skill_id`` (auto-embedded by Skill.build_action
-    / ClassAbility.build_action, enforced by execute_action) so this is a
+    / Ability.build_action, enforced by execute_action) so this is a
     direct lookup — no pattern-matching, no reverse inference.
 
     Returns (0, 0, 0) for None / end-turn. Returns (-1, -1, -1) when the
@@ -162,7 +162,7 @@ def encode_action(action_dict: dict | None, ws: WorldState, agent_id: str) -> tu
         # validator should have caught this. Bail loudly rather than guess.
         raise ValueError(
             f"encode_action: dict missing skill_id field — must be built via "
-            f"Skill.build_action() / ClassAbility.build_action(). Got: {action_dict!r}"
+            f"Skill.build_action() / Ability.build_action(). Got: {action_dict!r}"
         )
 
     agent = ws.characters[agent_id]

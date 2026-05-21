@@ -732,15 +732,15 @@ def _check_leveled_spell_limit(caster: Character, slot_level: int) -> dict | Non
 def execute_action(action: dict, world_state: WorldState) -> dict:
     """Execute a parsed action JSON from the arbiter. Returns a result summary dict.
 
-    Every action dict must carry a ``skill_id`` identifying the Skill/ClassAbility
+    Every action dict must carry a ``skill_id`` identifying the Skill/Ability
     that produced it. Build through ``Skill.build_action`` or
-    ``ClassAbility.build_action`` rather than handwriting dicts so this is
+    ``Ability.build_action`` rather than handwriting dicts so this is
     automatic. The check raises loudly to surface silent-bug paths.
     """
     if "skill_id" not in action:
         raise ValueError(
             f"action dict missing skill_id — build via Skill.build_action() "
-            f"or ClassAbility.build_action() instead of handwriting the dict. "
+            f"or Ability.build_action() instead of handwriting the dict. "
             f"Got: {action!r}"
         )
     t = action.get("type")
@@ -2127,11 +2127,11 @@ def _spells_str(char) -> str:
     if not char.spellcasting_ability:
         return ""
     from .spells import SPELLS
-    from .abilities import CLASS_ABILITIES
+    from .abilities import ABILITY_REGISTRY
     seen: set[str] = set()
     parts = []
     for skill_id in (char.known_abilities or []):
-        ab = CLASS_ABILITIES.get(skill_id)
+        ab = ABILITY_REGISTRY.get(skill_id)
         if ab is None:
             continue
         name = ab.display_name

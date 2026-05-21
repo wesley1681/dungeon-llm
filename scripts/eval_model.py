@@ -23,7 +23,7 @@ from pathlib import Path
 import torch
 
 from trpg.engine.skill import available_skills
-from trpg.engine.abilities import CLASS_ABILITIES
+from trpg.engine.abilities import ABILITY_REGISTRY
 from trpg.rl.env_v2 import CombatEnvV2, _AGENT_ID, _OPPONENT_ID, ARCHETYPE_LIST
 from trpg.rl.model import CombatPolicyNet, apply_resource_mask, apply_entity_mask, pick_action
 
@@ -40,7 +40,7 @@ def categorize(skill_id: str) -> str:
         return "spell"
     if skill_id in ("dodge", "hide", "disengage"):
         return "defense"
-    if skill_id in CLASS_ABILITIES:
+    if skill_id in ABILITY_REGISTRY:
         return "ability"
     return "other"
 

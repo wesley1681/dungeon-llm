@@ -37,7 +37,7 @@ def _can_move(char) -> bool:
 
 
 @dataclass
-class ClassAbility:
+class Ability:
     """Static description of a class ability."""
     skill_id: str
     display_name: str
@@ -80,17 +80,17 @@ class ClassAbility:
 
 # ── Catalog ──────────────────────────────────────────────────────────────────
 
-CLASS_ABILITIES: dict[str, ClassAbility] = {}
+ABILITY_REGISTRY: dict[str, Ability] = {}
 
 
-def _register(ab: ClassAbility) -> ClassAbility:
-    CLASS_ABILITIES[ab.skill_id] = ab
+def _register(ab: Ability) -> Ability:
+    ABILITY_REGISTRY[ab.skill_id] = ab
     return ab
 
 
 # ── Fighter (戰士) ───────────────────────────────────────────────────────────
 
-_register(ClassAbility(
+_register(Ability(
     skill_id="second_wind",
     display_name="二度氣息",
     class_id="fighter",
@@ -111,7 +111,7 @@ _register(ClassAbility(
     },
 ))
 
-_register(ClassAbility(
+_register(Ability(
     skill_id="action_surge",
     display_name="動作激增",
     class_id="fighter",
@@ -130,7 +130,7 @@ _register(ClassAbility(
     engine_todo="short-rest uses_per pool not yet tracked; agent can spam",
 ))
 
-_register(ClassAbility(
+_register(Ability(
     skill_id="trip_attack",
     display_name="絆倒攻擊",
     class_id="fighter",
@@ -160,7 +160,7 @@ _register(ClassAbility(
 
 # ── Wizard (法師) ────────────────────────────────────────────────────────────
 
-_register(ClassAbility(
+_register(Ability(
     skill_id="magic_missile",
     display_name="魔法飛彈",
     class_id="wizard",
@@ -190,7 +190,7 @@ _register(ClassAbility(
     )([t.strip() for t in (target or "").split(",") if t.strip()] or [target]),
 ))
 
-_register(ClassAbility(
+_register(Ability(
     skill_id="shield_spell",
     display_name="法盾",
     class_id="wizard",
@@ -211,7 +211,7 @@ _register(ClassAbility(
                 "Magic Missile is always blocked. No 'always cast' option yet.",
 ))
 
-_register(ClassAbility(
+_register(Ability(
     skill_id="hold_person",
     display_name="定身術",
     class_id="wizard",
@@ -238,7 +238,7 @@ _register(ClassAbility(
                 "hit within 1.5m) are not yet hooked into resolve_attack",
 ))
 
-_register(ClassAbility(
+_register(Ability(
     skill_id="misty_step",
     display_name="霧步",
     class_id="wizard",
@@ -263,7 +263,7 @@ _register(ClassAbility(
 
 # ── Cleric (牧師) ────────────────────────────────────────────────────────────
 
-_register(ClassAbility(
+_register(Ability(
     skill_id="cure_wounds",
     display_name="治療術",
     class_id="cleric",
@@ -284,7 +284,7 @@ _register(ClassAbility(
     },
 ))
 
-_register(ClassAbility(
+_register(Ability(
     skill_id="sacred_flame",
     display_name="神聖光輝",
     class_id="cleric",
@@ -305,7 +305,7 @@ _register(ClassAbility(
     },
 ))
 
-_register(ClassAbility(
+_register(Ability(
     skill_id="bless",
     display_name="祝福術",
     class_id="cleric",
@@ -338,7 +338,7 @@ _register(ClassAbility(
 
 # ── Barbarian (蠻人) ─────────────────────────────────────────────────────────
 
-_register(ClassAbility(
+_register(Ability(
     skill_id="rage",
     display_name="狂暴",
     class_id="barbarian",
@@ -363,7 +363,7 @@ _register(ClassAbility(
     engine_todo="rage daily uses not tracked; CON-save-advantage not modelled",
 ))
 
-_register(ClassAbility(
+_register(Ability(
     skill_id="reckless_attack",
     display_name="魯莽攻擊",
     refresh_on="never", max_uses=0,
@@ -394,7 +394,7 @@ _register(ClassAbility(
 # Meta-abilities representing shared resource pools. Listed in known_abilities
 # so rest_character() resets them via the normal refresh_on mechanism.
 
-_register(ClassAbility(
+_register(Ability(
     skill_id="channel_divinity",
     display_name="引導神力",
     class_id="cleric",
@@ -405,7 +405,7 @@ _register(ClassAbility(
     min_level=2, archetype_id="",
 ))
 
-_register(ClassAbility(
+_register(Ability(
     skill_id="hunters_mark",
     display_name="獵人印記",
     class_id="ranger",
@@ -433,7 +433,7 @@ _register(ClassAbility(
 
 # ── Fighter: Battle Master additional maneuvers ───────────────────────────────
 
-_register(ClassAbility(
+_register(Ability(
     skill_id="menacing_attack",
     display_name="威嚇攻擊",
     class_id="fighter",
@@ -459,7 +459,7 @@ _register(ClassAbility(
     },
 ))
 
-_register(ClassAbility(
+_register(Ability(
     skill_id="precision_attack",
     display_name="精準攻擊",
     class_id="fighter",
@@ -475,7 +475,7 @@ _register(ClassAbility(
     refresh_on="short_rest", max_uses=4,
 ))
 
-_register(ClassAbility(
+_register(Ability(
     skill_id="pushing_attack",
     display_name="推擊攻擊",
     class_id="fighter",
@@ -495,7 +495,7 @@ _register(ClassAbility(
     refresh_on="short_rest", max_uses=4,
 ))
 
-_register(ClassAbility(
+_register(Ability(
     skill_id="improved_critical",
     display_name="強化暴擊",
     class_id="fighter",
@@ -509,7 +509,7 @@ _register(ClassAbility(
 
 # ── Barbarian: Totem Warrior (Bear) ──────────────────────────────────────────
 
-_register(ClassAbility(
+_register(Ability(
     skill_id="bear_totem",
     display_name="熊圖騰",
     class_id="barbarian",
@@ -526,7 +526,7 @@ _register(ClassAbility(
     refresh_on="long_rest", max_uses=3,
 ))
 
-_register(ClassAbility(
+_register(Ability(
     skill_id="frenzy_attack",
     display_name="狂戰攻擊",
     class_id="barbarian",
@@ -546,7 +546,7 @@ _register(ClassAbility(
     },
 ))
 
-_register(ClassAbility(
+_register(Ability(
     skill_id="berserker_frenzy",
     display_name="狂戰狂暴攻擊",
     class_id="barbarian",
@@ -571,7 +571,7 @@ _register(ClassAbility(
 
 # ── Wizard: Evocation ─────────────────────────────────────────────────────────
 
-_register(ClassAbility(
+_register(Ability(
     skill_id="burning_hands_ev",
     display_name="燃燒之手",
     class_id="wizard",
@@ -596,7 +596,7 @@ _register(ClassAbility(
     },
 ))
 
-_register(ClassAbility(
+_register(Ability(
     skill_id="scorching_ray_ev",
     display_name="烈焰射線",
     class_id="wizard",
@@ -616,7 +616,7 @@ _register(ClassAbility(
     refresh_on="never", max_uses=0,
 ))
 
-_register(ClassAbility(
+_register(Ability(
     skill_id="fireball_ev",
     display_name="火球術",
     class_id="wizard",
@@ -641,7 +641,7 @@ _register(ClassAbility(
     },
 ))
 
-_register(ClassAbility(
+_register(Ability(
     skill_id="web_ev",
     display_name="蜘蛛網",
     class_id="wizard",
@@ -668,7 +668,7 @@ _register(ClassAbility(
     },
 ))
 
-_register(ClassAbility(
+_register(Ability(
     skill_id="ice_storm_ev",
     display_name="冰風暴",
     class_id="wizard",
@@ -693,7 +693,7 @@ _register(ClassAbility(
     },
 ))
 
-_register(ClassAbility(
+_register(Ability(
     skill_id="hold_monster_ev",
     display_name="定怪術",
     class_id="wizard",
@@ -721,7 +721,7 @@ _register(ClassAbility(
 
 # ── Wizard: Divination ────────────────────────────────────────────────────────
 
-_register(ClassAbility(
+_register(Ability(
     skill_id="burning_hands_div",
     display_name="燃燒之手",
     class_id="wizard",
@@ -743,7 +743,7 @@ _register(ClassAbility(
     },
 ))
 
-_register(ClassAbility(
+_register(Ability(
     skill_id="web_div",
     display_name="蜘蛛網",
     class_id="wizard",
@@ -767,7 +767,7 @@ _register(ClassAbility(
     },
 ))
 
-_register(ClassAbility(
+_register(Ability(
     skill_id="fireball_div",
     display_name="火球術",
     class_id="wizard",
@@ -789,7 +789,7 @@ _register(ClassAbility(
     },
 ))
 
-_register(ClassAbility(
+_register(Ability(
     skill_id="hold_monster_div",
     display_name="定怪術",
     class_id="wizard",
@@ -815,7 +815,7 @@ _register(ClassAbility(
 
 # ── Cleric: Life Domain ───────────────────────────────────────────────────────
 
-_register(ClassAbility(
+_register(Ability(
     skill_id="healing_word_life",
     display_name="治療語",
     class_id="cleric",
@@ -838,7 +838,7 @@ _register(ClassAbility(
     },
 ))
 
-_register(ClassAbility(
+_register(Ability(
     skill_id="guiding_bolt_life",
     display_name="引導光彈",
     class_id="cleric",
@@ -857,7 +857,7 @@ _register(ClassAbility(
     refresh_on="never", max_uses=0,
 ))
 
-_register(ClassAbility(
+_register(Ability(
     skill_id="spiritual_weapon_life",
     display_name="精神武器",
     class_id="cleric",
@@ -877,7 +877,7 @@ _register(ClassAbility(
     refresh_on="never", max_uses=0,
 ))
 
-_register(ClassAbility(
+_register(Ability(
     skill_id="channel_divinity_preserve_life",
     display_name="引導神力：守護生命",
     class_id="cleric",
@@ -896,7 +896,7 @@ _register(ClassAbility(
     refresh_on="short_rest", max_uses=1,
 ))
 
-_register(ClassAbility(
+_register(Ability(
     skill_id="mass_cure_wounds_life",
     display_name="群體治療術",
     class_id="cleric",
@@ -918,7 +918,7 @@ _register(ClassAbility(
 
 # ── Cleric: War Domain ────────────────────────────────────────────────────────
 
-_register(ClassAbility(
+_register(Ability(
     skill_id="guiding_bolt_war",
     display_name="引導光彈",
     class_id="cleric",
@@ -937,7 +937,7 @@ _register(ClassAbility(
     refresh_on="never", max_uses=0,
 ))
 
-_register(ClassAbility(
+_register(Ability(
     skill_id="channel_divinity_guided_strike",
     display_name="引導神力：引導打擊",
     class_id="cleric",
@@ -954,7 +954,7 @@ _register(ClassAbility(
     refresh_on="short_rest", max_uses=1,
 ))
 
-_register(ClassAbility(
+_register(Ability(
     skill_id="spiritual_weapon_war",
     display_name="精神武器",
     class_id="cleric",
@@ -974,7 +974,7 @@ _register(ClassAbility(
     refresh_on="never", max_uses=0,
 ))
 
-_register(ClassAbility(
+_register(Ability(
     skill_id="war_priest_attack",
     display_name="戰爭祭司攻擊",
     class_id="cleric",
@@ -998,7 +998,7 @@ _register(ClassAbility(
 
 # ── Rogue: Assassin ───────────────────────────────────────────────────────────
 
-_register(ClassAbility(
+_register(Ability(
     skill_id="cunning_action_dash",
     display_name="狡猾動作：衝刺",
     class_id="rogue",
@@ -1016,7 +1016,7 @@ _register(ClassAbility(
     },
 ))
 
-_register(ClassAbility(
+_register(Ability(
     skill_id="cunning_action_disengage",
     display_name="狡猾動作：脫身",
     class_id="rogue",
@@ -1031,7 +1031,7 @@ _register(ClassAbility(
     },
 ))
 
-_register(ClassAbility(
+_register(Ability(
     skill_id="cunning_action_hide",
     display_name="狡猾動作：躲藏",
     class_id="rogue",
@@ -1046,7 +1046,7 @@ _register(ClassAbility(
     },
 ))
 
-_register(ClassAbility(
+_register(Ability(
     skill_id="assassinate",
     display_name="刺殺",
     class_id="rogue",
@@ -1058,7 +1058,7 @@ _register(ClassAbility(
     refresh_on="never", max_uses=0,
 ))
 
-_register(ClassAbility(
+_register(Ability(
     skill_id="uncanny_dodge_rogue",
     display_name="閃避直覺",
     class_id="rogue",
@@ -1070,7 +1070,7 @@ _register(ClassAbility(
     refresh_on="never", max_uses=0,
 ))
 
-_register(ClassAbility(
+_register(Ability(
     skill_id="evasion_rogue",
     display_name="閃避",
     class_id="rogue",
@@ -1091,7 +1091,7 @@ _register(ClassAbility(
 
 # ── Rogue: Arcane Trickster ───────────────────────────────────────────────────
 
-_register(ClassAbility(
+_register(Ability(
     skill_id="cunning_action_dash_at",
     display_name="狡猾動作：衝刺",
     class_id="rogue",
@@ -1109,7 +1109,7 @@ _register(ClassAbility(
     },
 ))
 
-_register(ClassAbility(
+_register(Ability(
     skill_id="cunning_action_disengage_at",
     display_name="狡猾動作：脫身",
     class_id="rogue",
@@ -1124,7 +1124,7 @@ _register(ClassAbility(
     },
 ))
 
-_register(ClassAbility(
+_register(Ability(
     skill_id="cunning_action_hide_at",
     display_name="狡猾動作：躲藏",
     class_id="rogue",
@@ -1139,7 +1139,7 @@ _register(ClassAbility(
     },
 ))
 
-_register(ClassAbility(
+_register(Ability(
     skill_id="uncanny_dodge_at",
     display_name="閃避直覺",
     class_id="rogue",
@@ -1151,7 +1151,7 @@ _register(ClassAbility(
     refresh_on="never", max_uses=0,
 ))
 
-_register(ClassAbility(
+_register(Ability(
     skill_id="evasion_at",
     display_name="閃避",
     class_id="rogue",
@@ -1172,7 +1172,7 @@ _register(ClassAbility(
 
 # ── Paladin: Oath of Devotion ─────────────────────────────────────────────────
 
-_register(ClassAbility(
+_register(Ability(
     skill_id="divine_smite_dev",
     display_name="神聖打擊",
     class_id="paladin",
@@ -1195,7 +1195,7 @@ _register(ClassAbility(
     },
 ))
 
-_register(ClassAbility(
+_register(Ability(
     skill_id="lay_on_hands_ability",
     display_name="聖療之手",
     class_id="paladin",
@@ -1217,7 +1217,7 @@ _register(ClassAbility(
     },
 ))
 
-_register(ClassAbility(
+_register(Ability(
     skill_id="shield_of_faith_dev",
     display_name="信仰護盾",
     class_id="paladin",
@@ -1243,7 +1243,7 @@ _register(ClassAbility(
     },
 ))
 
-_register(ClassAbility(
+_register(Ability(
     skill_id="sacred_weapon_dev",
     display_name="神聖武器",
     class_id="paladin",
@@ -1266,7 +1266,7 @@ _register(ClassAbility(
     },
 ))
 
-_register(ClassAbility(
+_register(Ability(
     skill_id="wrathful_smite_dev",
     display_name="憤怒打擊",
     class_id="paladin",
@@ -1291,7 +1291,7 @@ _register(ClassAbility(
 
 # ── Paladin: Oath of Vengeance ────────────────────────────────────────────────
 
-_register(ClassAbility(
+_register(Ability(
     skill_id="divine_smite_ven",
     display_name="神聖打擊",
     class_id="paladin",
@@ -1314,7 +1314,7 @@ _register(ClassAbility(
     },
 ))
 
-_register(ClassAbility(
+_register(Ability(
     skill_id="bane_ven",
     display_name="詛咒術",
     class_id="paladin",
@@ -1345,7 +1345,7 @@ _register(ClassAbility(
     },
 ))
 
-_register(ClassAbility(
+_register(Ability(
     skill_id="vow_of_enmity_ven",
     display_name="仇敵誓言",
     class_id="paladin",
@@ -1368,7 +1368,7 @@ _register(ClassAbility(
     },
 ))
 
-_register(ClassAbility(
+_register(Ability(
     skill_id="lay_on_hands_ability_ven",
     display_name="聖療之手",
     class_id="paladin",

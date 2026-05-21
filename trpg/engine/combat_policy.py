@@ -239,28 +239,28 @@ def _parse_command(text: str, actor_id: str, world_state) -> dict:
         return sk.build_action(actor_id, None, None) if sk else None
 
     # ── 招式 <skill_id> [args] ────────────────────────────────────────────
-    # Invoke a ClassAbility from the catalogue. Args interpretation depends
+    # Invoke a Ability from the catalogue. Args interpretation depends
     # on the ability's target_type:
     #   SELF                — no args
     #   SINGLE_ENEMY/ALLY   — arg[0] is target id or display name
     #   POINT               — arg[0], arg[1] are x, y in metres
     #   MULTI_ENEMY/ALLY    — arg[0] is "id1,id2,..." (comma-separated)
     if cmd in ("招式", "ability", "skill"):
-        from .abilities import CLASS_ABILITIES
+        from .abilities import ABILITY_REGISTRY
         from .skill import TargetType
         if len(parts) < 2:
             # No skill_id → list what this actor can invoke
             avail = []
             for sid in (actor.known_abilities if actor else []):
-                ab = CLASS_ABILITIES.get(sid)
+                ab = ABILITY_REGISTRY.get(sid)
                 if ab and not ab.is_reaction and ab.engine_ready:
                     avail.append(f"{sid}（{ab.display_name}）")
             tip = "、".join(avail) or "（無）"
             raise ValueError(f"用法：招式 <skill_id> [args]。你會的招式：{tip}")
         skill_id = parts[1]
-        ab = CLASS_ABILITIES.get(skill_id)
+        ab = ABILITY_REGISTRY.get(skill_id)
         if ab is None:
-            for a in CLASS_ABILITIES.values():
+            for a in ABILITY_REGISTRY.values():
                 if a.display_name == skill_id:
                     ab = a
                     skill_id = a.skill_id

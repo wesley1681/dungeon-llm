@@ -4,7 +4,7 @@ SPELLS is a registry of spell properties (damage_dice, save_ability, aoe_radius,
 etc.) keyed by display name. Engine handlers (SPELL action handler, _spells_str
 in combat.py) look up these properties at execution time.
 
-To make a spell castable, register a ClassAbility in `abilities.py` whose
+To make a spell castable, register a Ability in `abilities.py` whose
 display_name matches the SPELLS entry and whose builder produces the right
 action type (SPELL for damage/save spells, HEAL for heal_dice spells,
 APPLY_MOD for pure buff/debuff spells). Characters reference the ability by

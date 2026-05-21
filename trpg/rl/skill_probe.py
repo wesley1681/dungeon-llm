@@ -23,7 +23,7 @@ from collections import Counter
 
 import torch
 
-from ..engine.abilities import CLASS_ABILITIES
+from ..engine.abilities import ABILITY_REGISTRY
 from ..engine.combat import (
     execute_action, consume_resources, MOVE_BUDGET_M, tick_terrain_damage,
 )
@@ -50,7 +50,7 @@ def _category(skill_id: str) -> str:
     if skill_id.startswith("weapon:"): return "weapon"
     if skill_id.startswith("spell:"):  return "spell"
     if skill_id in ("dodge", "hide", "disengage"): return "defense"
-    if skill_id in CLASS_ABILITIES:    return "ability"
+    if skill_id in ABILITY_REGISTRY:    return "ability"
     return "other"
 
 

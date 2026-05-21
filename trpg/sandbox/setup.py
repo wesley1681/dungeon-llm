@@ -59,7 +59,7 @@ def build_world_state(*, agent_arch: str, opponent_arch: str, level: int,
 
 # ── Catalog + loadout helpers ─────────────────────────────────────────────────
 
-from ..engine.abilities import CLASS_ABILITIES
+from ..engine.abilities import ABILITY_REGISTRY
 from ..engine.items import WEAPON_DEFS
 
 
@@ -67,14 +67,14 @@ def list_catalog() -> dict[str, list[str]]:
     """Return the full skill catalog grouped by kind.
 
     - weapons:   keys of WEAPON_DEFS
-    - abilities: keys of CLASS_ABILITIES restricted to engine_ready & not is_reaction
+    - abilities: keys of ABILITY_REGISTRY restricted to engine_ready & not is_reaction
                  (reactions can't be triggered from the action menu in the sandbox).
                  Spells are ClassAbilities — they appear here alongside other abilities.
     """
     return {
         "weapons": sorted(WEAPON_DEFS.keys()),
         "abilities": sorted(
-            sid for sid, ab in CLASS_ABILITIES.items()
+            sid for sid, ab in ABILITY_REGISTRY.items()
             if ab.engine_ready and not ab.is_reaction
         ),
     }
@@ -85,10 +85,10 @@ def apply_loadout(char, *, add: list[str], remove: list[str]) -> None:
 
     Resolution rules:
       - if id is in WEAPON_DEFS → weapon
-      - elif id is in CLASS_ABILITIES → ability (also seeds ability_uses if max_uses > 0)
+      - elif id is in ABILITY_REGISTRY → ability (also seeds ability_uses if max_uses > 0)
       - else → ValueError
 
-    Spells are now ClassAbility entries (e.g. fireball_ev, cure_wounds), so use
+    Spells are now Ability entries (e.g. fireball_ev, cure_wounds), so use
     the ability id, not the spell display name.
 
     add and remove are processed in that order (remove last, so you can swap
@@ -97,8 +97,8 @@ def apply_loadout(char, *, add: list[str], remove: list[str]) -> None:
     for sid in add:
         if sid in WEAPON_DEFS:
             char.weapons.append(WEAPON_DEFS[sid])
-        elif sid in CLASS_ABILITIES:
-            ab = CLASS_ABILITIES[sid]
+        elif sid in ABILITY_REGISTRY:
+            ab = ABILITY_REGISTRY[sid]
             if sid not in char.known_abilities:
                 char.known_abilities.append(sid)
             if ab.max_uses > 0:
@@ -109,7 +109,7 @@ def apply_loadout(char, *, add: list[str], remove: list[str]) -> None:
     for sid in remove:
         if sid in WEAPON_DEFS and any(w.name == sid for w in char.weapons):
             char.weapons[:] = [w for w in char.weapons if w.name != sid]
-        elif sid in CLASS_ABILITIES and sid in char.known_abilities:
+        elif sid in ABILITY_REGISTRY and sid in char.known_abilities:
             char.known_abilities.remove(sid)
             char.ability_uses.pop(sid, None)
         else:

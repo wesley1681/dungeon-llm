@@ -1,7 +1,7 @@
 """Schema fuzz — verify builder output and resource accounting.
 
 Two passes:
-  1. Static: for every Spell + ClassAbility with engine_ready=True, build an
+  1. Static: for every Spell + Ability with engine_ready=True, build an
      action_dict with a plausible target and check structural invariants
      (target vs target_position, slot_level, consumes list).
   2. Dynamic: run random rollouts and verify that any action consuming a
@@ -20,7 +20,7 @@ import numpy as np
 
 from trpg.engine.skill import available_skills, from_spell, TargetType
 from trpg.engine.spells import SPELLS
-from trpg.engine.abilities import CLASS_ABILITIES
+from trpg.engine.abilities import ABILITY_REGISTRY
 from trpg.engine.vec2 import Vec2
 from trpg.rl.env_v2 import CombatEnvV2, _AGENT_ID, ARCHETYPE_LIST
 from trpg.rl.model import CombatPolicyNet, apply_resource_mask, apply_entity_mask
@@ -70,9 +70,9 @@ def check_spell_schema():
 
 
 def check_ability_schema():
-    """For each engine_ready ClassAbility, build and check structural invariants."""
+    """For each engine_ready Ability, build and check structural invariants."""
     violations = []
-    for skill_id, ab in CLASS_ABILITIES.items():
+    for skill_id, ab in ABILITY_REGISTRY.items():
         if not ab.engine_ready or ab.is_reaction or ab.builder is None:
             continue
         try:
@@ -265,7 +265,7 @@ def main():
         for x in v1b:
             print(x)
     else:
-        n = sum(1 for ab in CLASS_ABILITIES.values()
+        n = sum(1 for ab in ABILITY_REGISTRY.values()
                 if ab.engine_ready and not ab.is_reaction and ab.builder)
         print(f"✓ {n} engine-ready abilities: all builder shapes consistent")
 

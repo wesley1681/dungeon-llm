@@ -55,16 +55,16 @@ class Character:
     # 法術可以共存，兩個有環則不行（例如 misty_step + fireball 違規）。
     # 每回合在 self_turn_start 重置；execute_action 在消耗法術位前檢查。
     leveled_spell_cast_this_turn: bool = False
-    # 此角色會使用的 ClassAbility skill_id 清單（如 ["second_wind","rage"]）。
+    # 此角色會使用的 Ability skill_id 清單（如 ["second_wind","rage"]）。
     # HumanInputPolicy 用「招式」指令時會檢查這份清單。
     known_abilities: list = field(default_factory=list)
     # 每個 ability 剩餘的使用次數。{skill_id: remaining_uses}
     # 值 None → 無限制（passive / unlimited）。
-    # 由 rest_character() 根據 ClassAbility.refresh_on 重設。
+    # 由 rest_character() 根據 Ability.refresh_on 重設。
     ability_uses: dict = field(default_factory=dict)
     attacks_per_action: int = 1   # 1 = normal; 2 = Extra Attack (L5 Fighter/Barbarian etc.)
     crit_range: int = 20          # Champion archetype: set to 19 to crit on 19-20
-    archetype_id: str = ""        # subclass label matching ClassAbility.archetype_id;
+    archetype_id: str = ""        # subclass label matching Ability.archetype_id;
                                   # "" = base class or unspecified. Used to filter
                                   # which known_abilities appear in RL observations.
     sneak_attack_dice: str = ""   # e.g. "2d6" for L3 Rogue; "" = not a rogue
@@ -191,7 +191,7 @@ def rest_character(char: "Character", rest_type: str) -> dict:
     Long rest also performs a short rest (recovers short_rest abilities too).
     Returns a summary dict for display.
     """
-    from .abilities import CLASS_ABILITIES
+    from .abilities import ABILITY_REGISTRY
     recovered: list[str] = []
 
     if rest_type not in ("short", "long"):
@@ -199,7 +199,7 @@ def rest_character(char: "Character", rest_type: str) -> dict:
 
     # Restore ability uses.
     for sid in char.known_abilities:
-        ab = CLASS_ABILITIES.get(sid)
+        ab = ABILITY_REGISTRY.get(sid)
         if ab is None or ab.max_uses == 0:
             char.ability_uses.pop(sid, None)   # unlimited — remove cap tracking
             continue

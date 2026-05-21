@@ -204,8 +204,8 @@ class SkillFeatures:
 
         # Remaining uses as a fraction [0.0, 1.0] for abilities with a pool.
         if skill_id:
-            from .abilities import CLASS_ABILITIES
-            ab = CLASS_ABILITIES.get(skill_id)
+            from .abilities import ABILITY_REGISTRY
+            ab = ABILITY_REGISTRY.get(skill_id)
             if ab and ab.max_uses > 0:
                 current = char.ability_uses.get(skill_id, ab.max_uses)
                 f.remaining_uses = float(current) / ab.max_uses
@@ -384,8 +384,8 @@ def end_turn_skill() -> Skill:
     return Skill("end", "結束", feats, lambda a, t, c: None)
 
 
-def _from_class_ability(ab, char) -> Skill:
-    """Build a Skill from a ClassAbility, binding the live character to the
+def _from_ability(ab, char) -> Skill:
+    """Build a Skill from a Ability, binding the live character to the
     builder so the Skill.builder signature stays (actor_id, target_id, coord)."""
     materialized = ab.features.materialize(char, ab.skill_id)
     _char = char
@@ -411,13 +411,13 @@ def available_skills(char, world_state=None) -> list[Skill]:
 
     Order: [END, MOVE, weapons..., class_abilities..., DODGE, HIDE]
 
-    ClassAbility filtering:
+    Ability filtering:
       - engine_ready=True and not is_reaction
       - char.level >= ab.min_level
       - ab.archetype_id == "" or ab.archetype_id == char.archetype_id
       - max_uses == 0 (unlimited) or remaining uses > 0
     """
-    from .abilities import CLASS_ABILITIES
+    from .abilities import ABILITY_REGISTRY
 
     out: list[Skill] = [end_turn_skill()]
 
@@ -438,7 +438,7 @@ def available_skills(char, world_state=None) -> list[Skill]:
 
     # Class abilities from known_abilities, filtered to what's usable now.
     for skill_id in (char.known_abilities or []):
-        ab = CLASS_ABILITIES.get(skill_id)
+        ab = ABILITY_REGISTRY.get(skill_id)
         if ab is None:
             continue
         if not ab.engine_ready or ab.is_reaction:
@@ -464,7 +464,7 @@ def available_skills(char, world_state=None) -> list[Skill]:
         # buff while already concentrating just burns the slot.
         if getattr(ab.features, "requires_concentration", False) and char.concentrating_on:
             continue
-        out.append(_from_class_ability(ab, char))
+        out.append(_from_ability(ab, char))
 
     out.append(dodge_skill(char))
     out.append(hide_skill(char))

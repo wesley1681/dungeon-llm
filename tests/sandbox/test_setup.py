@@ -58,18 +58,18 @@ def test_unknown_archetype_raises():
 
 
 from trpg.sandbox.setup import list_catalog, apply_loadout
-from trpg.engine.abilities import CLASS_ABILITIES
+from trpg.engine.abilities import ABILITY_REGISTRY
 
 
 def test_list_catalog_returns_two_buckets():
     cat = list_catalog()
     assert set(cat) == {"weapons", "abilities"}
-    # Spells live in the abilities bucket now (their ClassAbility ids)
+    # Spells live in the abilities bucket now (their Ability ids)
     assert "fireball_ev" in cat["abilities"]
     assert any(w == "長劍" for w in cat["weapons"])
     # Only engine-ready, non-reaction abilities should appear
     for sid in cat["abilities"]:
-        ab = CLASS_ABILITIES[sid]
+        ab = ABILITY_REGISTRY[sid]
         assert ab.engine_ready and not ab.is_reaction
 
 
@@ -98,7 +98,7 @@ def test_apply_loadout_adds_ability_with_uses():
     apply_loadout(char, add=["rage"], remove=[])
     assert "rage" in char.known_abilities
     # rage has finite max_uses → should be seeded in ability_uses
-    rage = CLASS_ABILITIES["rage"]
+    rage = ABILITY_REGISTRY["rage"]
     if rage.max_uses > 0:
         assert char.ability_uses.get("rage") == rage.max_uses
 

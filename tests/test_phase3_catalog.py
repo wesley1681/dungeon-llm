@@ -1,5 +1,5 @@
 import pytest
-from trpg.engine.abilities import CLASS_ABILITIES
+from trpg.engine.abilities import ABILITY_REGISTRY
 from trpg.engine.spells import SPELLS
 from trpg.engine.status import MODIFIER_CLASSES
 
@@ -7,8 +7,8 @@ from trpg.engine.status import MODIFIER_CLASSES
 def _check_registered(skill_ids: list, class_id: str, archetype_id: str,
                        min_level: int = None):
     for sid in skill_ids:
-        ab = CLASS_ABILITIES.get(sid)
-        assert ab is not None, f"'{sid}' missing from CLASS_ABILITIES"
+        ab = ABILITY_REGISTRY.get(sid)
+        assert ab is not None, f"'{sid}' missing from ABILITY_REGISTRY"
         assert ab.class_id == class_id, f"{sid}: expected class_id='{class_id}', got '{ab.class_id}'"
         assert ab.archetype_id == archetype_id, (
             f"{sid}: expected archetype_id='{archetype_id}', got '{ab.archetype_id}'"
@@ -34,22 +34,22 @@ def test_fighter_battle_master_catalog():
         ["menacing_attack", "precision_attack", "pushing_attack"],
         class_id="fighter", archetype_id="battle_master", min_level=3,
     )
-    assert CLASS_ABILITIES["menacing_attack"].engine_ready is True
-    assert CLASS_ABILITIES["precision_attack"].engine_ready is False
-    assert CLASS_ABILITIES["pushing_attack"].engine_ready is False
+    assert ABILITY_REGISTRY["menacing_attack"].engine_ready is True
+    assert ABILITY_REGISTRY["precision_attack"].engine_ready is False
+    assert ABILITY_REGISTRY["pushing_attack"].engine_ready is False
 
 
 def test_fighter_champion_catalog():
     _check_registered(["improved_critical"], class_id="fighter", archetype_id="champion", min_level=3)
-    assert CLASS_ABILITIES["improved_critical"].engine_ready is False
+    assert ABILITY_REGISTRY["improved_critical"].engine_ready is False
 
 
 def test_barbarian_catalog():
     _check_registered(["bear_totem", "frenzy_attack"], class_id="barbarian", archetype_id="totem_bear")
     _check_registered(["berserker_frenzy"], class_id="barbarian", archetype_id="berserker")
-    assert CLASS_ABILITIES["bear_totem"].engine_ready is False
-    assert CLASS_ABILITIES["frenzy_attack"].engine_ready is True
-    assert CLASS_ABILITIES["berserker_frenzy"].engine_ready is True
+    assert ABILITY_REGISTRY["bear_totem"].engine_ready is False
+    assert ABILITY_REGISTRY["frenzy_attack"].engine_ready is True
+    assert ABILITY_REGISTRY["berserker_frenzy"].engine_ready is True
 
 
 def test_wizard_evocation_catalog():
@@ -58,9 +58,9 @@ def test_wizard_evocation_catalog():
          "web_ev", "ice_storm_ev", "hold_monster_ev"],
         class_id="wizard", archetype_id="evocation",
     )
-    assert CLASS_ABILITIES["fireball_ev"].engine_ready is True
-    assert CLASS_ABILITIES["web_ev"].engine_ready is True
-    assert CLASS_ABILITIES["scorching_ray_ev"].engine_ready is False
+    assert ABILITY_REGISTRY["fireball_ev"].engine_ready is True
+    assert ABILITY_REGISTRY["web_ev"].engine_ready is True
+    assert ABILITY_REGISTRY["scorching_ray_ev"].engine_ready is False
 
 
 def test_wizard_divination_catalog():
@@ -76,10 +76,10 @@ def test_cleric_life_catalog():
          "channel_divinity_preserve_life", "mass_cure_wounds_life"],
         class_id="cleric", archetype_id="life",
     )
-    assert CLASS_ABILITIES["healing_word_life"].engine_ready is True
-    assert CLASS_ABILITIES["guiding_bolt_life"].engine_ready is False
-    assert CLASS_ABILITIES["spiritual_weapon_life"].engine_ready is False
-    assert CLASS_ABILITIES["mass_cure_wounds_life"].engine_ready is False
+    assert ABILITY_REGISTRY["healing_word_life"].engine_ready is True
+    assert ABILITY_REGISTRY["guiding_bolt_life"].engine_ready is False
+    assert ABILITY_REGISTRY["spiritual_weapon_life"].engine_ready is False
+    assert ABILITY_REGISTRY["mass_cure_wounds_life"].engine_ready is False
 
 
 def test_cleric_war_catalog():
@@ -88,8 +88,8 @@ def test_cleric_war_catalog():
          "spiritual_weapon_war", "war_priest_attack"],
         class_id="cleric", archetype_id="war",
     )
-    assert CLASS_ABILITIES["war_priest_attack"].engine_ready is True
-    assert CLASS_ABILITIES["channel_divinity_guided_strike"].engine_ready is False
+    assert ABILITY_REGISTRY["war_priest_attack"].engine_ready is True
+    assert ABILITY_REGISTRY["channel_divinity_guided_strike"].engine_ready is False
 
 
 def test_rogue_assassin_catalog():
@@ -98,9 +98,9 @@ def test_rogue_assassin_catalog():
          "assassinate", "uncanny_dodge_rogue", "evasion_rogue"],
         class_id="rogue", archetype_id="assassin",
     )
-    assert CLASS_ABILITIES["cunning_action_dash"].engine_ready is True
-    assert CLASS_ABILITIES["assassinate"].engine_ready is False
-    assert CLASS_ABILITIES["evasion_rogue"].engine_ready is True
+    assert ABILITY_REGISTRY["cunning_action_dash"].engine_ready is True
+    assert ABILITY_REGISTRY["assassinate"].engine_ready is False
+    assert ABILITY_REGISTRY["evasion_rogue"].engine_ready is True
 
 
 def test_rogue_arcane_trickster_catalog():
@@ -117,9 +117,9 @@ def test_paladin_devotion_catalog():
          "sacred_weapon_dev", "wrathful_smite_dev"],
         class_id="paladin", archetype_id="devotion",
     )
-    assert CLASS_ABILITIES["divine_smite_dev"].engine_ready is True
-    assert CLASS_ABILITIES["shield_of_faith_dev"].engine_ready is True
-    assert CLASS_ABILITIES["sacred_weapon_dev"].engine_ready is True
+    assert ABILITY_REGISTRY["divine_smite_dev"].engine_ready is True
+    assert ABILITY_REGISTRY["shield_of_faith_dev"].engine_ready is True
+    assert ABILITY_REGISTRY["sacred_weapon_dev"].engine_ready is True
 
 
 def test_paladin_vengeance_catalog():
@@ -127,8 +127,8 @@ def test_paladin_vengeance_catalog():
         ["divine_smite_ven", "bane_ven", "vow_of_enmity_ven", "lay_on_hands_ability_ven"],
         class_id="paladin", archetype_id="vengeance",
     )
-    assert CLASS_ABILITIES["bane_ven"].engine_ready is True
-    assert CLASS_ABILITIES["vow_of_enmity_ven"].engine_ready is True
+    assert ABILITY_REGISTRY["bane_ven"].engine_ready is True
+    assert ABILITY_REGISTRY["vow_of_enmity_ven"].engine_ready is True
 
 
 from unittest.mock import patch
@@ -140,9 +140,9 @@ from trpg.engine.combat import execute_action
 
 
 def test_full_catalog_count():
-    """Total CLASS_ABILITIES should be >= 45 after Phase 3."""
-    assert len(CLASS_ABILITIES) >= 45, (
-        f"Expected >=45 abilities, got {len(CLASS_ABILITIES)}"
+    """Total ABILITY_REGISTRY should be >= 45 after Phase 3."""
+    assert len(ABILITY_REGISTRY) >= 45, (
+        f"Expected >=45 abilities, got {len(ABILITY_REGISTRY)}"
     )
 
 

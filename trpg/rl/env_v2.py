@@ -23,7 +23,7 @@ from ..scenarios.archetypes import ARCHETYPE_FACTORIES
 from .obs import build_obs
 from .action import decode_action, ACTION_DIMS
 from ..engine.skill import available_skills
-from ..engine.abilities import CLASS_ABILITIES
+from ..engine.abilities import ABILITY_REGISTRY
 
 
 ARCHETYPE_LIST: tuple[str, ...] = tuple(ARCHETYPE_FACTORIES.keys())
@@ -178,7 +178,7 @@ class CombatEnvV2:
             # parse_command path does this; decode_action skips it, so we deduct
             # here to keep both paths consistent.
             if skill_id_used is not None:
-                ab = CLASS_ABILITIES.get(skill_id_used)
+                ab = ABILITY_REGISTRY.get(skill_id_used)
                 if ab is not None and ab.max_uses > 0:
                     agent.ability_uses[skill_id_used] = (
                         agent.ability_uses.get(skill_id_used, ab.max_uses) - 1

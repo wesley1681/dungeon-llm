@@ -1,6 +1,6 @@
 import pytest
 from trpg.engine.character import Character, Stats
-from trpg.engine.abilities import CLASS_ABILITIES
+from trpg.engine.abilities import ABILITY_REGISTRY
 from trpg.engine.skill import available_skills, SKILL_FEATURE_DIM
 from trpg.engine.items import WEAPON_DEFS
 from trpg.engine.vec2 import Vec2
@@ -31,7 +31,7 @@ def _make_cleric(wis: int = 16, level: int = 3) -> Character:
 def test_materialize_expected_healing_uses_actual_spell_mod():
     # WIS 16 → mod +3. Template already uses +3, so no change.
     char_wis16 = _make_cleric(wis=16)
-    ab = CLASS_ABILITIES["cure_wounds"]
+    ab = ABILITY_REGISTRY["cure_wounds"]
     mat16 = ab.features.materialize(char_wis16, "cure_wounds")
     assert mat16.expected_healing == pytest.approx(7.5, rel=0.01)
 

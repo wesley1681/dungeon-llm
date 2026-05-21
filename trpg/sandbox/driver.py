@@ -11,7 +11,7 @@ from ..engine.combat import (
     execute_action, consume_resources, MOVE_BUDGET_M, tick_terrain_damage,
 )
 from ..engine.status import tick_status_effects
-from ..engine.abilities import CLASS_ABILITIES
+from ..engine.abilities import ABILITY_REGISTRY
 
 
 _MAX_SUB_ACTIONS_PER_TURN = 5
@@ -85,7 +85,7 @@ def _run_one_turn(actor_id: str, ws, decider, frontend,
                      or resources["movement"] < 0.5)):
             resources["movement"] = 0.0
         if skill_id is not None:
-            ab = CLASS_ABILITIES.get(skill_id)
+            ab = ABILITY_REGISTRY.get(skill_id)
             if ab is not None and ab.max_uses > 0:
                 actor.ability_uses[skill_id] = (
                     actor.ability_uses.get(skill_id, ab.max_uses) - 1
