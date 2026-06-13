@@ -9,7 +9,7 @@ sys.stdout.reconfigure(encoding="utf-8")
 import argparse
 import torch
 from trpg.engine.combat_policy import make_archetype_policy
-from trpg.rl.env_v2 import CombatEnvV2, ARCHETYPE_LIST, _AGENT_ID
+from trpg.rl.env_v2 import CombatEnvV2, ARCHETYPE_LIST
 from trpg.rl.model import CombatPolicyNet, apply_resource_mask, apply_entity_mask, pick_action
 
 
@@ -28,21 +28,23 @@ def main():
     for arch in ARCHETYPE_LIST:
         w = l = t = 0
         for ep in range(args.n):
-            env = CombatEnvV2(seed=ep)
-            obs, _ = env.reset(agent_arch=arch, opponent_arch=arch)
+            env = CombatEnvV2(seed=ep, n_agents=1, n_opps=1)
+            obs, _ = env.reset(agent_archs=[arch], opp_archs=[arch])
+            agent_id = env.agent_ids[0]
+            opp_id = env.opp_ids[0]
             done = False
             while not done:
                 obs_t = {k: torch.from_numpy(v).unsqueeze(0).to(device) for k, v in obs.items()}
                 with torch.no_grad():
                     end_l, s, e, g = net(obs_t)
-                s = apply_resource_mask(s, env.resources, env.ws, _AGENT_ID)
+                s = apply_resource_mask(s, env.resources, env.ws, agent_id)
                 e = apply_entity_mask(e, obs_t)
-                action = list(pick_action(end_l[0], s[0], e[0], g[0], ws=env.ws, agent_id=_AGENT_ID))
+                action = list(pick_action(end_l[0], s[0], e[0], g[0], ws=env.ws, agent_id=agent_id))
                 obs, _, term, trunc, _ = env.step(action)
                 done = term or trunc
-            if not env.ws.characters["opponent"].is_alive():
+            if not env.ws.characters[opp_id].is_alive():
                 w += 1
-            elif not env.ws.characters["agent"].is_alive():
+            elif not env.ws.characters[agent_id].is_alive():
                 l += 1
             else:
                 t += 1

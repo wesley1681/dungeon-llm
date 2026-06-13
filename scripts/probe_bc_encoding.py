@@ -23,7 +23,7 @@ from trpg.engine.combat import (
 from trpg.engine.combat_policy import make_archetype_policy
 from trpg.engine.status import tick_status_effects
 from trpg.rl.env_v2 import (
-    CombatEnvV2, ARCHETYPE_LIST, _AGENT_ID, _OPPONENT_ID,
+    CombatEnvV2, ARCHETYPE_LIST,
     _MAX_SUB_ACTIONS_PER_TURN,
 )
 from trpg.rl.obs import build_obs
@@ -32,9 +32,15 @@ from trpg.engine.skill import available_skills
 
 
 def diagnose_archetype(agent_arch: str, opp_arch: str, level: int, seed: int) -> dict:
-    env = CombatEnvV2(seed=seed)
-    env.reset(agent_arch=agent_arch, opponent_arch=opp_arch, level=level)
+    env = CombatEnvV2(seed=seed, n_agents=1, n_opps=1)
+    env.reset(
+        agent_archs=[agent_arch] if agent_arch else None,
+        opp_archs=[opp_arch] if opp_arch else None,
+        level=level,
+    )
     expert = make_archetype_policy(agent_arch)
+    agent_id = env.agent_ids[0]
+    opp_id = env.opp_ids[0]
 
     counts = Counter()
     matched_by_type = Counter()
@@ -42,19 +48,19 @@ def diagnose_archetype(agent_arch: str, opp_arch: str, level: int, seed: int) ->
     matched_skill_distribution = Counter()
 
     while env.ws.combat.round_number <= 30:
-        agent = env.ws.characters[_AGENT_ID]
-        opp = env.ws.characters[_OPPONENT_ID]
+        agent = env.ws.characters[agent_id]
+        opp = env.ws.characters[opp_id]
         if not agent.is_alive() or not opp.is_alive():
             break
         for _ in range(_MAX_SUB_ACTIONS_PER_TURN):
-            decision = expert.decide(_AGENT_ID, agent, env.ws,
+            decision = expert.decide(agent_id, agent, env.ws,
                                      env.resources, env.ws.combat.round_number)
             if decision.action is None or decision.fled:
                 counts["end_or_fled"] += 1
                 break
             counts["decisions"] += 1
             a_type = decision.action.get("type", "?")
-            enc = encode_action(decision.action, env.ws, _AGENT_ID)
+            enc = encode_action(decision.action, env.ws, agent_id)
             if enc[0] < 0:
                 counts["dropped"] += 1
                 dropped_by_type[a_type] += 1

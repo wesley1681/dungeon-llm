@@ -71,24 +71,25 @@ def main():
     print("\n== 評估：20 episode vs 隨機對手 ==")
     net = hist["model"]
     net.to(device).eval()
-    env = CombatEnvV2(seed=99999)
+    env = CombatEnvV2(seed=99999, n_agents=1, n_opps=1)
     wins = 0
     n_eval = 20
     for ep in range(n_eval):
         obs, _ = env.reset()
+        agent_id = env.agent_ids[0]
+        opp_id = env.opp_ids[0]
         done = False
         while not done:
             obs_t = {k: torch.from_numpy(v).unsqueeze(0).to(device) for k, v in obs.items()}
             with torch.no_grad():
                 end_l, s, e, g = net(obs_t)
             from trpg.rl.model import apply_resource_mask, pick_action
-            from trpg.rl.env_v2 import _AGENT_ID
-            s = apply_resource_mask(s, env.resources, env.ws, _AGENT_ID)
+            s = apply_resource_mask(s, env.resources, env.ws, agent_id)
             action = list(pick_action(end_l[0], s[0], e[0], g[0],
-                                       ws=env.ws, agent_id=_AGENT_ID))
+                                       ws=env.ws, agent_id=agent_id))
             obs, _, term, trunc, _ = env.step(action)
             done = term or trunc
-        if not env.ws.characters["opponent"].is_alive():
+        if not env.ws.characters[opp_id].is_alive():
             wins += 1
     win_rate = wins / n_eval
     print(f"   Win rate: {win_rate:.0%}  ({wins}/{n_eval})")

@@ -16,22 +16,22 @@ from trpg.rl.env_v2 import CombatEnvV2
 def evaluate(net, n_episodes: int = 20, device: str = "cpu") -> float:
     """Win rate vs randomly-archetype opponents."""
     net.to(device).eval()
-    env = CombatEnvV2(seed=12345)
+    env = CombatEnvV2(seed=12345, n_agents=1, n_opps=1)
     wins = 0
     for ep in range(n_episodes):
         obs, _ = env.reset()
+        agent_id = env.agent_ids[0]
         done = False
         while not done:
             obs_t = {k: torch.from_numpy(v).unsqueeze(0).to(device) for k, v in obs.items()}
             with torch.no_grad():
                 end_l, s, e, g = net(obs_t)
             from trpg.rl.model import pick_action
-            from trpg.rl.env_v2 import _AGENT_ID
             action = list(pick_action(end_l[0], s[0], e[0], g[0],
-                                       ws=env.ws, agent_id=_AGENT_ID))
+                                       ws=env.ws, agent_id=agent_id))
             obs, _, term, trunc, _ = env.step(action)
             done = term or trunc
-        if env.ws.characters["agent"].is_alive():
+        if env.ws.characters[agent_id].is_alive():
             wins += 1
     return wins / n_episodes
 

@@ -24,7 +24,7 @@ import torch
 
 from trpg.engine.skill import available_skills
 from trpg.engine.abilities import ABILITY_REGISTRY
-from trpg.rl.env_v2 import CombatEnvV2, _AGENT_ID, _OPPONENT_ID, ARCHETYPE_LIST
+from trpg.rl.env_v2 import CombatEnvV2, ARCHETYPE_LIST
 from trpg.rl.model import CombatPolicyNet, apply_resource_mask, apply_entity_mask, pick_action
 
 
@@ -159,7 +159,7 @@ def main():
 
     episodes = []
     for i in range(args.n):
-        env = CombatEnvV2(seed=args.seed + i)
+        env = CombatEnvV2(seed=args.seed + i, n_agents=1, n_opps=1)
         if opp_net is not None:
             env.use_self_play_opponent(opp_net)
         episodes.append(run_episode(net, env, device, args.agent, args.opponent))
@@ -173,9 +173,14 @@ def main():
 
 def run_episode(net, env, device, agent_arch=None, opp_arch=None) -> dict:
     """Run one episode, return per-episode stats. Locked archetypes optional."""
-    obs, _ = env.reset(agent_arch=agent_arch, opponent_arch=opp_arch)
-    agent = env.ws.characters[_AGENT_ID]
-    opp = env.ws.characters[_OPPONENT_ID]
+    obs, _ = env.reset(
+        agent_archs=[agent_arch] if agent_arch else None,
+        opp_archs=[opp_arch] if opp_arch else None,
+    )
+    agent_id = env.agent_ids[0]
+    opp_id = env.opp_ids[0]
+    agent = env.ws.characters[agent_id]
+    opp = env.ws.characters[opp_id]
     agent_max_hp = agent.max_hp
     opp_max_hp = opp.max_hp
     starting_slots = sum(agent.spell_slots.values())
@@ -193,10 +198,10 @@ def run_episode(net, env, device, agent_arch=None, opp_arch=None) -> dict:
                  for k, v in obs.items()}
         with torch.no_grad():
             end_l, s, e, g = net(obs_t)
-        s = apply_resource_mask(s, env.resources, env.ws, _AGENT_ID)
+        s = apply_resource_mask(s, env.resources, env.ws, agent_id)
         e = apply_entity_mask(e, obs_t)
         action = list(pick_action(end_l[0], s[0], e[0], g[0],
-                                  ws=env.ws, agent_id=_AGENT_ID))
+                                  ws=env.ws, agent_id=agent_id))
 
         skills_before = available_skills(agent, env.ws)
         if 0 <= action[0] < len(skills_before):
@@ -225,8 +230,8 @@ def run_episode(net, env, device, agent_arch=None, opp_arch=None) -> dict:
 
     return {
         "outcome": outcome,
-        "agent_arch": env.agent_arch,
-        "opp_arch": env.opponent_arch,
+        "agent_arch": env.agent_archs[0],
+        "opp_arch": env.opp_archs[0],
         "rounds": rounds,
         "steps": total_steps,
         "agent_hp_final": agent.hp,

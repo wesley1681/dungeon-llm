@@ -18,7 +18,7 @@ import argparse
 import numpy as np
 import torch
 
-from trpg.rl.env_v2 import CombatEnvV2, _AGENT_ID, _OPPONENT_ID
+from trpg.rl.env_v2 import CombatEnvV2
 from trpg.rl.model import CombatPolicyNet, apply_resource_mask, apply_entity_mask, pick_action
 from trpg.rl.action import _grid_cell_to_xy
 from trpg.rl.obs import N_GRID, GRID_CELL_SIZE_M
@@ -47,23 +47,25 @@ def main():
     enemy_dist_at_action = []  # how far is enemy when AoE is cast?
 
     for ep in range(args.n):
-        env = CombatEnvV2(seed=args.seed + ep)
+        env = CombatEnvV2(seed=args.seed + ep, n_agents=1, n_opps=1)
         obs, _ = env.reset()
+        agent_id = env.agent_ids[0]
+        opp_id = env.opp_ids[0]
         done = False
         while not done:
             obs_t = {k: torch.from_numpy(v).unsqueeze(0).to(device)
                      for k, v in obs.items()}
             with torch.no_grad():
                 end_l, skill_l, entity_l, grid_l = net(obs_t)
-            skill_l = apply_resource_mask(skill_l, env.resources, env.ws, _AGENT_ID)
+            skill_l = apply_resource_mask(skill_l, env.resources, env.ws, agent_id)
             entity_l = apply_entity_mask(entity_l, obs_t)
 
             skill_idx, entity_idx, grid_cell = pick_action(
                 end_l[0], skill_l[0], entity_l[0], grid_l[0],
-                ws=env.ws, agent_id=_AGENT_ID,
+                ws=env.ws, agent_id=agent_id,
             )
 
-            agent = env.ws.characters[_AGENT_ID]
+            agent = env.ws.characters[agent_id]
             skills = available_skills(agent, env.ws)
             tt = None
             sk_name = "?"
@@ -73,7 +75,7 @@ def main():
 
             if tt in AOE_TARGETS:
                 cx, cy = _grid_cell_to_xy(grid_cell)
-                opp = env.ws.characters[_OPPONENT_ID]
+                opp = env.ws.characters[opp_id]
                 d_enemy = ((cx - opp.position.x) ** 2 + (cy - opp.position.y) ** 2) ** 0.5
                 d_self = ((cx - agent.position.x) ** 2 + (cy - agent.position.y) ** 2) ** 0.5
                 d_a2e = agent.position.distance_to(opp.position)
@@ -132,19 +134,20 @@ def main():
     print(f"\n=== Grid cell histogram (most common picks) ===")
     cells_picked = Counter()
     for ep in range(args.n):
-        env = CombatEnvV2(seed=args.seed + ep)
+        env = CombatEnvV2(seed=args.seed + ep, n_agents=1, n_opps=1)
         obs, _ = env.reset()
+        agent_id = env.agent_ids[0]
         done = False
         while not done:
             obs_t = {k: torch.from_numpy(v).unsqueeze(0).to(device)
                      for k, v in obs.items()}
             with torch.no_grad():
                 end_l, skill_l, entity_l, grid_l = net(obs_t)
-            skill_l = apply_resource_mask(skill_l, env.resources, env.ws, _AGENT_ID)
+            skill_l = apply_resource_mask(skill_l, env.resources, env.ws, agent_id)
             entity_l = apply_entity_mask(entity_l, obs_t)
             skill_idx, entity_idx, grid_cell = pick_action(
                 end_l[0], skill_l[0], entity_l[0], grid_l[0],
-                ws=env.ws, agent_id=_AGENT_ID,
+                ws=env.ws, agent_id=agent_id,
             )
             # Record cell only when grid was meaningful (skill is grid-targeted)
             if grid_cell != 0:

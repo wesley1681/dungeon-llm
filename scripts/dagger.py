@@ -34,7 +34,7 @@ import torch
 
 from trpg.engine.combat_policy import make_archetype_policy
 from trpg.engine.skill import available_skills
-from trpg.rl.env_v2 import CombatEnvV2, ARCHETYPE_LIST, _AGENT_ID
+from trpg.rl.env_v2 import CombatEnvV2, ARCHETYPE_LIST
 from trpg.rl.obs import build_obs
 from trpg.rl.action import encode_action
 from trpg.rl.model import (
@@ -50,23 +50,27 @@ def rollout_with_relabel(net, agent_arch: str, opp_arch: str, seed: int,
 
     Returns list of (obs, encoded_action_from_expert, target_type) pairs.
     """
-    env = CombatEnvV2(seed=seed)
-    obs, _ = env.reset(agent_arch=agent_arch, opponent_arch=opp_arch)
+    env = CombatEnvV2(seed=seed, n_agents=1, n_opps=1)
+    obs, _ = env.reset(
+        agent_archs=[agent_arch] if agent_arch else None,
+        opp_archs=[opp_arch] if opp_arch else None,
+    )
     expert = make_archetype_policy(agent_arch)
+    agent_id = env.agent_ids[0]
     pairs: list[tuple[dict, tuple, int]] = []
     done = False
     while not done:
-        agent = env.ws.characters[_AGENT_ID]
+        agent = env.ws.characters[agent_id]
         # Expert relabel: ask what it would do at this exact obs/state
         decision = expert.decide(
-            _AGENT_ID, agent, env.ws, env.resources,
+            agent_id, agent, env.ws, env.resources,
             env.ws.combat.round_number,
         )
         if decision.action is None or decision.fled:
             if not decision.fled:
                 pairs.append((obs, (0, 0, 0), TT_END))
         else:
-            enc = encode_action(decision.action, env.ws, _AGENT_ID)
+            enc = encode_action(decision.action, env.ws, agent_id)
             if enc[0] >= 0:
                 skills = available_skills(agent, env.ws)
                 tt = int(skills[enc[0]].features.target_type)
@@ -77,20 +81,22 @@ def rollout_with_relabel(net, agent_arch: str, opp_arch: str, seed: int,
                  for k, v in obs.items()}
         with torch.no_grad():
             end_l, s, e, g = net(obs_t)
-        s = apply_resource_mask(s, env.resources, env.ws, _AGENT_ID)
+        s = apply_resource_mask(s, env.resources, env.ws, agent_id)
         e = apply_entity_mask(e, obs_t)
         action = list(pick_action(end_l[0], s[0], e[0], g[0],
-                                   ws=env.ws, agent_id=_AGENT_ID))
+                                   ws=env.ws, agent_id=agent_id))
         obs, _, term, trunc, _ = env.step(action)
         done = term or trunc
     return pairs
 
 
 def collect_iteration(net, episodes_per_arch: int, seed: int,
-                       device: str) -> list[tuple[dict, tuple, int]]:
+                       device: str, only_arch: str | None = None
+                       ) -> list[tuple[dict, tuple, int]]:
     rng = np.random.default_rng(seed)
     all_pairs: list[tuple[dict, tuple, int]] = []
-    for arch in ARCHETYPE_LIST:
+    archs = [only_arch] if only_arch else list(ARCHETYPE_LIST)
+    for arch in archs:
         for _ in range(episodes_per_arch):
             opp = ARCHETYPE_LIST[rng.integers(len(ARCHETYPE_LIST))]
             ep_seed = int(rng.integers(0, 2**31))
@@ -146,6 +152,8 @@ def main():
     ap.add_argument("--batch", type=int, default=128)
     ap.add_argument("--lr", type=float, default=1e-4)
     ap.add_argument("--seed", type=int, default=12345)
+    ap.add_argument("--only_arch", type=str, default=None,
+                    help="restrict DAgger to a single agent archetype (specialist)")
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
 
@@ -154,8 +162,13 @@ def main():
     print(f"Init:   {args.init}")
 
     net = CombatPolicyNet().to(device)
-    net.load_state_dict(torch.load(args.init, map_location=device,
-                                    weights_only=True))
+    # adapt + strict=False: --init may be a shared-head BC checkpoint that
+    # predates the per-arch heads / MLP value head. adapt tiles shared heads
+    # into the 12 per-arch copies; strict=False lets the (DAgger-unused) value
+    # head keep its fresh init.
+    sd = torch.load(args.init, map_location=device, weights_only=True)
+    sd = CombatPolicyNet.adapt_state_dict_for_perarch(sd)
+    net.load_state_dict(sd, strict=False)
 
     all_pairs: list[tuple[dict, tuple, int]] = []
     for it in range(args.iters):
@@ -163,7 +176,8 @@ def main():
         t0 = time.time()
         net.eval()
         new_pairs = collect_iteration(net, args.episodes_per_arch,
-                                       args.seed + it, device)
+                                       args.seed + it, device,
+                                       only_arch=args.only_arch)
         all_pairs.extend(new_pairs)
         print(f"   collected {len(new_pairs):,} new pairs  "
               f"(total {len(all_pairs):,})  "

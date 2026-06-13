@@ -22,7 +22,7 @@ from trpg.engine.skill import available_skills, from_spell, TargetType
 from trpg.engine.spells import SPELLS
 from trpg.engine.abilities import ABILITY_REGISTRY
 from trpg.engine.vec2 import Vec2
-from trpg.rl.env_v2 import CombatEnvV2, _AGENT_ID, ARCHETYPE_LIST
+from trpg.rl.env_v2 import CombatEnvV2, ARCHETYPE_LIST
 from trpg.rl.model import CombatPolicyNet, apply_resource_mask, apply_entity_mask
 
 
@@ -146,13 +146,14 @@ def check_resource_audit(n_trials: int = 1000, max_steps: int = 20):
     violations = []
 
     for trial in range(n_trials):
-        env = CombatEnvV2(seed=trial)
+        env = CombatEnvV2(seed=trial, n_agents=1, n_opps=1)
         obs, _ = env.reset()
+        agent_id = env.agent_ids[0]
         for step in range(max_steps):
             obs_t = {k: torch.from_numpy(v).unsqueeze(0) for k, v in obs.items()}
             with torch.no_grad():
                 _, sl, e, g = net(obs_t)
-            sl = apply_resource_mask(sl, env.resources, env.ws, _AGENT_ID)
+            sl = apply_resource_mask(sl, env.resources, env.ws, agent_id)
             e = apply_entity_mask(e, obs_t)
             # Hierarchical sample: skill, then conditional entity/grid
             skill_idx = int(torch.distributions.Categorical(logits=sl.squeeze(0)).sample())

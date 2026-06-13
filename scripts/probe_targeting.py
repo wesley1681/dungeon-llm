@@ -19,7 +19,7 @@ from collections import Counter
 import numpy as np
 import torch
 
-from trpg.rl.env_v2 import CombatEnvV2, _AGENT_ID
+from trpg.rl.env_v2 import CombatEnvV2
 from trpg.rl.model import CombatPolicyNet, apply_resource_mask
 from trpg.engine.skill import available_skills, TargetType
 
@@ -47,8 +47,9 @@ def main():
     enemy_skill_correct = 0
 
     for ep in range(args.n):
-        env = CombatEnvV2(seed=args.seed + ep)
+        env = CombatEnvV2(seed=args.seed + ep, n_agents=1, n_opps=1)
         obs, _ = env.reset()
+        agent_id = env.agent_ids[0]
         done = False
         while not done:
             obs_t = {k: torch.from_numpy(v).unsqueeze(0).to(device)
@@ -56,7 +57,7 @@ def main():
             with torch.no_grad():
                 _, skill_l, entity_l, grid_l = net(obs_t)
             # Use the masked skill head to pick the action (same as gameplay)
-            skill_l = apply_resource_mask(skill_l, env.resources, env.ws, _AGENT_ID)
+            skill_l = apply_resource_mask(skill_l, env.resources, env.ws, agent_id)
             skill_idx = int(skill_l[0].argmax())
 
             # RAW entity head for the chosen skill (NO mask) —
@@ -66,7 +67,7 @@ def main():
             sum_probs += raw_probs
             n_steps += 1
 
-            agent = env.ws.characters[_AGENT_ID]
+            agent = env.ws.characters[agent_id]
             skills = available_skills(agent, env.ws)
             tt = None
             if 0 <= skill_idx < len(skills):
