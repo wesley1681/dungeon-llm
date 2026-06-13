@@ -24,6 +24,7 @@ from typing import Callable
 import numpy as np
 
 from .vec2 import Vec2
+from .damage import DAMAGE_TYPES, DAMAGE_TYPE_INDEX, N_DAMAGE_TYPES
 
 
 # ── Schema enums (orderings are frozen — append-only) ────────────────────────
@@ -75,13 +76,22 @@ N_STATUS_SLOTS = len(STATUS_SLOTS)   # 16 — leave room by extending the list
 
 
 # Total feature-vector length (downstream code can introspect this).
-SKILL_FEATURE_DIM = (
+# SKILL_DTYPE_START doubles as the frozen pre-dtype dim (53) — checkpoint
+# migration (adapt_state_dict_for_skill_dtype) and the model's dtype-slice
+# both key off it.
+SKILL_DTYPE_START = (
     23                # scalar fields (12 original + 11 added)
     + N_SAVE_STATS    # save_stat one-hot
     + N_TARGET_TYPES  # target_type one-hot
     + N_STATUS_SLOTS  # applies_status multi-hot
 )
 # = 23 + 6 + 8 + 16 = 53
+SKILL_FEATURE_DIM = SKILL_DTYPE_START + N_DAMAGE_TYPES   # + damage-type soft one-hot = 66
+
+# Sentinel damage-type token: "this skill deals damage of the wielder's weapon
+# type" (maneuvers, frenzy …). Resolved to the actual weapon type by
+# SkillFeatures.materialize — an unmaterialized template contributes no bits.
+WEAPON_DTYPE = "@weapon"
 
 
 def _cantrip_multiplier(caster_level: int) -> float:
@@ -143,6 +153,16 @@ class SkillFeatures:
         default_factory=lambda: (False,) * N_STATUS_SLOTS
     )
 
+    # Damage type(s) of the packets `expected_damage` describes, as a
+    # damage-share-weighted soft one-hot over DAMAGE_TYPES. Entries are either
+    # a bare type string (share 1.0) or a (type, share) pair for multi-packet
+    # skills (a stinger weapon with a poison rider). Shares should sum to 1
+    # for damaging skills so that the obs-side dot product against an enemy's
+    # typed-resist row reads as "expected damage multiplier − 1". The
+    # WEAPON_DTYPE sentinel means "wielder's weapon type" and resolves in
+    # materialize(); non-damaging skills leave this empty (all bits 0).
+    damage_types: tuple = ()
+
     # Conferred numeric modifiers — what the resulting status/buff actually
     # does to the affected creature. Zero = no modifier on that axis.
     # These describe the *effect* of buffs like Bless/Hunter's Mark/Rage and
@@ -154,6 +174,17 @@ class SkillFeatures:
     damage_resistance:    float = 0.0   # 0..1 fraction of incoming damage
                                          # cancelled (Rage = 0.5)
 
+    def iter_damage_types(self):
+        """Normalized (type_token, share) pairs from `damage_types`.
+
+        Accepts bare strings (share 1.0) and (type, share) pairs; tokens are
+        DAMAGE_TYPES members or the WEAPON_DTYPE sentinel."""
+        for entry in (self.damage_types or ()):
+            if isinstance(entry, str):
+                yield entry, 1.0
+            else:
+                yield entry[0], float(entry[1])
+
     def as_vector(self) -> np.ndarray:
         save_oh   = np.zeros(N_SAVE_STATS,   dtype=np.float32)
         target_oh = np.zeros(N_TARGET_TYPES, dtype=np.float32)
@@ -161,6 +192,13 @@ class SkillFeatures:
             save_oh[self.save_stat] = 1.0
         if 0 <= self.target_type < N_TARGET_TYPES:
             target_oh[self.target_type] = 1.0
+        # Damage-share-weighted soft one-hot. Unresolved WEAPON_DTYPE (a raw
+        # template never run through materialize) contributes nothing.
+        dtype_v = np.zeros(N_DAMAGE_TYPES, dtype=np.float32)
+        for tok, share in self.iter_damage_types():
+            i = DAMAGE_TYPE_INDEX.get(tok, -1)
+            if i >= 0:
+                dtype_v[i] += share
         return np.concatenate([
             np.array([
                 # original 12
@@ -180,6 +218,7 @@ class SkillFeatures:
             save_oh,
             target_oh,
             np.array(self.applies_status, dtype=np.float32),
+            dtype_v,
         ])
 
     def materialize(self, char, skill_id: str = "") -> "SkillFeatures":
@@ -210,10 +249,22 @@ class SkillFeatures:
                 current = char.ability_uses.get(skill_id, ab.max_uses)
                 f.remaining_uses = float(current) / ab.max_uses
 
-        # Cantrip damage scaling: cost_slot_level == 0.0 identifies cantrips.
+        # Cantrip damage scaling: cost_slot_level == 0.0 identifies cantrips —
+        # EXCEPT slot-free monster naturals (breath / swallow / eye rays),
+        # which pin Ability.scales_as_cantrip=False. Without the gate the
+        # dragon's breath EV was over-reported ×2 at nat10 (policy/descriptor
+        # only; the engine always rolled the flat dice). Default stays True so
+        # every pre-Wave-2 ability materializes bit-identically.
         mult = _cantrip_multiplier(char.level)
         if mult > 1.0 and self.cost_slot_level == 0.0 and self.expected_damage > 0:
-            f.expected_damage = self.expected_damage * mult
+            scales = True
+            if skill_id:
+                from .abilities import ABILITY_REGISTRY as _REG
+                ab = _REG.get(skill_id)
+                if ab is not None and not ab.scales_as_cantrip:
+                    scales = False
+            if scales:
+                f.expected_damage = self.expected_damage * mult
 
         # Expected healing: templates embed a +3 placeholder spellcasting mod.
         # Replace with the character's actual spellcasting modifier.
@@ -222,7 +273,62 @@ class SkillFeatures:
             actual_spell_mod = float(char.stats.modifier(char.spellcasting_ability))
             f.expected_healing = self.expected_healing + (actual_spell_mod - _PLACEHOLDER_MOD)
 
+        # Resolve the WEAPON_DTYPE sentinel against the live wielder. Uses
+        # get_weapon("") — the same default-weapon resolution the ATTACK
+        # handler falls back to (test_skill_dtype cross-checks per carrier).
+        if any(tok == WEAPON_DTYPE for tok, _ in self.iter_damage_types()):
+            wdt = char.get_weapon("").damage_type
+            f.damage_types = tuple(
+                (wdt if tok == WEAPON_DTYPE else tok, share)
+                for tok, share in self.iter_damage_types())
+
         return f
+
+
+def action_damage_types(action: dict | None, actor) -> set[str]:
+    """Ground-truth damage-type set of a BUILT action dict — every typed
+    packet the engine will deal when executing it (weapon base, weapon on_hit
+    rider dice, divine-smite rider, auto-damage, spell damage). This is the
+    engine-data path the dtype cross-check test and EV oracles validate
+    against; SkillFeatures.damage_types must stay a subset of it.
+
+    Aura/conferred damage (spirit guardians ticks, hunter's-mark procs) is
+    dealt by status machinery, not by the casting action — those skills pin
+    their dtype in the catalog and are asserted separately by the test.
+    """
+    if not action:
+        return set()
+    t = action.get("type")
+    out: set[str] = set()
+    if t in ("ATTACK", "MULTI_ATTACK"):
+        w = actor.get_weapon(action.get("weapon", ""))
+        if w is not None:
+            if getattr(w, "damage_type", None):
+                out.add(w.damage_type)
+            rider = getattr(w, "on_hit", None) or {}
+            if rider.get("damage_dice") and rider.get("damage_type"):
+                out.add(rider["damage_type"])
+        if action.get("divine_smite_slot", 0) > 0:
+            out.add("光耀")   # combat._resolve_single_attack smite packet
+        # Action-level damage rider (wrathful smite = +1d6 精神 on hit).
+        if action.get("rider_damage_dice") and action.get("rider_damage_type"):
+            out.add(action["rider_damage_type"])
+    elif t == "AUTO_DAMAGE":
+        if action.get("damage_type"):
+            out.add(action["damage_type"])
+    elif t == "MULTI_SPELL_ATTACK":
+        if action.get("damage_type"):
+            out.add(action["damage_type"])
+    elif t == "SPELL":
+        from .spells import SPELLS
+        sp = SPELLS.get(action.get("spell_name", ""))
+        if sp is not None and getattr(sp, "damage_dice", "") and sp.damage_type:
+            out.add(sp.damage_type)
+    elif t == "EYE_RAYS":
+        for spec in action.get("table") or ():
+            if spec.get("damage_dice") and spec.get("damage_type"):
+                out.add(spec["damage_type"])
+    return out
 
 
 # ── Skill (features + action builder) ────────────────────────────────────────
@@ -294,12 +400,28 @@ def from_weapon(weapon, char) -> Skill:
         dmg_mod = char.stats.modifier("STR")
     attack_mod = dmg_mod + char.proficiency_bonus
 
+    # Damage-type soft one-hot. Base packet = the weapon's type; an on_hit
+    # rider with its own typed dice (wyvern stinger poison, fire-touch burn)
+    # adds a second packet, weighted by each packet's share of the total
+    # expected damage — so the obs-side resist dot product reads as the
+    # overall EV multiplier, not a binary tag.
+    base_ed = max(1.0, _expected_dice(weapon.damage_dice) + dmg_mod)
+    rider = getattr(weapon, "on_hit", None) or {}
+    rider_ed = _expected_dice(rider.get("damage_dice", ""))
+    rider_dt = rider.get("damage_type", "")
+    if rider_ed > 0 and rider_dt:
+        tot = base_ed + rider_ed
+        dtypes = ((weapon.damage_type, base_ed / tot), (rider_dt, rider_ed / tot))
+    else:
+        dtypes = (weapon.damage_type,)
+
     feats = SkillFeatures(
-        expected_damage=max(1.0, _expected_dice(weapon.damage_dice) + dmg_mod),
+        expected_damage=base_ed,
         range_m=weapon.range_normal,
         attack_vs_ac=float(attack_mod),
         cost_action=1.0,
         target_type=TargetType.SINGLE_ENEMY,
+        damage_types=dtypes,
     )
 
     def builder(actor_id, target_id, coord):
@@ -468,4 +590,52 @@ def available_skills(char, world_state=None) -> list[Skill]:
     out.append(dodge_skill(char))
     out.append(hide_skill(char))
     out.append(disengage_skill(char))
+    return out
+
+
+def reaction_skills(char, skill_ids) -> list[Skill]:
+    """Candidate Skills for a REACTION decision point.
+
+    Returns [DECLINE, <one Skill per legal reaction skill_id>], where DECLINE is
+    the end-turn skill in slot 0 (picking it = decline the reaction). ``skill_ids``
+    is the engine's already-legality-filtered option list (combat._legal_reactions
+    → ReactionContext.options), so this never widens the legal set — it only
+    materialises those ids into Skills the policy can observe and pick among.
+    Reaction mechanics are fired by the engine on the chosen skill_id (the Skill's
+    builder is unused for reactions), so a missing/None builder is fine."""
+    from .abilities import ABILITY_REGISTRY
+    out: list[Skill] = [end_turn_skill()]
+    for sid in skill_ids:
+        ab = ABILITY_REGISTRY.get(sid)
+        if ab is not None:
+            out.append(_from_ability(ab, char))
+    return out
+
+
+def kit_features(char) -> list[tuple[str, "SkillFeatures"]]:
+    """The character's full KIT as (skill_id, char-materialized features).
+
+    Source for the obs-v4 capability descriptor (MONSTER_CATALOG §4.1):
+    unlike available_skills this does NOT gate on consumable state — no
+    uses/slots/ammo/concentration filters — because the descriptor encodes
+    appearance-inferable public info ("what can this creature do"), never
+    hidden resource state ("what can it do right now"). Level gating stays
+    (a L3 wizard genuinely has no fireball). Reactions ARE included (a
+    shield-caster's threat profile is kit truth). The universal skills
+    (END/MOVE/DODGE/HIDE/DISENGAGE) are excluded — zero information.
+
+    Consumers must not read features.remaining_uses (materialize fills it
+    from live resource state).
+    """
+    from .abilities import ABILITY_REGISTRY
+    out: list[tuple[str, SkillFeatures]] = []
+    for w in char.weapons:
+        out.append((f"weapon:{w.name}", from_weapon(w, char).features))
+    for skill_id in (char.known_abilities or []):
+        ab = ABILITY_REGISTRY.get(skill_id)
+        if ab is None or not ab.engine_ready:
+            continue
+        if char.level < ab.min_level:
+            continue
+        out.append((skill_id, ab.features.materialize(char, ab.skill_id)))
     return out

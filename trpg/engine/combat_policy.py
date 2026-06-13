@@ -307,9 +307,8 @@ def _parse_command(text: str, actor_id: str, world_state) -> dict:
         action = ab.build_action(actor_id, target_arg, coord_arg, char=actor)
         if action is None:
             raise ValueError(f"{skill_id}：build_action 回傳 None（檢查 args 是否齊全）")
-        # Deduct one use.
-        if actor is not None and ab.max_uses > 0:
-            actor.ability_uses[skill_id] = actor.ability_uses.get(skill_id, ab.max_uses) - 1
+        # Limited-use deduction happens inside execute_action (shared funnel,
+        # success-only) — deducting again here at build time would double-count.
         return action
 
     if cmd in ("預言", "portent"):
@@ -376,16 +375,66 @@ class _ArchetypeBase(CombatPolicy):
             return None, None
         return min(enemies, key=lambda kv: actor.position.distance_to(kv[1].position))
 
+    def _weakest_enemy(self, actor, ws, actor_id) -> tuple:
+        """Return the lowest-HP alive enemy (focus-fire target for team play)."""
+        enemies = self._enemy_candidates(actor_id, ws)
+        if not enemies:
+            return None, None
+        return min(enemies, key=lambda kv: kv[1].hp / max(1, kv[1].max_hp))
+
     def _find_heal_target(self, actor_id: str, ws, threshold: float = 0.45) -> str | None:
-        """Return char_id of the ally with lowest HP% below threshold, or None."""
+        """Return char_id of the ally (or self) with lowest HP% below threshold,
+        or ``None`` if nobody needs healing.
+
+        Self IS included in the search — without that the cleric never heals
+        itself in 1v1, so a critically-wounded solo cleric ends up casting
+        bless/sacred_flame and dying. Life cleric expert win rate was 22%
+        on this codebase before the fix.
+
+        Dying (0 HP, death saves) allies ARE included — HP% 0 makes them the
+        top priority automatically, and healing them is the 5e pick-up (any
+        amount of healing returns them to the fight).
+
+        「盟友」以施法者的陣營判定（actor 相對）——原寫法用絕對的
+        is_party_ally（=玩家隊），敵方牧師會掃到玩家隊的傷員、貼臉時真的
+        會治療敵人，而自己的隊友永遠不被奶。
+        """
+        my_side = ws.is_party_ally(actor_id)
         best_id, best_ratio = None, threshold
         for cid, c in ws.characters.items():
-            if cid == actor_id or not c.is_alive() or not ws.is_party_ally(cid):
+            if c.is_dead() or ws.is_party_ally(cid) != my_side:
                 continue
             ratio = c.hp / c.max_hp if c.max_hp else 1.0
             if ratio < best_ratio:
                 best_ratio, best_id = ratio, cid
         return best_id
+
+    def _attempt_pickup(self, actor_id: str, actor, ws, resources):
+        """Pick up a DYING same-side ally with lay_on_hands: heal if within
+        touch range, otherwise walk toward them. Returns a CombatDecision or
+        None (nobody dying / no lay_on_hands resource / no path).
+
+        Keyed purely on the dying game-state (hp 0, death saves) — not on any
+        class or archetype. Classes without lay_on_hands get None from
+        _use_skill and fall through.
+        """
+        my_side = ws.is_party_ally(actor_id)
+        dying = [(cid, c) for cid, c in ws.characters.items()
+                 if cid != actor_id and c.is_dying()
+                 and ws.is_party_ally(cid) == my_side]
+        if not dying:
+            return None
+        cid, c = min(dying, key=lambda kv: actor.position.distance_to(kv[1].position))
+        a = self._use_skill(actor_id, actor, ws, "lay_on_hands_ability", cid)
+        if a is None:
+            return None
+        if actor.position.distance_to(c.position) <= 1.5 + 1e-6:
+            return CombatDecision(action=a)
+        if resources.get("movement", 0) > 1e-6:
+            mv = self._move_to(actor_id, actor, ws, cid)
+            if mv:
+                return CombatDecision(action=mv)
+        return None
 
     # ── Action helpers ────────────────────────────────────────────────────────
 
@@ -478,18 +527,35 @@ class _ArchetypeBase(CombatPolicy):
 
 # ── Fighters ──────────────────────────────────────────────────────────────────
 
-class BattleMasterPolicy(_ArchetypeBase):
-    """Fighter Battle Master: approach → attack with superiority maneuver → plain attack."""
-    _MANEUVERS = ("menacing_attack", "trip_attack", "pushing_attack")
+class _FighterBase(_ArchetypeBase):
+    """Shared fighter rotation: emergency heal → approach → attack → burst.
+
+    Hooks for subclass differentiation:
+      _MANEUVERS — ordered tuple of maneuver skill_ids tried before plain
+                   attack on a normal action.
+    """
+    _MANEUVERS: tuple[str, ...] = ()
+    _SECOND_WIND_THRESHOLD = 0.4   # heal when HP fraction <= this
+    _ACTION_SURGE_THRESHOLD = 0.4  # only burst when we're not near death
 
     def decide(self, actor_id, actor, ws, resources, round_num):
         tid, tgt = self._nearest_enemy(actor, ws, actor_id)
         if tid is None:
             return CombatDecision(ended=True)
 
+        # Second Wind (bonus): emergency self-heal when HP is low. Availability
+        # (max_uses, remaining) is handled inside _use_skill via available_skills.
+        if (resources.get("bonus_action", 0) > 0
+                and actor.hp <= actor.max_hp * self._SECOND_WIND_THRESHOLD):
+            a = self._use_skill(actor_id, actor, ws, "second_wind", actor_id)
+            if a:
+                return CombatDecision(action=a)
+
+        # Approach if out of melee range.
         if not self._in_reach(actor, tgt) and resources.get("movement", 0) > 1e-6:
             return CombatDecision(action=self._move_to(actor_id, actor, ws, tid))
 
+        # Main action: maneuvers preferred, then plain attack.
         if resources.get("action", 0) > 0 and self._in_reach(actor, tgt):
             for m in self._MANEUVERS:
                 a = self._use_skill(actor_id, actor, ws, m, tid)
@@ -499,26 +565,31 @@ class BattleMasterPolicy(_ArchetypeBase):
             if a:
                 return CombatDecision(action=a)
 
-        return CombatDecision(ended=True)
-
-
-class ChampionPolicy(_ArchetypeBase):
-    """Fighter Champion: approach → attack (relies on passive improved crit range)."""
-
-    def decide(self, actor_id, actor, ws, resources, round_num):
-        tid, tgt = self._nearest_enemy(actor, ws, actor_id)
-        if tid is None:
-            return CombatDecision(ended=True)
-
-        if not self._in_reach(actor, tgt) and resources.get("movement", 0) > 1e-6:
-            return CombatDecision(action=self._move_to(actor_id, actor, ws, tid))
-
-        if resources.get("action", 0) > 0 and self._in_reach(actor, tgt):
-            a = self._attack(actor_id, actor, ws, tid)
+        # Burst with Action Surge after spending the main action — gives a
+        # second action via the `grants` dict. Only fire while still in melee
+        # + healthy enough to make the extra hit worthwhile.
+        if (resources.get("action", 0) == 0
+                and self._in_reach(actor, tgt)
+                and actor.hp >= actor.max_hp * self._ACTION_SURGE_THRESHOLD):
+            a = self._use_skill(actor_id, actor, ws, "action_surge", actor_id)
             if a:
                 return CombatDecision(action=a)
 
         return CombatDecision(ended=True)
+
+
+class BattleMasterPolicy(_FighterBase):
+    """Fighter Battle Master: maneuver → plain attack → action_surge burst."""
+    # All four maneuvers are engine-ready (pushing_attack wired up with the
+    # forced-move mechanic); the superiority-die pool is each maneuver's max_uses.
+    _MANEUVERS = ("menacing_attack", "trip_attack", "distracting_strike",
+                  "pushing_attack")
+
+
+class ChampionPolicy(_FighterBase):
+    """Fighter Champion: plain attacks + action_surge burst (relies on
+    passive improved_critical range)."""
+    _MANEUVERS = ()
 
 
 # ── Barbarians ────────────────────────────────────────────────────────────────
@@ -567,8 +638,18 @@ class _WizardBase(_ArchetypeBase):
         return ["magic_missile"]
 
     @staticmethod
-    def _away_from(actor_pos, threat_pos, distance_m: float, battlefield) -> "Vec2":
-        """Return a position `distance_m` away from threat, clamped to battlefield."""
+    def _away_from(actor_pos, threat_pos, distance_m: float, battlefield) -> "Vec2 | None":
+        """Return a position `distance_m` away from threat, clamped to battlefield.
+
+        Returns ``None`` if clamping squashes the retreat to <1m of effective
+        motion — i.e. the actor is already at the battlefield edge and no
+        meaningful escape exists in that direction. Callers MUST handle the
+        None case by skipping the retreat / teleport entirely instead of
+        emitting a "move to current cell" action. Previously this clamped
+        silently and the wizard expert emitted MOVE-to-self ~85% of the
+        time when cornered, polluting BC labels and teaching the policy
+        that "move" means "stay put".
+        """
         from .vec2 import Vec2
         import math
         dx = actor_pos.x - threat_pos.x
@@ -582,10 +663,13 @@ class _WizardBase(_ArchetypeBase):
         if battlefield is None:
             return raw
         margin = 0.5
-        return Vec2(
+        clamped = Vec2(
             max(margin, min(battlefield.width  - margin, raw.x)),
             max(margin, min(battlefield.height - margin, raw.y)),
         )
+        if (clamped - actor_pos).length() < 1.0:
+            return None
+        return clamped
 
     def decide(self, actor_id, actor, ws, resources, round_num):
         tid, tgt = self._nearest_enemy(actor, ws, actor_id)
@@ -595,12 +679,15 @@ class _WizardBase(_ArchetypeBase):
         d = actor.position.distance_to(tgt.position)
         bf = ws.combat.battlefield if ws.combat else None
 
-        # Cornered (≤3m) → misty step away from enemy direction (bonus action)
+        # Cornered (≤3m) → misty step away from enemy direction (bonus action).
+        # Skip teleport if no real escape exists (away is None) — otherwise
+        # the expert teleports to the SELF cell, polluting BC labels.
         if d <= 3.0 and resources.get("bonus_action", 1) > 0:
             away = self._away_from(actor.position, tgt.position, 9.0, bf)
-            a = self._use_skill(actor_id, actor, ws, "misty_step", None, away)
-            if a:
-                return CombatDecision(action=a)
+            if away is not None:
+                a = self._use_skill(actor_id, actor, ws, "misty_step", None, away)
+                if a:
+                    return CombatDecision(action=a)
 
         # Cast best available spell
         if resources.get("action", 0) > 0:
@@ -609,12 +696,15 @@ class _WizardBase(_ArchetypeBase):
                 if a:
                     return CombatDecision(action=a)
 
-        # After spending action: back away if enemy is closing in
+        # After spending action: back away if enemy is closing in. Same
+        # guard as misty_step above — None means the actor is already at
+        # the battlefield edge, so emitting a move-to-edge equals MOVE-to-self.
         if d < 9.0 and resources.get("movement", 0) > 1e-6:
             retreat = self._away_from(actor.position, tgt.position, 9.0, bf)
-            move_a = self._use_skill(actor_id, actor, ws, "move", None, retreat)
-            if move_a:
-                return CombatDecision(action=move_a)
+            if retreat is not None:
+                move_a = self._use_skill(actor_id, actor, ws, "move", None, retreat)
+                if move_a:
+                    return CombatDecision(action=move_a)
 
         # Close gap if target is out of spell range
         if d > 18.0 and resources.get("movement", 0) > 1e-6:
@@ -657,29 +747,73 @@ class DivinationPolicy(_WizardBase):
 # ── Clerics ───────────────────────────────────────────────────────────────────
 
 class _ClericBase(_ArchetypeBase):
-    """Heal wounded ally → bless early → sacred flame / melee attack."""
+    """Spirit guardians (round 1, L5+) → spiritual weapon (bonus) → heal /
+    bless / sacred flame / melee. Variant ids let domains override the
+    spiritual_weapon skill (life vs war) without forking the whole method.
+    """
     _HEAL_THRESHOLD = 0.4
+    _SPIRITUAL_WEAPON_CAST_ID = "spiritual_weapon_life"
+    _SPIRITUAL_WEAPON_ATK_ID  = "spiritual_weapon_attack_life"
 
     def decide(self, actor_id, actor, ws, resources, round_num):
         tid, tgt = self._nearest_enemy(actor, ws, actor_id)
         if tid is None:
             return CombatDecision(ended=True)
 
+        # Heal critically low / dying ally first — supersedes any other plan.
+        # Out-of-range target: spend movement walking to it instead of letting
+        # the engine bounce the cast with a range ERROR (which would waste the
+        # whole turn re-attempting the same action).
         if resources.get("action", 0) > 0:
-            # Heal critically low ally
             heal_id = self._find_heal_target(actor_id, ws, self._HEAL_THRESHOLD)
             if heal_id:
-                a = self._use_skill(actor_id, actor, ws, "cure_wounds", heal_id)
+                a = self._attempt_heal(actor_id, actor, ws, heal_id)
                 if a:
-                    return CombatDecision(action=a)
+                    rng = float(a.get("range_m", 1.5) or 1.5)
+                    dist = actor.position.distance_to(
+                        ws.characters[heal_id].position)
+                    if dist <= rng + 1e-6:
+                        return CombatDecision(action=a)
+                    if resources.get("movement", 0) > 1e-6:
+                        mv = self._move_to(actor_id, actor, ws, heal_id)
+                        if mv:
+                            return CombatDecision(action=mv)
 
-            # Bless early (round 1 or 2)
-            if round_num <= 2 and not actor.has_status("blessed"):
+        # Spirit Guardians (L5+ slot 3, concentration): biggest single-action
+        # damage output cleric has. Cast on round 1 if we have the slot and
+        # we're not already concentrating on something else.
+        if (resources.get("action", 0) > 0 and round_num <= 2
+                and not actor.has_status("spirit_guardians_active")
+                and not actor.concentrating_on):
+            a = self._use_skill(actor_id, actor, ws, "spirit_guardians", actor_id)
+            if a:
+                return CombatDecision(action=a)
+
+        # Spiritual Weapon (bonus, slot 2): persistent bonus-action attacks.
+        if (resources.get("bonus_action", 0) > 0
+                and not actor.has_status("spiritual_weapon_active")):
+            a = self._use_skill(actor_id, actor, ws,
+                                self._SPIRITUAL_WEAPON_CAST_ID, actor_id)
+            if a:
+                return CombatDecision(action=a)
+
+        # Spiritual Weapon follow-up attack (bonus): if active and bonus left.
+        if (resources.get("bonus_action", 0) > 0
+                and actor.has_status("spiritual_weapon_active")):
+            a = self._use_skill(actor_id, actor, ws,
+                                self._SPIRITUAL_WEAPON_ATK_ID, tid)
+            if a:
+                return CombatDecision(action=a)
+
+        if resources.get("action", 0) > 0:
+            # Bless early (round 1 or 2) if no spirit_guardians concentration.
+            if (round_num <= 2 and not actor.has_status("blessed")
+                    and not actor.concentrating_on):
                 a = self._use_skill(actor_id, actor, ws, "bless", actor_id)
                 if a:
                     return CombatDecision(action=a)
 
-            # Sacred flame at range, or melee attack if adjacent
+            # Sacred flame at range, or melee attack if adjacent.
             if self._in_reach(actor, tgt):
                 a = self._attack(actor_id, actor, ws, tid)
             else:
@@ -691,46 +825,26 @@ class _ClericBase(_ArchetypeBase):
             return CombatDecision(action=self._move_to(actor_id, actor, ws, tid))
 
         return CombatDecision(ended=True)
+
+    def _attempt_heal(self, actor_id, actor, ws, heal_id):
+        """Pick the best heal skill for `heal_id`. Override per-domain."""
+        return self._use_skill(actor_id, actor, ws, "cure_wounds", heal_id)
 
 
 class LifeClericPolicy(_ClericBase):
-    """Life Cleric: heal aggressively (threshold 50%), lay_on_hands before cure_wounds."""
+    """Life Cleric: heal threshold 50%, lay_on_hands preferred before cure_wounds."""
     _HEAL_THRESHOLD = 0.5
 
-    def decide(self, actor_id, actor, ws, resources, round_num):
-        tid, tgt = self._nearest_enemy(actor, ws, actor_id)
-        if tid is None:
-            return CombatDecision(ended=True)
-
-        if resources.get("action", 0) > 0:
-            heal_id = self._find_heal_target(actor_id, ws, self._HEAL_THRESHOLD)
-            if heal_id:
-                a = (self._use_skill(actor_id, actor, ws, "lay_on_hands_ability", heal_id)
-                     or self._use_skill(actor_id, actor, ws, "cure_wounds", heal_id))
-                if a:
-                    return CombatDecision(action=a)
-
-            if round_num <= 1 and not actor.has_status("blessed"):
-                a = self._use_skill(actor_id, actor, ws, "bless", actor_id)
-                if a:
-                    return CombatDecision(action=a)
-
-            if self._in_reach(actor, tgt):
-                a = self._attack(actor_id, actor, ws, tid)
-            else:
-                a = self._use_skill(actor_id, actor, ws, "sacred_flame", tid)
-            if a:
-                return CombatDecision(action=a)
-
-        if not self._in_reach(actor, tgt) and resources.get("movement", 0) > 1e-6:
-            return CombatDecision(action=self._move_to(actor_id, actor, ws, tid))
-
-        return CombatDecision(ended=True)
+    def _attempt_heal(self, actor_id, actor, ws, heal_id):
+        return (self._use_skill(actor_id, actor, ws, "lay_on_hands_ability", heal_id)
+                or self._use_skill(actor_id, actor, ws, "cure_wounds", heal_id))
 
 
 class WarClericPolicy(_ClericBase):
-    """War Cleric: aggressive (bless round 1, sacred flame primary, heal only near-death)."""
+    """War Cleric: heal threshold 25%, spiritual weapon variants point to war ids."""
     _HEAL_THRESHOLD = 0.25
+    _SPIRITUAL_WEAPON_CAST_ID = "spiritual_weapon_war"
+    _SPIRITUAL_WEAPON_ATK_ID  = "spiritual_weapon_attack_war"
 
 
 # ── Rogues ────────────────────────────────────────────────────────────────────
@@ -747,28 +861,40 @@ class _RogueBase(_ArchetypeBase):
             return CombatDecision(ended=True)
 
         d = actor.position.distance_to(tgt.position)
+        hidden = actor.has_status("hidden")
         in_melee = d <= 1.5 + 1e-6
+        # Ranged weapon (shortbow / crossbow) — gated by range_type so a
+        # loadout swap still picks it up. Without this branch Assassin
+        # ignored its bow entirely at range and just dashed to melee,
+        # eating attacks all the way in — measured 21% expert win rate.
+        bow = next((w for w in actor.weapons if w.range_type == "遠程"), None)
+        bow_normal = (bow.range_normal if bow else 0.0) or 0.0
+        in_bow_range = bow is not None and d <= bow_normal + 1e-6
 
-        # Cunning action: hide for sneak-attack advantage (bonus action)
-        if in_melee and not actor.has_status("hidden") and resources.get("bonus_action", 1) > 0:
+        # Bonus-action hide first (sets up sneak attack on the next action).
+        if not hidden and resources.get("bonus_action", 1) > 0:
             a = self._use_skill(actor_id, actor, ws, self._HIDE_SKILL)
             if a:
                 return CombatDecision(action=a)
 
-        # Attack (sneak attack fires automatically when conditions met)
-        if resources.get("action", 0) > 0 and in_melee:
-            a = self._attack(actor_id, actor, ws, tid)
-            if a:
-                return CombatDecision(action=a)
-
-        # Close gap: cunning dash (bonus) then walk
-        if not in_melee:
-            if resources.get("bonus_action", 1) > 0:
-                a = self._use_skill(actor_id, actor, ws, self._DASH_SKILL)
+        # Action: melee swing if adjacent, else ranged shot if hidden +
+        # in bow range (Hidden + ranged = advantage = sneak-attack trigger).
+        if resources.get("action", 0) > 0:
+            if in_melee:
+                a = self._attack(actor_id, actor, ws, tid)
                 if a:
                     return CombatDecision(action=a)
-            if resources.get("movement", 0) > 1e-6:
-                return CombatDecision(action=self._move_to(actor_id, actor, ws, tid))
+            elif hidden and in_bow_range and bow is not None:
+                a = self._use_skill(actor_id, actor, ws,
+                                     f"weapon:{bow.name}", target_id=tid)
+                if a:
+                    return CombatDecision(action=a)
+
+        # Close gap (if not in bow range, walk in). Skip Cunning Dash when
+        # in_bow_range — bonus action was already spent on Hide above and
+        # extra movement isn't needed when the bow can already reach.
+        if not in_bow_range and resources.get("movement", 0) > 1e-6:
+            return CombatDecision(action=self._move_to(actor_id, actor, ws, tid))
 
         return CombatDecision(ended=True)
 
@@ -780,14 +906,22 @@ class AssassinPolicy(_RogueBase):
 
 
 class ArcaneTricksterPolicy(_RogueBase):
-    """Arcane Trickster: hide (action) when out of melee, dash in, then sneak attack.
+    """Arcane Trickster: bonus-action hide → attack with advantage → sneak attack.
 
-    No cunning-action hide for this archetype; hide costs the action, so
-    hiding and attacking happen on alternating turns.
+    Uses ``cunning_action_hide`` (bonus action) — the archetype factory
+    grants this from level 2. Strategy each turn:
+      1. If not hidden and bonus available → hide (bonus).
+      2. If in melee → swing shortsword (advantage from Hidden, sneak fires).
+      3. If hidden + in shortbow normal range (not in melee) → shoot bow
+         (advantage + sneak; avoids the in-melee ranged-disadvantage).
+      4. Out of bow range → move toward target.
+    Cunning dash is dropped from the rotation — sneak-attack damage from the
+    ranged shot beats the extra movement, and bonus action is committed to
+    Hide. Dash is still kept available for the model via the skill list.
     """
-    _HIDE_SKILL      = ""                        # no bonus-action hide
-    _DASH_SKILL      = "cunning_action_dash_at"
-    _DISENGAGE_SKILL = "cunning_action_disengage_at"
+    _HIDE_SKILL      = "cunning_action_hide"
+    _DASH_SKILL      = "cunning_action_dash"
+    _DISENGAGE_SKILL = "cunning_action_disengage"
 
     def decide(self, actor_id, actor, ws, resources, round_num):
         tid, tgt = self._nearest_enemy(actor, ws, actor_id)
@@ -795,28 +929,55 @@ class ArcaneTricksterPolicy(_RogueBase):
             return CombatDecision(ended=True)
 
         d = actor.position.distance_to(tgt.position)
+        hidden = actor.has_status("hidden")
         in_melee = d <= 1.5 + 1e-6
 
-        # Hide (action) when out of melee and not yet hidden — get advantage
-        if not in_melee and not actor.has_status("hidden") and resources.get("action", 0) > 0:
-            a = self._use_skill(actor_id, actor, ws, "hide")
+        # Find ranged weapon (shortbow) by range_type, not by hardcoded name —
+        # avoids breaking if the loadout swaps to crossbow / longbow.
+        bow = next((w for w in actor.weapons if w.range_type == "遠程"), None)
+        bow_normal = (bow.range_normal if bow else 0.0) or 0.0
+        in_bow_range = bow is not None and d <= bow_normal + 1e-6
+
+        # 1. Bonus-action hide first — sets up Hidden for the attack below.
+        if not hidden and resources.get("bonus_action", 1) > 0:
+            a = self._use_skill(actor_id, actor, ws, self._HIDE_SKILL)
             if a:
                 return CombatDecision(action=a)
 
-        # Cunning dash (bonus) to close gap
-        if not in_melee and resources.get("bonus_action", 1) > 0:
-            a = self._use_skill(actor_id, actor, ws, self._DASH_SKILL)
+        slots_left = actor.spell_slots.get(1, 0)
+        target_disabled = (tgt.has_status("asleep") or tgt.has_status("blinded")
+                            or tgt.has_status("paralyzed"))
+
+        # 2. Round-1 control: sleep on a healthy enemy (5e: 5d8 HP cap means
+        #    sleep is best opening turn). Save 1 slot for shield reaction.
+        if (round_num == 1 and resources.get("action", 0) > 0
+                and slots_left >= 2 and not target_disabled
+                and tgt.hp / max(1, tgt.max_hp) > 0.5):
+            a = self._use_skill(actor_id, actor, ws, "sleep", target_id=tid)
             if a:
                 return CombatDecision(action=a)
 
-        if not in_melee and resources.get("movement", 0) > 1e-6:
+        # 3. Attack while we have an action.
+        if resources.get("action", 0) > 0:
+            if in_melee:
+                a = self._attack(actor_id, actor, ws, tid)
+                if a:
+                    return CombatDecision(action=a)
+            elif hidden and in_bow_range and bow is not None:
+                a = self._use_skill(actor_id, actor, ws,
+                                     f"weapon:{bow.name}", target_id=tid)
+                if a:
+                    return CombatDecision(action=a)
+            # 4. Out of bow range: magic missile (auto-hit) as fallback offense.
+            elif not in_bow_range and slots_left >= 2:
+                a = self._use_skill(actor_id, actor, ws, "magic_missile",
+                                     target_id=tid)
+                if a:
+                    return CombatDecision(action=a)
+
+        # 5. Close gap with movement when out of bow range.
+        if not in_bow_range and resources.get("movement", 0) > 1e-6:
             return CombatDecision(action=self._move_to(actor_id, actor, ws, tid))
-
-        # Attack (sneak fires if hidden or target debuffed)
-        if resources.get("action", 0) > 0 and in_melee:
-            a = self._attack(actor_id, actor, ws, tid)
-            if a:
-                return CombatDecision(action=a)
 
         return CombatDecision(ended=True)
 
@@ -835,6 +996,12 @@ class DevotionPolicy(_ArchetypeBase):
             return CombatDecision(action=self._move_to(actor_id, actor, ws, tid))
 
         if resources.get("action", 0) > 0:
+            # Pick up a dying ally first (5e: lay on hands is THE pick-up tool
+            # — any amount of healing returns them to the fight).
+            d = self._attempt_pickup(actor_id, actor, ws, resources)
+            if d is not None:
+                return d
+
             # Sacred weapon buff (1 action; lasts 10 rounds). 5e rules don't
             # restrict it to round 1 — open it anytime you're about to start
             # attacking and haven't buffed yet.
@@ -877,6 +1044,10 @@ class VengeancePolicy(_ArchetypeBase):
                 return CombatDecision(action=a)
 
         if resources.get("action", 0) > 0:
+            d = self._attempt_pickup(actor_id, actor, ws, resources)
+            if d is not None:
+                return d
+
             if actor.hp / max(actor.max_hp, 1) < 0.25:
                 a = self._use_skill(actor_id, actor, ws, "lay_on_hands_ability", actor_id)
                 if a:
@@ -888,6 +1059,466 @@ class VengeancePolicy(_ArchetypeBase):
                     return CombatDecision(action=a)
 
         return CombatDecision(ended=True)
+
+
+# ── Generic monster controller ───────────────────────────────────────────────
+
+class GenericMonsterPolicy(_ArchetypeBase):
+    """Data-driven controller for monster identities (MONSTER_CATALOG Wave 0).
+
+    Knows NO skill ids and NO archetype names — every decision reads
+    SkillFeatures off available_skills(), so any future monster assembled in
+    trpg/scenarios/monsters.py is playable without touching this class.
+
+    Turn priority:
+      1.  below 35% HP, self-heal with the biggest expected_healing skill
+      1.5 control casts (v1, Wave 2) — control-LED kits only (best damage EV
+          ≤ weapon EV, e.g. basilisk gaze): zero-damage single-enemy save
+          spells until the target carries the terminal status or is immune.
+          Damage-led casters skip this (mage_npc A/B: control-first cost
+          18pp@L5) and play pure nuker as in v0.
+      2.  highest-EV damaging option that is affordable, in range, has line
+          of sight, satisfies target-state preconditions (swallow), and
+          (for AoE/LINE) doesn't catch an ally; weapon EV scaled by
+          attacks_per_action
+      3.  if a damaging option exists but is out of range / LoS-blocked,
+          close toward the nearest enemy — a ranged kit already in range
+          never walks closer
+
+    Still not modelled (v1): bonus-action dashes, kiting, AoE control casts.
+    HeuristicCombatPolicy stays untouched — it is the historical RL
+    comparison baseline.
+    """
+
+    _HEAL_THRESHOLD = 0.35
+
+    @staticmethod
+    def _affordable(f, resources) -> bool:
+        if f.cost_action and resources.get("action", 0) <= 0:
+            return False
+        if f.cost_bonus and resources.get("bonus_action", 0) <= 0:
+            return False
+        if f.cost_reaction:
+            return False
+        return True
+
+    def _damage_options(self, actor_id, actor, ws, skills, resources,
+                        tgt, dist, has_los, n_atk):
+        """Collect the damaging candidates usable from the current position
+        (decide() step 2, verbatim — also reused by the legendary-action
+        executor with a restricted skill list). Pure evaluation, no dice.
+
+        Returns (usable_now, usable_later): usable_now = [(ev, skill)] gated
+        on affordability / range / LoS / target-state preconditions / ally
+        splash; usable_later = True when something affordable exists but is
+        out of range or LoS-blocked (the "walk closer" signal).
+        """
+        from .skill import TargetType
+        from .abilities import ABILITY_REGISTRY
+        my_side = ws.is_party_ally(actor_id)
+        usable_now: list[tuple[float, object]] = []
+        usable_later = False   # affordable but out of range / no LoS
+        for s in skills:
+            f = s.features
+            if f.expected_damage <= 0 or not self._affordable(f, resources):
+                continue
+            # Target-state preconditions (behir swallow: requires restrained,
+            # blocked once swallowed) — same data the engine re-validates.
+            ab = ABILITY_REGISTRY.get(s.skill_id)
+            if ab is not None:
+                if (ab.requires_target_status
+                        and not tgt.has_status(ab.requires_target_status)):
+                    continue
+                if (ab.blocked_by_target_status
+                        and tgt.has_status(ab.blocked_by_target_status)):
+                    continue
+            is_weapon = s.skill_id.startswith("weapon:")
+            reach = f.range_m or 1.5
+            melee = reach <= 2.0
+            if dist > reach + 1e-6 or (not has_los and not melee):
+                usable_later = True
+                continue
+            if f.aoe_radius_m > 0 and not getattr(actor, "sculpt_spells", False):
+                if f.target_type == TargetType.LINE:
+                    # LINE convention: range_m = line length, aoe_radius_m =
+                    # half-width. Check allies along the actual beam segment.
+                    from .vec2 import point_segment_distance
+                    aim = tgt.position - actor.position
+                    line_end = (actor.position
+                                + aim.normalized() * (f.range_m or 1.5))
+                    friendly_hit = any(
+                        c.is_alive() and cid != actor_id
+                        and ws.is_party_ally(cid) == my_side
+                        and point_segment_distance(
+                            c.position, actor.position, line_end)
+                            <= f.aoe_radius_m + 1e-6
+                        for cid, c in ws.characters.items())
+                else:
+                    friendly_hit = any(
+                        c.is_alive() and cid != actor_id
+                        and ws.is_party_ally(cid) == my_side
+                        and tgt.position.distance_to(c.position)
+                            <= f.aoe_radius_m + 1e-6
+                        for cid, c in ws.characters.items())
+                if friendly_hit:
+                    continue
+            ev = f.expected_damage * (n_atk if is_weapon else 1)
+            usable_now.append((ev, s))
+        return usable_now, usable_later
+
+    def decide(self, actor_id, actor, ws, resources, round_num):
+        from .skill import available_skills, TargetType
+        tid, tgt = self._nearest_enemy(actor, ws, actor_id)
+        if tid is None:
+            return CombatDecision(ended=True)
+
+        skills = available_skills(actor, ws)
+        dist = actor.position.distance_to(tgt.position)
+        bf = ws.combat.battlefield if ws.combat else None
+        has_los = (bf is None
+                   or bf.has_line_of_sight(actor.position, tgt.position))
+
+        # 1. Emergency self-heal.
+        if actor.hp <= actor.max_hp * self._HEAL_THRESHOLD:
+            heals = [s for s in skills
+                     if s.features.expected_healing > 0
+                     and self._affordable(s.features, resources)]
+            if heals:
+                h = max(heals, key=lambda s: s.features.expected_healing)
+                a = self._use_skill(actor_id, actor, ws, h.skill_id, actor_id)
+                if a:
+                    return CombatDecision(action=a)
+
+        # 1.5 Control casts (GenericMonsterPolicy v1, Wave 2): zero-damage
+        #     single-enemy save abilities riding the SPELL registry. ONLY for
+        #     control-LED kits — best damage EV no better than the weapon
+        #     (basilisk: gaze + a 10-EV bite). Damage-led casters measured
+        #     WEAKER when opening with save-or-lock vs the scripted panel
+        #     (mage_npc A/B, n=120/level/arm: expert WR +18pp@L5 / +7pp@L6
+        #     with control-first — save_each escapes + lost nuke tempo), so
+        #     they skip straight to damage. Cast while the target lacks the
+        #     TERMINAL status (escalates_to, else the status itself) and is
+        #     not condition-immune; once locked down, fall through to damage
+        #     (petrified targets eat melee). Data-driven — features and the
+        #     spell entry only, no skill-id or monster names.
+        from .spells import SPELLS
+        n_atk = getattr(actor, "attacks_per_action", 1) or 1
+        best_dmg_ev = max(
+            (s.features.expected_damage
+             * (n_atk if s.skill_id.startswith("weapon:") else 1)
+             for s in skills if s.features.expected_damage > 0), default=0.0)
+        best_weapon_ev = max(
+            (s.features.expected_damage * n_atk
+             for s in skills if s.skill_id.startswith("weapon:")), default=0.0)
+        control_led = best_dmg_ev <= best_weapon_ev + 1e-6
+        if control_led:
+            for s in skills:
+                f = s.features
+                if f.expected_damage > 0 or f.expected_healing > 0:
+                    continue
+                if f.target_type != TargetType.SINGLE_ENEMY:
+                    continue
+                if not self._affordable(f, resources):
+                    continue
+                sp = SPELLS.get(s.display_name)
+                if sp is None or not sp.applies_status_on_fail:
+                    continue
+                stage1 = sp.applies_status_on_fail
+                terminal = sp.escalates_to or stage1
+                if tgt.has_status(terminal):
+                    continue
+                if (stage1 in tgt.condition_immunities
+                        or terminal in tgt.condition_immunities):
+                    continue
+                if dist > (f.range_m or 1.5) + 1e-6 or not has_los:
+                    continue
+                a = self._use_skill(actor_id, actor, ws, s.skill_id, tid)
+                if a:
+                    return CombatDecision(action=a)
+
+        # 2. Damage options, split by whether they can fire from here.
+        usable_now, usable_later = self._damage_options(
+            actor_id, actor, ws, skills, resources, tgt, dist, has_los, n_atk)
+
+        if usable_now:
+            _, best = max(usable_now, key=lambda kv: kv[0])
+            tt = best.features.target_type
+            if tt in (TargetType.POINT, TargetType.LINE, TargetType.CONE):
+                a = self._use_skill(actor_id, actor, ws, best.skill_id,
+                                    coord=tgt.position)
+            else:
+                a = self._use_skill(actor_id, actor, ws, best.skill_id, tid)
+            if a:
+                return CombatDecision(action=a)
+
+        # 3. Close the gap only when that unlocks an attack (also the no-LoS
+        #    recovery path). A ranged kit already in range never walks closer.
+        if usable_later and resources.get("movement", 0.0) > 1e-6:
+            mv = self._move_to(actor_id, actor, ws, tid)
+            if mv:
+                return CombatDecision(action=mv)
+
+        return CombatDecision(ended=True)
+
+
+# ── Legendary actions (Wave 3, MONSTER_CATALOG §3 D 級) ──────────────────────
+#
+# 5e: a legendary creature has a per-round budget (refilled at its own turn
+# start — status.tick_status_effects) and may spend it on ONE option from its
+# table at the end of ANOTHER creature's turn. Every combat driver calls
+# run_legendary_actions(ws, ended_char_id, round_num) right after a turn's
+# self_turn_end tick; fights without a legendary creature return [] without
+# touching the dice stream (baseline-safe).
+#
+# Options are pure data on the character (TraitGrant "legendary_actions"):
+#   {"ability": skill_id, "cost": n}  — a granted ability (wing attack, eye
+#                                       ray, cantrip…), uses-gated through
+#                                       available_skills like any other skill
+#   {"weapon": name, "cost": n}       — a single swing with a natural weapon
+#                                       (dragon tail), n_attacks forced to 1;
+#                                       resolved via Character.get_weapon so
+#                                       the weapon may live outside the
+#                                       multiattack kit (behir-jaw pattern)
+# Selection is EV-per-cost greedy over the options usable RIGHT NOW (range /
+# LoS / preconditions via the same _damage_options gates as the normal turn);
+# no movement is spent — an out-of-reach option simply doesn't fire (5e: you
+# may always decline). Control value beyond expected damage is not modelled
+# (greedy damage bias — documented approximation).
+
+_LEGENDARY_BRAIN = GenericMonsterPolicy()
+
+
+@dataclass
+class LegendaryContext:
+    """A pending legendary-action decision handed to a legendary decider.
+
+    ``options`` is the LEGAL set the engine assembled — each entry is
+    {"skill_id", "cost", "ev"} where ev is the greedy damage estimate. The
+    decider returns one of those skill_ids, or None to forgo the legendary
+    action this trigger. Legality (budget, range, LoS, preconditions) is already
+    enforced; the decider only chooses whether and which to spend.
+    """
+    actor: object
+    actor_id: str
+    options: list           # [{"skill_id": str, "cost": int, "ev": float}, ...]
+    world_state: object
+    target_id: str
+    round_num: int
+
+
+def greedy_legendary_decider(ctx: "LegendaryContext") -> str | None:
+    """Default legendary policy = the historical EV-per-cost greedy pick
+    (bit-for-bit: same options in the same order → same argmax)."""
+    if not ctx.options:
+        return None
+    best = max(ctx.options, key=lambda o: (o["ev"] / o["cost"], o["ev"]))
+    return best["skill_id"]
+
+
+def decide_legendary_action(actor_id: str, actor, ws,
+                            round_num: int) -> tuple[dict | None, int]:
+    """Pick ONE affordable legendary option for `actor`. Returns
+    (action_dict, cost) or (None, 0) when nothing is usable.
+
+    Splits LEGALITY (which options are affordable & in range — assembled here)
+    from CHOICE (which to spend — delegated to ws.legendary_decider, default
+    greedy EV/cost). The RL env injects a decider to let a model-controlled
+    boss choose its legendary actions; scripted bosses keep the greedy default.
+    """
+    from .skill import available_skills, from_weapon, TargetType
+
+    remaining = actor.legendary_actions_remaining
+    options = [o for o in actor.legendary_options
+               if int(o.get("cost", 1)) <= remaining]
+    if not options:
+        return None, 0
+    tid, tgt = _LEGENDARY_BRAIN._nearest_enemy(actor, ws, actor_id)
+    if tid is None:
+        return None, 0
+    dist = actor.position.distance_to(tgt.position)
+    bf = ws.combat.battlefield if ws.combat else None
+    has_los = (bf is None
+               or bf.has_line_of_sight(actor.position, tgt.position))
+    # Legendary actions sit outside the action/bonus economy — affordability
+    # here means only "enough legendary budget", so feed a fresh wallet.
+    resources = {"action": 1, "bonus_action": 1, "movement": 0.0}
+
+    candidates: list[tuple[object, int]] = []   # (Skill, cost)
+    ability_ids = {o["ability"] for o in options if "ability" in o}
+    if ability_ids:
+        for s in available_skills(actor, ws):
+            if s.skill_id in ability_ids:
+                cost = next(int(o["cost"]) for o in options
+                            if o.get("ability") == s.skill_id)
+                candidates.append((s, cost))
+    for o in options:
+        wname = o.get("weapon")
+        if wname:
+            candidates.append((from_weapon(actor.get_weapon(wname), actor),
+                               int(o["cost"])))
+    if not candidates:
+        return None, 0
+
+    usable, _ = _LEGENDARY_BRAIN._damage_options(
+        actor_id, actor, ws, [s for s, _ in candidates], resources,
+        tgt, dist, has_los, n_atk=1)   # legendary swings never multiattack
+    if not usable:
+        return None, 0
+    cost_by_sid = {s.skill_id: c for s, c in candidates}
+    skill_by_sid = {kv[1].skill_id: kv[1] for kv in usable}
+    # Preserve `usable` order so the greedy default's argmax is bit-exact. Each
+    # option carries its Skill so a model decider can observe the candidate;
+    # greedy_legendary_decider ignores the extra field.
+    decider_options = [{"skill_id": sk.skill_id,
+                        "cost": cost_by_sid[sk.skill_id], "ev": ev, "skill": sk}
+                       for ev, sk in usable]
+    ctx = LegendaryContext(actor=actor, actor_id=actor_id,
+                           options=decider_options, world_state=ws,
+                           target_id=tid, round_num=round_num)
+    hook = getattr(ws, "legendary_decider", None)
+    chosen_sid = hook(ctx) if hook is not None else greedy_legendary_decider(ctx)
+    if chosen_sid not in skill_by_sid:
+        return None, 0          # decline (or an out-of-set return = decline)
+    best = skill_by_sid[chosen_sid]
+    cost = cost_by_sid[best.skill_id]
+
+    if best.skill_id.startswith("weapon:"):
+        action = best.builder(actor_id, tid, None)
+        if action is not None:
+            action["n_attacks"] = 1
+            action["skill_id"] = best.skill_id
+    elif best.features.target_type in (TargetType.POINT, TargetType.LINE,
+                                       TargetType.CONE):
+        action = _LEGENDARY_BRAIN._use_skill(actor_id, actor, ws,
+                                             best.skill_id, coord=tgt.position)
+    else:
+        action = _LEGENDARY_BRAIN._use_skill(actor_id, actor, ws,
+                                             best.skill_id, tid)
+    if action is None:
+        return None, 0
+    return action, cost
+
+
+@dataclass
+class LairContext:
+    """A pending lair-action decision handed to a lair decider. ``options`` is
+    the legal set ({"skill_id", "ev"}); the decider returns one skill_id or None
+    to forgo the lair action this round. Mirrors LegendaryContext so a model can
+    drive lair actions via the same seam (ws.lair_decider)."""
+    actor: object
+    actor_id: str
+    options: list           # [{"skill_id": str, "ev": float}, ...]
+    world_state: object
+    target_id: str
+    round_num: int
+
+
+def greedy_lair_decider(ctx: "LairContext") -> str | None:
+    """Default lair policy = highest listed ev (stable: first on ties)."""
+    if not ctx.options:
+        return None
+    return max(ctx.options, key=lambda o: o.get("ev", 0.0))["skill_id"]
+
+
+def decide_lair_action(actor_id: str, actor, ws,
+                       round_num: int) -> dict | None:
+    """Build ONE lair action for `actor`, or None. Splits LEGALITY (the legal
+    option set, assembled here) from CHOICE (ws.lair_decider, default greedy).
+    Lair abilities are resolved straight from ABILITY_REGISTRY (a lair effect
+    need not be in the creature's normal turn kit), targeting the nearest enemy
+    — environmental AoE/control abilities use that as their point/target."""
+    from .abilities import ABILITY_REGISTRY
+    opts = [o for o in (actor.lair_options or []) if "ability" in o]
+    if not opts:
+        return None
+    options = [{"skill_id": o["ability"], "ev": float(o.get("ev", 1.0))}
+               for o in opts]
+    tid, tgt = _LEGENDARY_BRAIN._nearest_enemy(actor, ws, actor_id)
+    ctx = LairContext(actor=actor, actor_id=actor_id, options=options,
+                      world_state=ws, target_id=tid or "", round_num=round_num)
+    hook = getattr(ws, "lair_decider", None)
+    chosen = hook(ctx) if hook is not None else greedy_lair_decider(ctx)
+    if chosen is None:
+        return None
+    ab = ABILITY_REGISTRY.get(chosen)
+    if ab is None or ab.builder is None:
+        return None
+    coord = (tgt.position.x, tgt.position.y) if tgt is not None else None
+    return ab.build_action(actor_id, tid, coord, char=actor)
+
+
+def run_lair_actions(world_state, round_num: int) -> list[dict]:
+    """Fire each lair-capable creature's once-per-round environmental effect.
+    Self-limited via ``lair_acted_round`` so it can be called from every
+    per-turn legendary hook yet still fires only once per round (≈ initiative
+    count 20). [] when no creature has lair_options (zero overhead)."""
+    results: list[dict] = []
+    if world_state is None or world_state.combat is None:
+        return results
+    from .combat import execute_action
+    for cid, char in world_state.characters.items():
+        if (not char.lair_options
+                or char.lair_acted_round == round_num
+                or not char.is_alive()
+                or char.is_incapacitated()):
+            continue
+        action = decide_lair_action(cid, char, world_state, round_num)
+        char.lair_acted_round = round_num   # one attempt/round, even if declined
+        if action is None:
+            continue
+        result = execute_action(action, world_state)
+        if result.get("type") == "ERROR":
+            continue
+        results.append({
+            "type":       "LAIR_ACTION",
+            "actor_id":   cid,
+            "actor_name": char.name,
+            "action":     action,
+            "result":     result,
+        })
+    return results
+
+
+def run_legendary_actions(world_state, ended_char_id: str,
+                          round_num: int) -> list[dict]:
+    """Fire legendary actions triggered by the end of `ended_char_id`'s turn,
+    plus any once-per-round lair actions (piggybacked here so every driver that
+    already calls this gets lair actions for free — see run_lair_actions).
+
+    Each legendary creature (≠ the one whose turn ended) that is alive, not
+    incapacitated, and has budget left takes at most ONE option (5e RAW).
+    Returns display-ready event dicts; [] when no legendary creature exists.
+    """
+    results: list[dict] = []
+    if world_state is None or world_state.combat is None:
+        return results
+    from .combat import execute_action
+    for cid, char in world_state.characters.items():
+        if (cid == ended_char_id
+                or char.legendary_actions_remaining <= 0
+                or not char.legendary_options
+                or not char.is_alive()
+                or char.is_incapacitated()):
+            continue
+        action, cost = decide_legendary_action(cid, char, world_state,
+                                               round_num)
+        if action is None:
+            continue
+        result = execute_action(action, world_state)
+        if result.get("type") == "ERROR":
+            continue
+        char.legendary_actions_remaining -= cost
+        results.append({
+            "type":       "LEGENDARY_ACTION",
+            "actor_id":   cid,
+            "actor_name": char.name,
+            "cost":       cost,
+            "remaining":  char.legendary_actions_remaining,
+            "action":     action,
+            "result":     result,
+        })
+    results.extend(run_lair_actions(world_state, round_num))
+    return results
 
 
 # ── Registry and factory ──────────────────────────────────────────────────────

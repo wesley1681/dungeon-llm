@@ -34,7 +34,7 @@ def test_fighter_battle_master_catalog():
     )
     assert ABILITY_REGISTRY["menacing_attack"].engine_ready is True
     assert ABILITY_REGISTRY["precision_attack"].engine_ready is False
-    assert ABILITY_REGISTRY["pushing_attack"].engine_ready is False
+    assert ABILITY_REGISTRY["pushing_attack"].engine_ready is True
 
 
 def test_fighter_champion_catalog():
@@ -58,7 +58,7 @@ def test_wizard_evocation_catalog():
     )
     assert ABILITY_REGISTRY["fireball_ev"].engine_ready is True
     assert ABILITY_REGISTRY["web_ev"].engine_ready is True
-    assert ABILITY_REGISTRY["scorching_ray_ev"].engine_ready is False
+    assert ABILITY_REGISTRY["scorching_ray_ev"].engine_ready is True
 
 
 def test_wizard_divination_catalog():
@@ -75,9 +75,10 @@ def test_cleric_life_catalog():
         class_id="cleric", archetype_id="life",
     )
     assert ABILITY_REGISTRY["healing_word_life"].engine_ready is True
-    assert ABILITY_REGISTRY["guiding_bolt_life"].engine_ready is False
-    assert ABILITY_REGISTRY["spiritual_weapon_life"].engine_ready is False
-    assert ABILITY_REGISTRY["mass_cure_wounds_life"].engine_ready is False
+    assert ABILITY_REGISTRY["guiding_bolt_life"].engine_ready is True
+    assert ABILITY_REGISTRY["spiritual_weapon_life"].engine_ready is True
+    assert ABILITY_REGISTRY["spiritual_weapon_attack_life"].engine_ready is True
+    assert ABILITY_REGISTRY["mass_cure_wounds_life"].engine_ready is True
 
 
 def test_cleric_war_catalog():
@@ -87,6 +88,8 @@ def test_cleric_war_catalog():
         class_id="cleric", archetype_id="war",
     )
     assert ABILITY_REGISTRY["war_priest_attack"].engine_ready is True
+    assert ABILITY_REGISTRY["spiritual_weapon_war"].engine_ready is True
+    assert ABILITY_REGISTRY["spiritual_weapon_attack_war"].engine_ready is True
     assert ABILITY_REGISTRY["channel_divinity_guided_strike"].engine_ready is False
 
 
@@ -97,14 +100,20 @@ def test_rogue_assassin_catalog():
         class_id="rogue", archetype_id="assassin",
     )
     assert ABILITY_REGISTRY["cunning_action_dash"].engine_ready is True
+    # assassinate is a passive proxy fired in _resolve_single_attack — still
+    # engine_ready=False (no active builder), but the auto-crit effect IS wired.
     assert ABILITY_REGISTRY["assassinate"].engine_ready is False
+    assert ABILITY_REGISTRY["uncanny_dodge_rogue"].engine_ready is True
     assert ABILITY_REGISTRY["evasion_rogue"].engine_ready is True
 
 
 def test_rogue_arcane_trickster_catalog():
+    # Arcane Trickster shares Cunning Action / Uncanny Dodge / Evasion with the
+    # base rogue class — no separate `_at` registry entries (those were a stale
+    # premature split; both subclasses now use the shared rogue skill_ids).
     _check_registered(
-        ["cunning_action_dash_at", "cunning_action_disengage_at",
-         "uncanny_dodge_at", "evasion_at"],
+        ["cunning_action_dash", "cunning_action_disengage",
+         "cunning_action_hide", "uncanny_dodge_rogue", "evasion_rogue"],
         class_id="rogue", archetype_id="arcane_trickster",
     )
 

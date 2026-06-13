@@ -53,10 +53,14 @@ class Dodging(StatusEffect):
 
 
 class Hidden(StatusEffect):
-    """Successful HIDE action. Persists until broken (not auto-expired here)."""
+    """Successful HIDE action. Grants advantage on the next attack the holder
+    makes; engine removes the status after that attack resolves (5e RAW: making
+    an attack reveals you)."""
     def __init__(self, applied_round: int = 0):
         super().__init__(name="hidden", expires_on="never",
                          applied_round=applied_round, kind="buff")
+    def on_outgoing_attack(self, attacker, target, weapon, mode: str) -> str:
+        return combine_advantage(mode, "advantage")
 
 
 class Reckless(StatusEffect):
@@ -111,6 +115,10 @@ class Raging(StatusEffect):
     def on_outgoing_damage(self, attacker, target, amount: int, dtype: str) -> int:
         return amount + 2 if dtype in self._PHYSICAL else amount
     def on_incoming_damage(self, target, attacker, amount: int, dtype: str) -> int:
+        # Bear Totem barbarian (metadata flag): resist ALL damage except
+        # psychic. Plain rage resists only physical types.
+        if self.metadata.get("all_types"):
+            return amount // 2 if dtype not in ("精神", "psychic") else amount
         return amount // 2 if dtype in self._PHYSICAL else amount
 
 
@@ -285,6 +293,76 @@ class ShieldOfFaith(StatusEffect):
         return current_ac + 2
 
 
+class Distracted(StatusEffect):
+    """Battle Master Distracting Strike rider. The target's next incoming
+    attack (from anyone other than the BM) is at advantage. Engine model:
+    advantage on all incoming attacks for 1 round (round_end ticks it down)."""
+    def __init__(self, applied_round: int = 0, source_id: str = ""):
+        super().__init__(name="distracted", expires_on="never",
+                         rounds_remaining=1,
+                         applied_round=applied_round, source_id=source_id)
+    def on_incoming_attack(self, defender, attacker, weapon, mode: str) -> str:
+        return combine_advantage(mode, "advantage")
+
+
+class Blinded(StatusEffect):
+    """Cannot see — attacks against the blinded creature have advantage, and
+    the blinded creature's attacks have disadvantage. Engine-modeled durations
+    are short (1-2 rounds) because the original D&D 5e effects span longer."""
+    def __init__(self, applied_round: int = 0, source_id: str = ""):
+        super().__init__(name="blinded", expires_on="never",
+                         rounds_remaining=2, applied_round=applied_round,
+                         source_id=source_id)
+    def on_incoming_attack(self, defender, attacker, weapon, mode: str) -> str:
+        return combine_advantage(mode, "advantage")
+    def on_outgoing_attack(self, attacker, target, weapon, mode: str) -> str:
+        return combine_advantage(mode, "disadvantage")
+
+
+class Asleep(StatusEffect):
+    """D&D Sleep / unconscious: cannot move/act, auto-fails STR/DEX saves,
+    melee attacks within 1.5m are auto-crits, all attacks against have
+    advantage. Identical mechanics to Paralyzed in this engine. Wakes in
+    `rounds_remaining` rounds or on taking damage (handled by apply_damage)."""
+    _AUTO_FAIL = ("STR", "DEX")
+    def __init__(self, applied_round: int = 0, source_id: str = ""):
+        super().__init__(name="asleep", expires_on="never",
+                         rounds_remaining=2,
+                         applied_round=applied_round, source_id=source_id)
+    def on_incoming_attack(self, defender, attacker, weapon, mode: str) -> str:
+        return combine_advantage(mode, "advantage")
+    def on_auto_fail_save(self, char, stat: str) -> bool:
+        return stat.upper() in self._AUTO_FAIL
+    def on_speed_multiplier(self, char) -> float:
+        return 0.0
+
+
+class SpiritualWeaponActive(StatusEffect):
+    """Spiritual Weapon (Cleric L2). Caster has a floating force weapon for
+    10 rounds; each turn they can spend a bonus action to make a melee spell
+    attack via the spiritual_weapon_attack ability. Non-concentration."""
+    def __init__(self, applied_round: int = 0, source_id: str = ""):
+        super().__init__(
+            name="spiritual_weapon_active", expires_on="never",
+            rounds_remaining=10, applied_round=applied_round,
+            source_id=source_id, kind="buff",
+        )
+
+
+class SpiritGuardiansActive(StatusEffect):
+    """Spirit Guardians (Cleric L3, concentration). 4.5m radius aura around the
+    caster; at each enemy's turn start, if within range, they take 3d8 radiant
+    (WIS save halves). Damage is applied by tick_status_effects via the engine
+    on_turn_start hook. Source_id holds the caster's char_id for save DC
+    lookup."""
+    def __init__(self, applied_round: int = 0, source_id: str = ""):
+        super().__init__(
+            name="spirit_guardians_active", expires_on="never",
+            rounds_remaining=10, applied_round=applied_round,
+            source_id=source_id, kind="buff",
+        )
+
+
 class VowTarget(StatusEffect):
     """Vow of Enmity target. The paladin (source_id) attacks this creature with
     advantage. Handled in _resolve_single_attack (no hook here — needs
@@ -293,6 +371,61 @@ class VowTarget(StatusEffect):
         super().__init__(name="vow_target", expires_on="never",
                          rounds_remaining=10, applied_round=applied_round,
                          source_id=source_id)
+
+
+# ── Wave 2 conditions (MONSTER_CATALOG §3 C 級) ──────────────────────────────
+
+class Petrified(StatusEffect):
+    """石化（5e 簡化）：等同麻痺（不能行動、STR/DEX 豁免自動失敗、被攻擊
+    有優勢）＋全傷害類型抗性（減半）。與 5e 的差異：不變物件、毒免疫略；
+    近戰命中不自動暴擊（5e 的 auto-crit 只屬 paralyzed/unconscious）。
+    永久（rounds=None）；戰鬥結束時由 COMBAT_ONLY 清理（戰役仁慈規則）。
+    Stage-2 of the two-stage gaze/ray escalation (basilisk, beholder)."""
+    _AUTO_FAIL = ("STR", "DEX")
+    def __init__(self, applied_round: int = 0, source_id: str = ""):
+        super().__init__(name="petrified", expires_on="never",
+                         applied_round=applied_round, source_id=source_id)
+    def on_incoming_attack(self, defender, attacker, weapon, mode: str) -> str:
+        return combine_advantage(mode, "advantage")
+    def on_auto_fail_save(self, char, stat: str) -> bool:
+        return stat.upper() in self._AUTO_FAIL
+    def on_speed_multiplier(self, char) -> float:
+        return 0.0
+    def on_incoming_damage(self, target, attacker, amount: int, dtype: str) -> int:
+        return amount // 2
+
+
+class Swallowed(StatusEffect):
+    """吞噬（Behir／Kraken／Tarrasque 系，簡化版）：束縛＋目盲的合成效果
+    （被攻擊優勢、自身攻擊劣勢、速度 0、DEX 豁免 −5）＋體內持續傷害。
+    DoT 由 tick_aura_damage 的通用 status-tick 掃描執行，參數放 metadata：
+      tick_damage_dice / tick_damage_type   每回合開始的體內傷害
+      ends_if_source_dead = True            吞噬者死亡 → 被吐出（效果移除）
+    逃脫：save_each（簡化 5e 的「對吞噬者造成 30+ 傷害則吐出」）。"""
+    def __init__(self, applied_round: int = 0, source_id: str = ""):
+        super().__init__(name="swallowed", expires_on="never",
+                         applied_round=applied_round, source_id=source_id)
+    def on_incoming_attack(self, defender, attacker, weapon, mode: str) -> str:
+        return combine_advantage(mode, "advantage")
+    def on_outgoing_attack(self, attacker, target, weapon, mode: str) -> str:
+        return combine_advantage(mode, "disadvantage")
+    def on_saving_throw(self, char, stat: str, modifier: int) -> int:
+        return modifier - 5 if stat.upper() == "DEX" else modifier
+    def on_speed_multiplier(self, char) -> float:
+        return 0.0
+
+
+class Slowed(StatusEffect):
+    """緩速（眼魔緩速射線；Wave 3 石魔像緩速 AoE 同款）：速度減半、AC −2。
+    5e slow 還有「每回合一動作、無反應」——本引擎以此兩項近似。"""
+    def __init__(self, applied_round: int = 0, source_id: str = ""):
+        super().__init__(name="slowed", expires_on="never",
+                         rounds_remaining=10, applied_round=applied_round,
+                         source_id=source_id)
+    def on_speed_multiplier(self, char) -> float:
+        return 0.5
+    def on_compute_ac(self, char, current_ac: int) -> int:
+        return current_ac - 2
 
 
 # ── Registry ─────────────────────────────────────────────────────────────────
@@ -308,6 +441,9 @@ MODIFIER_CLASSES: dict[str, type] = {
     "shielded":     Shielded,
     "prone":        Prone,
     "paralyzed":    Paralyzed,
+    "asleep":       Asleep,
+    "blinded":      Blinded,
+    "distracted":   Distracted,
     "stunned":      Stunned,
     "poisoned":     Poisoned,
     "restrained":   Restrained,
@@ -317,10 +453,35 @@ MODIFIER_CLASSES: dict[str, type] = {
     "hunters_mark":       HuntersMark,
     "blurred":            Blurred,
     "baned":              Baned,
-    "sacred_weapon_buff": SacredWeaponBuff,
-    "shield_of_faith":    ShieldOfFaith,
-    "vow_target":         VowTarget,
+    "sacred_weapon_buff":      SacredWeaponBuff,
+    "shield_of_faith":         ShieldOfFaith,
+    "vow_target":              VowTarget,
+    "spiritual_weapon_active": SpiritualWeaponActive,
+    "spirit_guardians_active": SpiritGuardiansActive,
+    # "petrified" 在 STATUS_SLOTS 既有保留位 → 加入本表不改變 RL_STATUS_NAMES
+    # 聯集（obs 維度凍結），且 obs 立即可見此狀態。
+    "petrified":               Petrified,
 }
+
+# 引擎可施加、但「名字還不在 obs 狀態詞彙」的狀態。RL_STATUS_NAMES（= obs
+# ENTITY_DIM 的一部分）取自 STATUS_SLOTS ∪ MODIFIER_CLASSES.keys()——往
+# MODIFIER_CLASSES 加新名字會位移所有 checkpoint 的 obs 維度。新狀態先放
+# 這裡（引擎機制照常運作、obs 暫不可見），下一次 obs 手術時再整批收編。
+ENGINE_ONLY_STATUS_CLASSES: dict[str, type] = {
+    "swallowed": Swallowed,
+    "slowed":    Slowed,
+}
+
+# 施加類狀態的單一查找入口（rider／SPELL／射線表共用）。
+ALL_STATUS_CLASSES: dict[str, type] = {
+    **MODIFIER_CLASSES, **ENGINE_ONLY_STATUS_CLASSES,
+}
+
+# 不能行動／不能反應的狀態（5e incapacitated 家族——本引擎建模的子集）。
+# execute_action 的行動拒絕與 env 的回合跳過必須吃同一份清單。
+INCAPACITATING_STATUSES: tuple[str, ...] = (
+    "paralyzed", "asleep", "stunned", "petrified",
+)
 
 # Statuses that exist only for the duration of one combat — buffs/debuffs the
 # engine attaches via the action system. They get cleared in bulk when combat
@@ -329,10 +490,13 @@ MODIFIER_CLASSES: dict[str, type] = {
 # sources) should be omitted here so they survive combat transitions.
 COMBAT_ONLY_STATUSES: frozenset[str] = frozenset({
     "dodging", "hidden", "reckless", "blessed", "raging", "shielded",
-    "prone", "paralyzed", "stunned", "poisoned", "restrained",
+    "prone", "paralyzed", "asleep", "blinded", "distracted",
+    "stunned", "poisoned", "restrained",
     "frightened", "charmed", "disengaging", "evasion", "hunters_mark",
     "blurred", "baned", "sacred_weapon_buff",
     "shield_of_faith", "vow_target",
+    "spiritual_weapon_active", "spirit_guardians_active",
+    "petrified", "swallowed", "slowed",
 })
 
 
@@ -351,6 +515,39 @@ def tick_status_effects(char, phase: str, round_num: int) -> None:
     dropped if duplicates ever appear.
     """
     from .combat import make_saving_throw  # avoid circular import
+
+    # Breath-weapon recharge (Wave 1): at the start of the creature's turn,
+    # each spent recharge ability rolls 1d6 — at or above its threshold the
+    # use comes back (dragon breath "Recharge 5-6"). Lives here because this
+    # function is the ONE turn-start chokepoint every driver already calls
+    # (game.py / env_v2 / bc_collect / sandbox) — no per-driver wiring.
+    if phase == "self_turn_start" and char.recharge_abilities:
+        from .dice import roll as _roll
+        for sid, threshold in char.recharge_abilities.items():
+            if char.ability_uses.get(sid, 1) <= 0 and _roll("1d6") >= threshold:
+                char.ability_uses[sid] = 1
+
+    # Regeneration (Wave 2): at the creature's turn start, heal a flat amount
+    # unless it took any of the suppressing damage types since its previous
+    # turn start (troll: fire/acid). Same chokepoint as breath recharge — every
+    # driver already calls this phase; no dice involved, so fights without a
+    # regenerator consume zero extra RNG (baseline-safe). The damage window
+    # set is cleared here for EVERY creature so it always means "damage taken
+    # since my last turn started".
+    if phase == "self_turn_start":
+        regen = getattr(char, "regeneration", None)
+        if (regen and char.is_alive() and char.hp < char.max_hp
+                and not (set(regen["blocked_by"]) & char.recent_damage_types)):
+            char.hp = min(char.max_hp, char.hp + regen["amount"])
+        if char.recent_damage_types:
+            char.recent_damage_types.clear()
+
+    # Legendary actions (Wave 3): the budget refills at the creature's own
+    # turn start (5e RAW). Spending happens at the end of OTHER creatures'
+    # turns via combat_policy.run_legendary_actions — this is only the regain,
+    # riding the same zero-wiring chokepoint as recharge/regeneration.
+    if phase == "self_turn_start" and char.legendary_actions_max:
+        char.legendary_actions_remaining = char.legendary_actions_max
 
     # Combat-end blanket cleanup: any combat-only buff/debuff is cleared so
     # the next encounter starts fresh.
@@ -377,10 +574,13 @@ def tick_status_effects(char, phase: str, round_num: int) -> None:
             fx.rounds_remaining -= 1
             if fx.rounds_remaining <= 0:
                 continue
-        # Rule 3: re-save each self_turn_end → drop on success
+        # Rule 3: re-save each self_turn_end → drop on success. Failing keeps
+        # a status on the creature, so legendary resistance may burn a use
+        # here (a held/restrained boss buying its action economy back).
         if fx.save_each and phase == "self_turn_end":
             stat, dc = parse_save(fx.save_each)
-            ok, _ = make_saving_throw(char, stat, dc)
+            ok, _ = make_saving_throw(char, stat, dc,
+                                      fail_applies_status=True)
             if ok:
                 continue
         remaining.append(fx)

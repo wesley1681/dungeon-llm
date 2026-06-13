@@ -73,6 +73,52 @@ class Character:
     aura_of_protection_bonus: int = 0  # Paladin L6: CHA mod added to all nearby ally saves
     portent_dice: list = field(default_factory=list)  # stored d20 values (Divination Wizard)
     pending_portent: int | None = None                 # overrides target's next save roll
+    # ── Wave 1 monster mechanics (all data-driven via TRAIT_APPLIERS) ────────
+    # {damage_type: multiplier} applied in apply_damage AFTER modifiers.
+    # 0.5 = resistance, 0.0 = immunity, 2.0 = vulnerability, negative = absorb
+    # (damage heals instead — Iron Golem fire). Keys validated vs DAMAGE_TYPES.
+    damage_multipliers: dict = field(default_factory=dict)
+    # Status names this creature can never receive (add_status drops them).
+    condition_immunities: list = field(default_factory=list)
+    # {skill_id: threshold} — at self_turn_start, if the ability is spent,
+    # roll 1d6 >= threshold to restore one use (dragon breath recharge 5-6).
+    recharge_abilities: dict = field(default_factory=dict)
+    pack_tactics: bool = False     # advantage when an ally is adjacent to target
+    undead_fortitude: bool = False  # Zombie: CON save to drop to 1 HP instead of 0
+    # ── Wave 2 monster mechanics ─────────────────────────────────────────────
+    # {"amount": 10, "blocked_by": ("火", "強酸")} — heal at self_turn_start
+    # unless a blocking damage type landed since the previous turn start.
+    regeneration: dict | None = None
+    # Damage types received since this creature's last turn start (consumed by
+    # regeneration suppression; cleared each self_turn_start in tick_status_effects).
+    recent_damage_types: set = field(default_factory=set)
+    # ── Wave 3 monster mechanics (all data-driven via TRAIT_APPLIERS) ────────
+    # Legendary actions (5e): a budget refilled at self_turn_start, spent ONE
+    # option at a time at the end of OTHER creatures' turns
+    # (combat_policy.run_legendary_actions). Options: {"ability": skill_id} or
+    # {"weapon": name} plus {"cost": int}. None of these fields enter obs —
+    # remaining counts are hidden resource state (MONSTER_CATALOG §4.1).
+    legendary_actions_max: int = 0
+    legendary_actions_remaining: int = 0
+    legendary_options: list = field(default_factory=list)
+    # Legendary resistance: auto-succeed a failed save that would leave a
+    # status on this creature (per-combat pool; make_saving_throw consumes).
+    legendary_resistance_uses: int = 0
+    # Frightful presence aura spec {"radius_m", "dc", "rounds"} — checked at
+    # each enemy's turn start (tick_aura_damage); a successful save grants
+    # immunity for the rest of the combat (frightful_immune_to, victim-side).
+    frightful_presence: dict | None = None
+    frightful_immune_to: set = field(default_factory=set)
+    # Death throes {"damage_dice","damage_type","radius_m","save_stat","dc"} —
+    # detonated by apply_damage when this NPC dies (popped for re-entrancy).
+    death_throes: dict | None = None
+    # Lair actions (5e): once per round at "initiative count 20" a creature in
+    # its lair triggers ONE environmental effect — chosen from lair_options
+    # ({"ability": skill_id, "ev": float}). Fired by combat_policy.run_lair_actions
+    # (piggybacked on run_legendary_actions, self-limited via lair_acted_round).
+    # Like legendary actions, NONE of these enter obs (hidden resource state).
+    lair_options: list = field(default_factory=list)
+    lair_acted_round: int = 0
     # 死亡豁免計數。只對 PC 有意義；NPC 在 HP=0 時立刻死亡。
     # {"successes": int, "failures": int}
     death_saves: dict = field(default_factory=lambda: {"successes": 0, "failures": 0})
@@ -155,7 +201,10 @@ class Character:
         return False
 
     def add_status(self, fx) -> None:
-        """Add a StatusEffect (idempotent on name)."""
+        """Add a StatusEffect (idempotent on name; condition immunities win —
+        a zombie can never become poisoned no matter the source)."""
+        if fx.name in self.condition_immunities:
+            return
         if self.has_status(fx.name):
             return
         self.status_effects.append(fx)
@@ -169,6 +218,13 @@ class Character:
                 or fx == name
             )
         ]
+
+    def is_incapacitated(self) -> bool:
+        """Cannot take actions (paralyzed/asleep/stunned/petrified). The ONE
+        predicate shared by execute_action's refusal and the drivers' turn
+        skips — extend status.INCAPACITATING_STATUSES, never the call sites."""
+        from .status import INCAPACITATING_STATUSES
+        return any(self.has_status(s) for s in INCAPACITATING_STATUSES)
 
     def iter_modifiers(self):
         """Yield all Modifier-implementing objects attached to this character."""
