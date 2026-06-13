@@ -30,3 +30,8 @@ eval/_subagent_prompts/
 /compare.txt
 /plan_summary.txt
 *.log
+
+# Combat / eval run artifacts (scratch output, not source)
+*.jsonl
+/eval_results/
+/observation1
