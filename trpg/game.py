@@ -14,9 +14,8 @@ from .engine.world_state import WorldState
 from .engine.combat import (
     execute_action, format_result, make_saving_throw,
     consume_resources, MOVE_BUDGET_M, build_combat_context,
-    tick_terrain_damage,
+    tick_terrain_damage, tick_aura_damage, roll_death_save,
 )
-from .engine.dice import roll
 from .engine.combat_policy import CombatPolicy, HeuristicCombatPolicy, HumanInputPolicy
 from .engine.quests import check_quest_progress, objective_progress_str
 from .engine.status import tick_status_effects
@@ -249,6 +248,30 @@ class GameSession:
         return {cid: c.name for cid, c in self.world_state.characters.items()
                 if not c.is_npc and not c.is_dead()}
 
+    def _run_legendary_phase(self, ended_cid: str, round_num: int) -> None:
+        """Legendary actions at the end of `ended_cid`'s turn (Wave 3), plus
+        narration of any world-level events (death throes) queued meanwhile."""
+        from .engine.combat_policy import run_legendary_actions
+        ws = self.world_state
+        for ev in run_legendary_actions(ws, ended_cid, round_num):
+            note = (f"⚡ 傳奇行動（花費 {ev['cost']}，剩餘 {ev['remaining']}）："
+                    + format_result(ev["action"], ev["result"],
+                                    ev["actor_name"]))
+            self._emit(ActionResult(ev["actor_name"], note,
+                                    "LEGENDARY_ACTION", valid=True))
+            ws.log_event("system", note)
+        events = getattr(ws, "pending_events", None)
+        if events:
+            for ev in events:
+                if ev.get("type") == "DEATH_THROES":
+                    note = (f"💥 {ev['source_name']} 死亡爆炸 → "
+                            f"{ev['target_name']} 受 {ev['damage']} 點"
+                            f"{ev['damage_type']}傷害")
+                    self._emit(ActionResult(ev["source_name"], note,
+                                            "DEATH_THROES", valid=True))
+                    ws.log_event("system", note)
+            events.clear()
+
     def _alive_party(self) -> dict[str, str]:
         """All alive party members (human PCs + follower NPCs).
 
@@ -415,33 +438,14 @@ class GameSession:
                 if char is None or char.is_dead():
                     continue
 
-                # ── Dying PC: death saving throw ──────────────────────────────
+                # ── Dying PC: death saving throw (shared engine rules) ────────
                 if char.is_dying():
-                    d20 = roll("1d20")
-                    saves = char.death_saves
-                    if d20 == 20:
-                        # Natural 20: stabilize at 1 HP
-                        char.hp = 1
-                        char.reset_death_saves()
-                        note = f"{char.name} 死亡豁免 d20={d20}：奇蹟回生（HP 1）"
-                    elif d20 == 1:
-                        saves["failures"] = saves.get("failures", 0) + 2
-                        note = f"{char.name} 死亡豁免 d20={d20}：大失敗，累計失敗 {saves['failures']}"
-                    elif d20 >= 10:
-                        saves["successes"] = saves.get("successes", 0) + 1
-                        if saves["successes"] >= 3:
-                            saves["successes"] = 0
-                            note = f"{char.name} 死亡豁免 d20={d20}：成功（第3次）——穩定化"
-                        else:
-                            note = f"{char.name} 死亡豁免 d20={d20}：成功，累計 {saves['successes']}/3"
-                    else:
-                        saves["failures"] = saves.get("failures", 0) + 1
-                        if saves["failures"] >= 3:
-                            note = f"{char.name} 死亡豁免 d20={d20}：第3次失敗——{char.name} 死亡"
-                        else:
-                            note = f"{char.name} 死亡豁免 d20={d20}：失敗，累計 {saves['failures']}/3"
-                    self._emit(ActionResult(char.name, note, "DEATH_SAVE", valid=True))
-                    ws.log_event("system", note)
+                    save = roll_death_save(char)
+                    if save["outcome"] != "skipped_stable":
+                        self._emit(ActionResult(char.name, save["note"],
+                                                "DEATH_SAVE", valid=True))
+                        ws.log_event("system", save["note"])
+                    self._run_legendary_phase(cid, combat.round_number)
                     continue
 
                 # ── Normal turn ───────────────────────────────────────────────
@@ -455,6 +459,24 @@ class GameSession:
                     ws.log_event("system", note)
                     if char.is_dead():
                         continue
+                # Hostile auras + status-tick damage (spirit guardians,
+                # swallowed acid). Every other driver (env_v2 / sandbox /
+                # bc_collect) already ran this at turn start; the campaign
+                # loop was the one place missing it.
+                for ev in tick_aura_damage(char, ws, combat.round_number):
+                    src = ev.get("source_name") or ev.get("status_name", "")
+                    if ev.get("type") == "FRIGHTFUL_PRESENCE":
+                        note = (f"{char.name} 面對 {src} 的恐懼威壓"
+                                f"（WIS DC{ev['save_dc']}）："
+                                + ("豁免成功，本場免疫"
+                                   if ev["save_success"] else "陷入恐懼"))
+                    else:
+                        note = (f"{char.name} 受到 {src} 的持續傷害 {ev['damage']} 點"
+                                f"（HP {char.hp}/{char.max_hp}）")
+                    self._emit(ActionResult(char.name, note, "TICK", valid=True))
+                    ws.log_event("system", note)
+                if char.is_dead():
+                    continue
 
                 # Per-turn resource budget. Sub-actions decrement these.
                 resources = {"action": 1, "bonus_action": 1, "movement": MOVE_BUDGET_M}
@@ -462,6 +484,7 @@ class GameSession:
 
                 # Phase: end of this character's turn
                 tick_status_effects(char, "self_turn_end", combat.round_number)
+                self._run_legendary_phase(cid, combat.round_number)
                 if stop_round == "quit":
                     return log
                 if not self._alive_enemies() or not self._alive_human_pcs():

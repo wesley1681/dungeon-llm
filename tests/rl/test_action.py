@@ -24,7 +24,8 @@ def _world():
 
 
 def test_action_dims_shape():
-    assert ACTION_DIMS == (20, 6, 900)
+    from trpg.rl.obs import N_ENTITY_SLOTS
+    assert ACTION_DIMS == (20, N_ENTITY_SLOTS, 900)
 
 
 def test_decode_skill_0_returns_none_end_turn():
@@ -40,15 +41,16 @@ def test_decode_skill_out_of_range_returns_none():
     assert out is None
 
 
-def test_decode_attack_targets_entity_slot_3():
-    # slot 3 in entities is enemy_1. We need to find the weapon skill index.
+def test_decode_attack_targets_first_enemy_slot():
+    # The first enemy slot (ENEMY_SLOT_START) is enemy_1.
     from trpg.engine.skill import available_skills
+    from trpg.rl.obs import ENEMY_SLOT_START
     ws = _world()
     skills = available_skills(ws.characters["a"], ws)
     weapon_idx = next(
         i for i, s in enumerate(skills) if s.skill_id.startswith("weapon:")
     )
-    out = decode_action([weapon_idx, 3, 0], ws, "a")
+    out = decode_action([weapon_idx, ENEMY_SLOT_START, 0], ws, "a")
     assert out is not None
     assert out["type"] == "ATTACK"
     assert out["attacker"] == "a"
@@ -78,9 +80,10 @@ def test_encode_attack_action_roundtrip():
         "consumes": ["action"],
     }
     enc = encode_action(action_dict, ws, "a")
-    # skill_idx matches weapon attack, entity_idx=3 (enemy_1), grid_cell ignored
+    # skill_idx matches weapon attack, entity_idx = first enemy slot
+    from trpg.rl.obs import ENEMY_SLOT_START
     assert enc[0] == weapon_idx
-    assert enc[1] == 3
+    assert enc[1] == ENEMY_SLOT_START
 
 
 def test_encode_move_action():
@@ -129,3 +132,43 @@ def test_encode_action_roundtrip_via_grid():
     for cell in [0, 50, 100, 200, 899]:
         x, y = _grid_cell_to_xy(cell)
         assert _xy_to_grid_cell(x, y) == cell
+
+
+def test_point_validity_mask_open_field_all_valid():
+    """No walls → every aim cell is legal (fast path)."""
+    from trpg.rl.action import point_validity_mask
+    from trpg.engine.skill import available_skills
+    ws = _world()
+    skills = available_skills(ws.characters["a"], ws)
+    move = next(s for s in skills if s.skill_id == "move")
+    inv = point_validity_mask(ws, "a", move)
+    assert not inv.any()
+
+
+def test_point_validity_mask_matches_decode_action():
+    """The mask must mirror decode_action: every cell it marks INVALID is a
+    cell decode_action rejects (None), and every valid cell decodes to a real
+    action. Single-source-of-truth regression for the silent-no-op loop
+    (28-round fireball-at-wall standoff)."""
+    from trpg.rl.action import point_validity_mask, decode_action
+    from trpg.engine.skill import available_skills
+    ws = _world()
+    # Wall between the combatants (mirrors env_v2's "walls" layout geometry).
+    bf = ws.combat.battlefield
+    bf.add_rect_obstacle(7.5, 0.0, 8.5, 30.0)
+    ws.characters["a"].position = type(ws.characters["a"].position)(5.0, 15.0)
+    ws.characters["b"].position = type(ws.characters["b"].position)(11.0, 15.0)
+    skills = available_skills(ws.characters["a"], ws)
+    move_idx, move = next((i, s) for i, s in enumerate(skills)
+                          if s.skill_id == "move")
+    inv = point_validity_mask(ws, "a", move)
+    assert inv.any(), "wall cells must be masked"
+    assert not inv.all(), "open cells must stay legal"
+    #
+
+    for cell in range(0, 900, 37):   # sample across the grid
+        decoded = decode_action([move_idx, 0, cell], ws, "a")
+        if inv[cell]:
+            assert decoded is None, f"cell {cell}: masked but decodes"
+        else:
+            assert decoded is not None, f"cell {cell}: legal but rejected"

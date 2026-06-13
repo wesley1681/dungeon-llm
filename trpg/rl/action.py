@@ -16,7 +16,8 @@ from typing import Sequence
 from ..engine.world_state import WorldState
 from ..engine.skill import available_skills, TargetType
 from ..engine.vec2 import Vec2
-from .obs import N_SKILL_SLOTS, N_ENTITY_SLOTS, N_GRID, GRID_CELL_SIZE_M, partition_entities
+from .obs import (N_SKILL_SLOTS, N_ENTITY_SLOTS, N_ALLY_SLOTS, N_ENEMY_SLOTS,
+                  ENEMY_SLOT_START, N_GRID, GRID_CELL_SIZE_M, partition_entities)
 
 
 ACTION_DIMS: tuple[int, int, int] = (N_SKILL_SLOTS, N_ENTITY_SLOTS, N_GRID * N_GRID)
@@ -31,11 +32,11 @@ def _entity_id_at_slot(ws: WorldState, agent_id: str, slot: int) -> str | None:
         return agent_id
     allies, enemies = partition_entities(ws, agent_id)
 
-    if 1 <= slot <= 2:
+    if 1 <= slot < ENEMY_SLOT_START:
         idx = slot - 1
         return allies[idx] if idx < len(allies) else None
-    if 3 <= slot <= 5:
-        idx = slot - 3
+    if ENEMY_SLOT_START <= slot < N_ENTITY_SLOTS:
+        idx = slot - ENEMY_SLOT_START
         return enemies[idx] if idx < len(enemies) else None
     return None
 
@@ -45,6 +46,39 @@ def _grid_cell_to_xy(cell: int) -> tuple[float, float]:
     ix = cell // N_GRID
     iy = cell % N_GRID
     return (ix + 0.5) * GRID_CELL_SIZE_M, (iy + 0.5) * GRID_CELL_SIZE_M
+
+
+def point_validity_mask(ws: WorldState, agent_id: str, skill) -> "object":
+    """Boolean[N_GRID*N_GRID]; True = decode_action would REJECT this cell for
+    the given POINT/LINE/CONE skill (post-clamp blocked terrain, or — for
+    non-move skills — no line of sight), silently turning the whole turn into
+    a no-op. Mirrors decode_action's POINT branch exactly; keep in sync.
+
+    This is the grid-head counterpart of apply_entity_mask: a LEGALITY mask,
+    identity- and tactic-agnostic. Without it the policy can aim an AoE at a
+    wall forever and never receive a learning signal that the action was
+    impossible (measured: 28-round fireball-at-wall standoffs).
+    """
+    import numpy as np
+    from ..engine.vec2 import TerrainType
+    invalid = np.zeros(N_GRID * N_GRID, dtype=bool)
+    bf = ws.combat.battlefield if ws.combat else None
+    if bf is None:
+        return invalid
+    blocked_val = int(TerrainType.BLOCKED)
+    if not any(c == blocked_val for row in bf.cells for c in row):
+        return invalid          # no walls on this map — every aim is legal
+    agent = ws.characters[agent_id]
+    is_move = skill.skill_id == "move"
+    rng_m = skill.features.range_m
+    for cell in range(N_GRID * N_GRID):
+        x, y = _grid_cell_to_xy(cell)
+        coord = _clamp_to_range(Vec2(x, y), agent.position, rng_m)
+        if bf.is_blocked(coord) or (
+                not is_move
+                and not bf.has_line_of_sight(agent.position, coord)):
+            invalid[cell] = True
+    return invalid
 
 
 def decode_action(action: Sequence[int], ws: WorldState, agent_id: str) -> dict | None:
@@ -128,10 +162,10 @@ def _entity_slot_of(ws: WorldState, agent_id: str, target_id: str) -> int:
     if target_id == agent_id:
         return 0
     allies, enemies = partition_entities(ws, agent_id)
-    if target_id in allies[:2]:
+    if target_id in allies[:N_ALLY_SLOTS]:
         return 1 + allies.index(target_id)
-    if target_id in enemies[:3]:
-        return 3 + enemies.index(target_id)
+    if target_id in enemies[:N_ENEMY_SLOTS]:
+        return ENEMY_SLOT_START + enemies.index(target_id)
     return 0
 
 

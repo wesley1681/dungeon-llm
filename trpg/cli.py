@@ -29,7 +29,7 @@ from .game import (
 OLLAMA_URL   = "http://localhost:11434"
 LLAMACPP_URL = "http://localhost:11435"
 BACKEND      = "ollama"
-MODEL        = "gemma4:26b"
+MODEL        = "qwen3.6-prism"
 LLAMACPP_MODEL = "Qwen3.6-27B-TQ3_4S"
 
 def _backend_url():  return LLAMACPP_URL if BACKEND == "llamacpp" else OLLAMA_URL

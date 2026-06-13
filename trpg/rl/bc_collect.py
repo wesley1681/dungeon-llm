@@ -9,12 +9,14 @@ import numpy as np
 
 from ..engine.combat import (
     execute_action, consume_resources, MOVE_BUDGET_M, tick_terrain_damage,
+    tick_aura_damage,
 )
+from ..engine.combat_policy import run_legendary_actions
 from ..engine.combat_policy import make_archetype_policy
 from ..engine.status import tick_status_effects
 from .env_v2 import (
     CombatEnvV2, ARCHETYPE_LIST,
-    _AGENT_ID, _OPPONENT_ID, _MAX_SUB_ACTIONS_PER_TURN,
+    _MAX_SUB_ACTIONS_PER_TURN,
 )
 from .obs import build_obs
 from .action import encode_action
@@ -43,28 +45,57 @@ def collect_bc_rollout(agent_arch: str, opponent_arch: str | None = None,
     around them via target_type masking — so they no longer pollute skill
     learning the way they did before the heads were split.
     """
-    env = CombatEnvV2(seed=seed)
-    env.reset(agent_arch=agent_arch, opponent_arch=opponent_arch, level=level)
+    env = CombatEnvV2(seed=seed, n_agents=1, n_opps=1)
+    env.reset(
+        agent_archs=[agent_arch] if agent_arch else None,
+        opp_archs=[opponent_arch] if opponent_arch else None,
+        level=level,
+    )
     expert = make_archetype_policy(agent_arch)
     pairs: list[tuple[dict, tuple, int]] = []
+    agent_id = env.agent_ids[0]
+    opp_id = env.opp_ids[0]
 
     while env.ws.combat.round_number <= max_rounds:
-        agent = env.ws.characters[_AGENT_ID]
-        opp = env.ws.characters[_OPPONENT_ID]
+        agent = env.ws.characters[agent_id]
+        opp = env.ws.characters[opp_id]
         if not agent.is_alive() or not opp.is_alive():
             break
 
+        # Skip the agent's turn entirely while incapacitated — same rule
+        # env_v2 and sandbox driver enforce (single predicate). Without this,
+        # the expert would emit actions execute_action rejects, polluting BC data.
+        if agent.is_incapacitated():
+            tick_status_effects(agent, "self_turn_end",
+                                 env.ws.combat.round_number)
+            run_legendary_actions(env.ws, agent_id,
+                                  env.ws.combat.round_number)
+            if opp.is_alive():
+                env._run_opponent_turn(opp_id)
+            env._end_of_round_tick()
+            if agent.is_alive():
+                env._agent_resources[agent_id] = {
+                    "action": 1, "bonus_action": 1, "movement": MOVE_BUDGET_M,
+                }
+                agent.reaction_used = False
+                agent.leveled_spell_cast_this_turn = False
+                tick_status_effects(agent, "self_turn_start",
+                                     env.ws.combat.round_number)
+                tick_terrain_damage(agent, env.ws.combat.battlefield)
+                tick_aura_damage(agent, env.ws, env.ws.combat.round_number)
+            continue
+
         for _ in range(_MAX_SUB_ACTIONS_PER_TURN):
-            obs_now = build_obs(env.ws, _AGENT_ID, env.resources)
+            obs_now = build_obs(env.ws, agent_id, env.resources)
             decision = expert.decide(
-                _AGENT_ID, agent, env.ws, env.resources,
+                agent_id, agent, env.ws, env.resources,
                 env.ws.combat.round_number,
             )
             if decision.action is None or decision.fled:
                 if not decision.fled:
                     pairs.append((obs_now, (0, 0, 0), TT_END))
                 break
-            enc = encode_action(decision.action, env.ws, _AGENT_ID)
+            enc = encode_action(decision.action, env.ws, agent_id)
             if enc[0] >= 0:
                 # Look up target_type from the chosen skill so the training
                 # loss can route entity/grid supervision only to relevant
@@ -84,20 +115,28 @@ def collect_bc_rollout(agent_arch: str, opponent_arch: str | None = None,
 
         # End-of-agent-turn
         tick_status_effects(agent, "self_turn_end", env.ws.combat.round_number)
+        run_legendary_actions(env.ws, agent_id, env.ws.combat.round_number)
         if opp.is_alive():
-            env._run_opponent_turn()
+            env._run_opponent_turn(opp_id)
         env._end_of_round_tick()
         if agent.is_alive():
-            env.resources = {"action": 1, "bonus_action": 1, "movement": MOVE_BUDGET_M}
+            env._agent_resources[agent_id] = {
+                "action": 1, "bonus_action": 1, "movement": MOVE_BUDGET_M,
+            }
             agent.reaction_used = False
             agent.leveled_spell_cast_this_turn = False
             tick_status_effects(agent, "self_turn_start", env.ws.combat.round_number)
             tick_terrain_damage(agent, env.ws.combat.battlefield)
+            tick_aura_damage(agent, env.ws, env.ws.combat.round_number)
     return pairs
 
 
-def collect_bc_dataset(n_episodes_per_arch: int = 50, seed: int = 0) -> dict:
+def collect_bc_dataset(n_episodes_per_arch: int = 50, seed: int = 0,
+                       only_arch: str | None = None) -> dict:
     """Roll out every archetype against every other; return a flat dataset.
+
+    ``only_arch`` (optional): collect ONLY this agent archetype (still vs all
+    opponents) — for a focused single-class BC clone.
 
     Returns dict with keys:
       obs:           {feature_name: ndarray}
@@ -106,7 +145,8 @@ def collect_bc_dataset(n_episodes_per_arch: int = 50, seed: int = 0) -> dict:
     """
     rng = np.random.default_rng(seed)
     all_pairs: list[tuple[dict, tuple, int]] = []
-    for agent_arch in ARCHETYPE_LIST:
+    arch_iter = [only_arch] if only_arch else ARCHETYPE_LIST
+    for agent_arch in arch_iter:
         for ep in range(n_episodes_per_arch):
             opp_arch = ARCHETYPE_LIST[rng.integers(len(ARCHETYPE_LIST))]
             level = int(rng.integers(3, 9))

@@ -63,6 +63,22 @@ class Vec2:
         raise TypeError(f"cannot coerce {type(value).__name__} to Vec2")
 
 
+def point_segment_distance(p: "Vec2", a: "Vec2", b: "Vec2") -> float:
+    """Shortest distance from point `p` to the segment a→b.
+
+    LINE-shaped effects (breath weapons, lightning bolt) define their area as
+    "within width/2 of the caster→endpoint segment" — both the engine's
+    affected-target resolution and the policies' friendly-fire checks must use
+    this same geometry, so it lives here next to Vec2."""
+    ab = b - a
+    ab_len2 = ab.x * ab.x + ab.y * ab.y
+    if ab_len2 < 1e-12:
+        return p.distance_to(a)
+    t = ((p.x - a.x) * ab.x + (p.y - a.y) * ab.y) / ab_len2
+    t = max(0.0, min(1.0, t))
+    return p.distance_to(Vec2(a.x + ab.x * t, a.y + ab.y * t))
+
+
 class TerrainType(IntEnum):
     """Per-cell terrain. Numeric values are the schema — don't reorder."""
     NORMAL    = 0

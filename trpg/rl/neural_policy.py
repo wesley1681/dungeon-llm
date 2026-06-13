@@ -38,7 +38,7 @@ class NeuralCombatPolicy(CombatPolicy):
         with torch.no_grad():
             end_l, skill_l, entity_l, grid_l = self.net(obs_t)
         skill_l  = apply_resource_mask(skill_l, resources, world_state, actor_id)
-        entity_l = apply_entity_mask(entity_l, obs_t)
+        entity_l = apply_entity_mask(entity_l, obs_t, world_state, actor_id)
         action = list(pick_action(end_l[0], skill_l[0], entity_l[0], grid_l[0],
                                   ws=world_state, agent_id=actor_id))
         action_dict = decode_action(action, world_state, actor_id)

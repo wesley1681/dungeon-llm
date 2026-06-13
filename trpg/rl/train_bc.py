@@ -33,7 +33,7 @@ def bc_loss_step(net: CombatPolicyNet, obs: dict,
                  actions: torch.Tensor,
                  target_types: torch.Tensor,
                  optim: torch.optim.Optimizer,
-                 skill_weight: torch.Tensor | None = None,
+                 skill_sample_w: torch.Tensor | None = None,
                  ) -> tuple[torch.Tensor, dict]:
     """One gradient step. Returns (loss, per-head accuracy dict).
 
@@ -43,10 +43,15 @@ def bc_loss_step(net: CombatPolicyNet, obs: dict,
       entity_head: pairs where target_type ∈ {SINGLE_*, MULTI_*}
       grid_head:   pairs where target_type ∈ {POINT, LINE, CONE}
 
-    ``skill_weight`` (optional, shape [N_SKILL_SLOTS]) re-weights the skill
-    cross-entropy by class — used to counter dataset imbalance where rare
-    abilities (vow_of_enmity, rage, sacred_weapon — fired ~once per fight)
-    get drowned by the ~80% weapon-attack samples.
+    ``skill_sample_w`` (optional, shape [B]) is a PER-SAMPLE weight on the skill
+    cross-entropy. It must be per-sample, NOT per-slot: ``available_skills``
+    orders slots [END, MOVE, weapons, abilities, DODGE, HIDE], so the same slot
+    index is a DIFFERENT skill across archetypes (slot 4 = action_surge for
+    champion but trip_attack for battle_master). A per-slot weight therefore
+    pools unrelated skills and fails to boost the rare combo skills
+    (action_surge / maneuver / smite) by their true identity — which is exactly
+    why combo classes under-learn them. The caller computes the weight from each
+    sample's chosen skill FEATURE VECTOR (identity-stable across archetypes).
     """
     net.train()
     end_logit, skill_logits, entity_logits, grid_logits = net(obs)
@@ -73,9 +78,16 @@ def bc_loss_step(net: CombatPolicyNet, obs: dict,
     chosen_grid_logits   = grid_logits[batch_idx, skill_target]     # [B, N_GRID*N_GRID]
 
     zero = torch.zeros((), device=end_logit.device)
-    skill_loss  = (F.cross_entropy(skill_logits[act_mask],  actions[act_mask, 0],
-                                    weight=skill_weight)
-                   if act_mask.any() else zero)
+    if act_mask.any():
+        _sl = F.cross_entropy(skill_logits[act_mask], actions[act_mask, 0],
+                              reduction="none")
+        if skill_sample_w is not None:
+            w = skill_sample_w[act_mask]
+            skill_loss = (_sl * w).sum() / w.sum().clamp(min=1e-6)
+        else:
+            skill_loss = _sl.mean()
+    else:
+        skill_loss = zero
     entity_loss = (F.cross_entropy(chosen_entity_logits[entity_mask],
                                    actions[entity_mask, 1])
                    if entity_mask.any() else zero)
@@ -106,10 +118,15 @@ def bc_loss_step(net: CombatPolicyNet, obs: dict,
 def train_bc(dataset: dict, *, epochs: int = 10, batch_size: int = 64,
              lr: float = 3e-4, device: str = "cuda",
              save_path: str | None = None,
+             use_skill_weight: bool = True,
              verbose: bool = True) -> dict:
     """Run BC over a stacked dataset (from bc_collect.collect_bc_dataset).
 
-    Returns a history dict with per-epoch mean loss and per-head accuracy.
+    ``use_skill_weight``: when False, every act-sample gets weight 1 (no
+    inverse-frequency boost). The boost helps rare combo skills be learned, but
+    it also over-boosts a rare-but-cheap skill like action_surge, making the
+    clone fire it ~1.5x more than the expert (champion over-surge); disabling it
+    is the ablation that tests whether that over-surge is what caps champion.
     """
     if device == "cuda" and not torch.cuda.is_available():
         device = "cpu"
@@ -119,26 +136,31 @@ def train_bc(dataset: dict, *, epochs: int = 10, batch_size: int = 64,
     n = actions.shape[0]
     idx = np.arange(n)
 
-    # Inverse-frequency class weight for the skill_head, sqrt-softened.
-    # Pure inverse-frequency (1/count) gives the rarest skills ~50x the
-    # weight of common ones, which causes degenerate "always hide" /
-    # "always vow" policies. Taking sqrt compresses the dynamic range to
-    # ~7x — rare skills still boosted, but not enough to spam them.
-    # Skills never seen in the dataset get weight 0 (no gradient, no NaN).
-    from .obs import N_SKILL_SLOTS
-    act_actions = actions[actions[:, 0] > 0, 0]
-    counts = torch.bincount(act_actions, minlength=N_SKILL_SLOTS).float()
-    n_active_classes = (counts > 0).sum().clamp(min=1)
-    n_act = counts.sum().clamp(min=1)
-    raw_w = n_act / (n_active_classes * counts.clamp(min=1))
-    skill_weight = torch.where(
-        counts > 0, raw_w.sqrt(), torch.zeros_like(counts)
-    ).to(device)
+    # Inverse-frequency weight on the skill_head, sqrt-softened, keyed by skill
+    # IDENTITY (the chosen skill's feature vector) rather than slot index.
+    # Slot index is archetype-dependent (slot 4 = action_surge for champion but
+    # trip_attack for battle_master), so a per-slot weight pools unrelated skills
+    # and never correctly boosts the rare combo skills the combo classes need.
+    # Keying by the feature vector groups identical skills across archetypes.
+    # sqrt compresses pure 1/count (~50x) to ~7x so rare skills are boosted but
+    # not spammed into degenerate "always vow / always hide" policies.
+    from collections import Counter
+    skills_arr = dataset["obs"]["skills"]                 # [n, N_SKILL_SLOTS, F]
+    act_pos = np.where(dataset["actions"][:, 0] > 0)[0]
+    chosen_feats = skills_arr[act_pos, dataset["actions"][act_pos, 0]]  # [n_act, F]
+    keys = [k.tobytes() for k in np.round(chosen_feats, 3)]
+    cnt = Counter(keys)
+    n_classes = max(1, len(cnt))
+    n_act_total = max(1, len(keys))
+    id_w = {k: float(np.sqrt(n_act_total / (n_classes * c))) for k, c in cnt.items()}
+    sample_w = np.zeros(n, dtype=np.float32)
+    for j, i in enumerate(act_pos):
+        sample_w[i] = id_w[keys[j]] if use_skill_weight else 1.0
     if verbose:
-        top = sorted(enumerate(counts.tolist()), key=lambda x: -x[1])[:6]
-        print(f"   class-weight (inverse-freq): top counts {top}")
-        print(f"   resulting weights (top→bottom): "
-              + ", ".join(f"idx{i}:{skill_weight[i]:.2f}" for i, _ in top))
+        top = sorted(cnt.items(), key=lambda x: -x[1])[:6]
+        print(f"   identity-weight: {len(cnt)} distinct skills, "
+              f"top counts {[c for _, c in top]}, "
+              f"weight range [{min(id_w.values()):.2f}, {max(id_w.values()):.2f}]")
 
     net = CombatPolicyNet().to(device)
     optim = torch.optim.Adam(net.parameters(), lr=lr)
@@ -155,8 +177,9 @@ def train_bc(dataset: dict, *, epochs: int = 10, batch_size: int = 64,
                      for k, v in dataset["obs"].items()}
             act_b = actions[sel].to(device)
             tt_b  = target_types[sel].to(device)
+            sw_b = torch.from_numpy(sample_w[sel]).to(device)
             loss, acc = bc_loss_step(net, obs_b, act_b, tt_b, optim,
-                                       skill_weight=skill_weight)
+                                       skill_sample_w=sw_b)
             ep_losses.append(float(loss))
             ep_acc_end.append(acc["end"])
             if acc["skill"] == acc["skill"]:  # nan check

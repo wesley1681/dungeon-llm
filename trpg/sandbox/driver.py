@@ -9,12 +9,41 @@ from __future__ import annotations
 
 from ..engine.combat import (
     execute_action, consume_resources, MOVE_BUDGET_M, tick_terrain_damage,
+    tick_aura_damage,
 )
+from ..engine.combat_policy import run_legendary_actions
 from ..engine.status import tick_status_effects
-from ..engine.abilities import ABILITY_REGISTRY
 
 
 _MAX_SUB_ACTIONS_PER_TURN = 5
+
+
+def _announce_pending_events(ws, frontend) -> None:
+    """Drain world-level events queued by the engine outside action results
+    (death throes detonations) and narrate them."""
+    events = getattr(ws, "pending_events", None)
+    if not events:
+        return
+    for ev in events:
+        if ev.get("type") == "DEATH_THROES":
+            ok = "豁免成功（半傷）" if ev["save_success"] else "豁免失敗"
+            frontend.announce(
+                f"💥 {ev['source_name']} 死亡爆炸（{ev['damage_dice']} "
+                f"{ev['damage_type']}）→ {ev['target_name']}：{ok}，"
+                f"{ev['damage']} 點傷害（HP {ev['target_hp']}）")
+    events.clear()
+
+
+def _run_legendary_phase(ended_id: str, ws, frontend) -> None:
+    """Fire legendary actions at the end of `ended_id`'s turn and narrate."""
+    for ev in run_legendary_actions(ws, ended_id, ws.combat.round_number):
+        actor = ws.characters[ev["actor_id"]]
+        frontend.announce(
+            f"⚡ 傳奇行動（{ev['actor_name']}，花費 {ev['cost']}，"
+            f"剩餘 {ev['remaining']}）")
+        for line in _format_result(actor, ev["result"]):
+            frontend.announce(line)
+    _announce_pending_events(ws, frontend)
 
 
 def _fresh_resources() -> dict:
@@ -38,6 +67,33 @@ def _run_one_turn(actor_id: str, ws, decider, frontend,
     round_num = ws.combat.round_number
     tick_status_effects(actor, "self_turn_start", round_num)
     tick_terrain_damage(actor, ws.combat.battlefield)
+    for ev in tick_aura_damage(actor, ws, round_num):
+        et = ev.get("type")
+        if et == "FRIGHTFUL_PRESENCE":
+            out = ("豁免成功（本場免疫）" if ev["save_success"]
+                   else "豁免失敗 → frightened")
+            frontend.announce(
+                f"[{actor.name}] 恐懼威壓（{ev['source_name']}，"
+                f"WIS DC{ev['save_dc']}，擲 {ev['save_roll']}）：{out}")
+        elif et == "AURA_DAMAGE":
+            frontend.announce(
+                f"[{actor.name}] 受 {ev['source_name']} 的"
+                f"{ev['spell_name']}光環 {ev['damage']} 點傷害"
+                f"（HP {ev['target_hp']}/{ev['target_max_hp']}）")
+        elif et == "STATUS_TICK_DAMAGE":
+            frontend.announce(
+                f"[{actor.name}] {ev['status_name']} 持續傷害 "
+                f"{ev['damage']}（{ev['damage_type']}，HP {ev['target_hp']}）")
+    _announce_pending_events(ws, frontend)
+
+    # Incapacitated (status.INCAPACITATING_STATUSES): skip the entire turn.
+    if actor.is_incapacitated():
+        from ..engine.status import INCAPACITATING_STATUSES
+        cond = next(s for s in INCAPACITATING_STATUSES if actor.has_status(s))
+        frontend.announce(f"[{actor.name}] 處於 {cond} 狀態，跳過回合")
+        tick_status_effects(actor, "self_turn_end", round_num)
+        _run_legendary_phase(actor_id, ws, frontend)
+        return
 
     resources = _fresh_resources()
     for sub_idx in range(_MAX_SUB_ACTIONS_PER_TURN):
@@ -84,14 +140,11 @@ def _run_one_turn(actor_id: str, ws, decider, frontend,
                 and (result.get("distance", 0) < 0.01
                      or resources["movement"] < 0.5)):
             resources["movement"] = 0.0
-        if skill_id is not None:
-            ab = ABILITY_REGISTRY.get(skill_id)
-            if ab is not None and ab.max_uses > 0:
-                actor.ability_uses[skill_id] = (
-                    actor.ability_uses.get(skill_id, ab.max_uses) - 1
-                )
+        # Limited-use deduction now happens inside execute_action (shared
+        # funnel) — a driver-level copy here would double-deduct.
         for line in _format_result(actor, result):
             frontend.announce(line)
+        _announce_pending_events(ws, frontend)
         if event_log is not None:
             event_log(_build_event(round_num, sub_idx, actor, action, result,
                                     resources_before, resources, ws))
@@ -99,6 +152,7 @@ def _run_one_turn(actor_id: str, ws, decider, frontend,
                 and resources["movement"] <= 1e-6):
             break
     tick_status_effects(actor, "self_turn_end", round_num)
+    _run_legendary_phase(actor_id, ws, frontend)
 
 
 def _format_result(actor, result: dict) -> list[str]:
@@ -144,7 +198,9 @@ def _format_result(actor, result: dict) -> list[str]:
         return lines
 
     if t == "MULTI_ATTACK":
-        hits = result.get("hits", [])
+        # Engine key is "attacks" ("hits" was never emitted — every
+        # multiattack line used to render as 0/0).
+        hits = result.get("attacks", [])
         total_dmg = sum(h.get("damage", 0) for h in hits)
         n_hit = sum(1 for h in hits if h.get("hit"))
         lines.append(f"[{name}] 多重攻擊 ({n_hit}/{len(hits)} 命中, 共 {total_dmg}傷)")
@@ -254,6 +310,23 @@ def _format_result(actor, result: dict) -> list[str]:
     if t in ("HIDE", "DODGE", "DISENGAGE"):
         zh = {"HIDE": "躲藏", "DODGE": "閃避", "DISENGAGE": "脫離"}
         lines.append(f"[{name}] {zh[t]}")
+        return lines
+
+    if t == "EYE_RAYS":
+        dc = result.get("save_dc", 0)
+        lines.append(f"[{name}] 眼魔射線 ×{len(result.get('rays', []))}"
+                     f"  (DC{dc}, 共 {result.get('total_damage', 0)}傷)")
+        for ray in result.get("rays", []):
+            tgt = ray.get("target_name", "?")
+            ok = "成功" if ray.get("save_success") else "失敗"
+            bits = f"{ray.get('ray_name', '?')} → {tgt}: " \
+                   f"{ray.get('save_stat', '?')}豁免{ok} (擲{ray.get('save_roll', 0)})"
+            if ray.get("damage"):
+                hp = f"{ray.get('target_hp', '?')}"
+                bits += f" → {ray['damage']}傷  HP {hp}"
+            if ray.get("status_applied"):
+                bits += f" → 施加 {ray['status_applied']}"
+            lines.append(f"  └ {bits}")
         return lines
 
     if t == "ERROR":

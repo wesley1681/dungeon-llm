@@ -165,12 +165,14 @@ class ConsoleFrontend:
             return sk.build_action(actor_id, actor_id, None)
 
         if tt in ENTITY_TT:
+            from ..rl.obs import N_ALLY_SLOTS, N_ENEMY_SLOTS
             allies, enemies = partition_entities(ws, actor_id)
             # Entity slot list: 0=self, 1..=allies, then enemies
             slots = {0: actor_id}
-            for k, aid in enumerate(allies[:2], start=1):
+            for k, aid in enumerate(allies[:N_ALLY_SLOTS], start=1):
                 slots[k] = aid
-            for k, eid in enumerate(enemies[:3], start=len(allies[:2]) + 1):
+            for k, eid in enumerate(enemies[:N_ENEMY_SLOTS],
+                                     start=len(allies[:N_ALLY_SLOTS]) + 1):
                 slots[k] = eid
             self._console.print("[dim]目標:[/]")
             for k, cid in slots.items():

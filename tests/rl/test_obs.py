@@ -11,10 +11,14 @@ from trpg.engine.world_state import CombatState, WorldState
 from trpg.rl.obs import (
     BATTLEFIELD_SIZE_M,
     ENTITY_DIM,
+    ENEMY_SLOT_START,
     GRID_CELL_SIZE_M,
+    N_ALLY_SLOTS,
+    N_ENEMY_SLOTS,
     N_ENTITY_SLOTS,
     N_GRID,
     N_SKILL_SLOTS,
+    N_V3_EXTRA,
     OBS_KEYS,
     build_obs,
     entities_obs,
@@ -26,15 +30,23 @@ from trpg.rl.obs import (
 
 def test_schema_constants():
     assert N_SKILL_SLOTS == 20
-    assert N_ENTITY_SLOTS == 6
-    from trpg.rl.obs import N_RL_STATUS
-    # 7 base + 12 archetype multi-hot + N_RL_STATUS status multi-hot + 1 concentrating
-    assert ENTITY_DIM == 7 + 12 + N_RL_STATUS + 1
+    assert N_ENTITY_SLOTS == 1 + N_ALLY_SLOTS + N_ENEMY_SLOTS
+    assert ENEMY_SLOT_START == 1 + N_ALLY_SLOTS
+    from trpg.rl.obs import (N_RL_STATUS, N_V4_DESC, N_V5_TRAIT, ENT_V3_TAIL_START,
+                             ENT_DESC_START, ENT_TRAIT_START)
+    # 7 base + 12 archetype multi-hot + N_RL_STATUS status multi-hot
+    # + 1 concentrating + v3 tail (level, max_hp, ac, dying, death saves)
+    # + v4 capability descriptor + v5 passive-trait descriptor
+    assert ENTITY_DIM == 7 + 12 + N_RL_STATUS + 1 + N_V3_EXTRA + N_V4_DESC + N_V5_TRAIT
+    assert ENT_V3_TAIL_START == 7 + 12 + N_RL_STATUS + 1
+    assert ENT_DESC_START == ENT_V3_TAIL_START + N_V3_EXTRA
+    assert ENT_TRAIT_START == ENT_DESC_START + N_V4_DESC
     assert N_GRID == 30
     assert GRID_CELL_SIZE_M == 1.0
     assert BATTLEFIELD_SIZE_M == 30.0
     assert set(OBS_KEYS) == {"skills", "skill_mask", "entities", "resources",
-                             "terrain", "entity_grid"}
+                             "terrain", "entity_grid", "distance_grid",
+                             "end_features", "decision_context"}
 
 
 def test_terrain_obs_shape_and_dtype():
@@ -111,22 +123,23 @@ def test_entities_obs_self_row_zero():
 def test_entities_obs_enemy_in_enemy_slots():
     ws = _build_1v1_world()
     obs = entities_obs(ws, "a")
-    # rows 3..5 are enemies, slot 3 is closest
-    assert obs[3, 4] == 1.0   # is_enemy
-    assert obs[3, 6] == 0.0   # not self
-    assert obs[3, 5] == 1.0   # alive
-    assert obs[3, 0] == pytest.approx(1.0)
+    # enemy rows start at ENEMY_SLOT_START, first is closest
+    e0 = ENEMY_SLOT_START
+    assert obs[e0, 4] == 1.0   # is_enemy
+    assert obs[e0, 6] == 0.0   # not self
+    assert obs[e0, 5] == 1.0   # alive
+    assert obs[e0, 0] == pytest.approx(1.0)
 
 
 def test_entities_obs_padding_is_zero():
     ws = _build_1v1_world()
     obs = entities_obs(ws, "a")
-    # no allies → rows 1, 2 are padding
-    assert np.all(obs[1] == 0.0)
-    assert np.all(obs[2] == 0.0)
-    # only 1 enemy → rows 4, 5 are padding
-    assert np.all(obs[4] == 0.0)
-    assert np.all(obs[5] == 0.0)
+    # no allies → all ally rows are padding
+    for r in range(1, ENEMY_SLOT_START):
+        assert np.all(obs[r] == 0.0)
+    # only 1 enemy → remaining enemy rows are padding
+    for r in range(ENEMY_SLOT_START + 1, N_ENTITY_SLOTS):
+        assert np.all(obs[r] == 0.0)
 
 
 def test_entities_obs_sorts_enemies_by_distance():
@@ -150,9 +163,10 @@ def test_entities_obs_sorts_enemies_by_distance():
     far.position = Vec2(20.0, 15.0)
 
     obs = entities_obs(ws, "a")
-    # slot 3 should be "close" (distance 5), slot 4 should be "far" (distance 15)
+    # first enemy slot should be "close" (distance 5), next "far" (distance 15)
     # We can verify via the dist_norm column (index 3)
-    assert obs[3, 3] < obs[4, 3], "closer enemy should have smaller dist_norm"
+    e0 = ENEMY_SLOT_START
+    assert obs[e0, 3] < obs[e0 + 1, 3], "closer enemy should have smaller dist_norm"
 
 
 def test_entities_obs_status_multi_hot():
@@ -163,11 +177,12 @@ def test_entities_obs_status_multi_hot():
     obs = entities_obs(ws, "a")
     status_start = 7 + N_ARCHETYPES
     para_idx = status_start + RL_STATUS_NAMES.index("paralyzed")
-    # enemy "b" is at slot 3; only paralyzed bit should be set in status block
-    assert obs[3, para_idx] == 1.0
+    # enemy "b" is at the first enemy slot; only paralyzed bit set in status block
+    e0 = ENEMY_SLOT_START
+    assert obs[e0, para_idx] == 1.0
     for i, name in enumerate(RL_STATUS_NAMES):
         if name != "paralyzed":
-            assert obs[3, status_start + i] == 0.0
+            assert obs[e0, status_start + i] == 0.0
 
 
 def test_entities_obs_dead_chars_excluded():
@@ -175,8 +190,43 @@ def test_entities_obs_dead_chars_excluded():
     ws = _build_1v1_world()
     ws.characters["b"].hp = 0
     obs = entities_obs(ws, "a")
-    # slot 3 (enemy_1) should be all zeros since b is dead
-    assert np.all(obs[3] == 0.0)
+    # first enemy slot should be all zeros since b (NPC) is dead at 0 HP
+    assert np.all(obs[ENEMY_SLOT_START] == 0.0)
+
+
+def test_entities_obs_v3_threat_features():
+    """v3 tail: level / max_hp / ac normalised scalars at the row tail."""
+    from trpg.rl.obs import LEVEL_NORM, MAXHP_NORM, AC_NORM, ENT_V3_TAIL_START, N_V3_EXTRA as _NV3
+    ws = _build_1v1_world()
+    obs = entities_obs(ws, "a")
+    # self: L3, 24 max_hp, AC 14 (from _build_1v1_world)
+    tail = ENT_V3_TAIL_START
+    assert obs[0, tail + 0] == pytest.approx(3 / LEVEL_NORM)
+    assert obs[0, tail + 1] == pytest.approx(24 / MAXHP_NORM)
+    assert obs[0, tail + 2] == pytest.approx(14 / AC_NORM)
+    # enemy: L1, 10 max_hp, AC 12 — a full-HP L1 and L3 are now distinguishable
+    e0 = ENEMY_SLOT_START
+    assert obs[e0, tail + 0] == pytest.approx(1 / LEVEL_NORM)
+    assert obs[e0, tail + 1] == pytest.approx(10 / MAXHP_NORM)
+    assert obs[e0, tail + 2] == pytest.approx(12 / AC_NORM)
+    # nobody dying → dying / death-save features all zero
+    assert np.all(obs[0, tail + 3:tail + _NV3] == 0.0)
+    assert np.all(obs[e0, tail + 3:tail + _NV3] == 0.0)
+
+
+def test_entities_obs_v3_dying_features():
+    """A dying PC shows is_dying=1 and its death-save counters."""
+    ws = _build_1v1_world()
+    a = ws.characters["a"]
+    a.hp = 0                      # PC at 0 HP → dying, not dead
+    a.death_saves = {"successes": 1, "failures": 2}
+    obs = entities_obs(ws, "a")
+    from trpg.rl.obs import ENT_V3_TAIL_START
+    tail = ENT_V3_TAIL_START
+    assert obs[0, 5] == 0.0                       # is_alive = 0
+    assert obs[0, tail + 3] == 1.0                # is_dying
+    assert obs[0, tail + 4] == pytest.approx(1 / 3)
+    assert obs[0, tail + 5] == pytest.approx(2 / 3)
 
 
 def test_skills_obs_shapes():

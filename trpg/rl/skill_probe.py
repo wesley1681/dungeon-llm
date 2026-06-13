@@ -32,7 +32,7 @@ from ..engine.skill import available_skills
 from ..engine.status import tick_status_effects
 from .env_v2 import (
     CombatEnvV2, ARCHETYPE_LIST,
-    _AGENT_ID, _OPPONENT_ID, _MAX_SUB_ACTIONS_PER_TURN,
+    _MAX_SUB_ACTIONS_PER_TURN,
 )
 from .model import apply_resource_mask, apply_entity_mask, pick_action
 
@@ -59,20 +59,21 @@ def run_model_episodes(net, agent_arch: str, n: int, device: str,
     """Drive ``net`` as agent for n episodes; return Counter[skill_id]."""
     counter: Counter = Counter()
     for ep in range(n):
-        env = CombatEnvV2(seed=seed + ep)
-        obs, _ = env.reset(agent_arch=agent_arch)
+        env = CombatEnvV2(seed=seed + ep, n_agents=1, n_opps=1)
+        obs, _ = env.reset(agent_archs=[agent_arch] if agent_arch else None)
+        agent_id = env.agent_ids[0]
         done = False
         while not done:
-            agent = env.ws.characters[_AGENT_ID]
+            agent = env.ws.characters[agent_id]
             skills_now = available_skills(agent, env.ws)
             obs_t = {k: torch.from_numpy(v).unsqueeze(0).to(device)
                      for k, v in obs.items()}
             with torch.no_grad():
                 end_l, s, e, g = net(obs_t)
-            s_m = apply_resource_mask(s, env.resources, env.ws, _AGENT_ID)
+            s_m = apply_resource_mask(s, env.resources, env.ws, agent_id)
             e_m = apply_entity_mask(e, obs_t)
             action = list(pick_action(end_l[0], s_m[0], e_m[0], g[0],
-                                       ws=env.ws, agent_id=_AGENT_ID))
+                                       ws=env.ws, agent_id=agent_id))
             skill_idx = action[0]
             if 0 <= skill_idx < len(skills_now):
                 counter[skills_now[skill_idx].skill_id] += 1
@@ -91,13 +92,15 @@ def run_expert_episodes(agent_arch: str, n: int, seed: int) -> Counter:
     """
     counter: Counter = Counter()
     for ep in range(n):
-        env = CombatEnvV2(seed=seed + ep)
-        env.reset(agent_arch=agent_arch)
+        env = CombatEnvV2(seed=seed + ep, n_agents=1, n_opps=1)
+        env.reset(agent_archs=[agent_arch] if agent_arch else None)
         expert = make_archetype_policy(agent_arch)
+        agent_id = env.agent_ids[0]
+        opp_id = env.opp_ids[0]
         max_rounds = 20
         while env.ws.combat.round_number <= max_rounds:
-            agent = env.ws.characters[_AGENT_ID]
-            opp = env.ws.characters[_OPPONENT_ID]
+            agent = env.ws.characters[agent_id]
+            opp = env.ws.characters[opp_id]
             if not agent.is_alive() or not opp.is_alive():
                 break
             agent.reaction_used = False
@@ -105,13 +108,14 @@ def run_expert_episodes(agent_arch: str, n: int, seed: int) -> Counter:
             tick_status_effects(agent, "self_turn_start",
                                  env.ws.combat.round_number)
             tick_terrain_damage(agent, env.ws.combat.battlefield)
-            env.resources = {"action": 1, "bonus_action": 1,
-                             "movement": MOVE_BUDGET_M}
+            env._agent_resources[agent_id] = {
+                "action": 1, "bonus_action": 1, "movement": MOVE_BUDGET_M,
+            }
             for _ in range(_MAX_SUB_ACTIONS_PER_TURN):
                 if not agent.is_alive():
                     break
                 decision = expert.decide(
-                    _AGENT_ID, agent, env.ws, env.resources,
+                    agent_id, agent, env.ws, env.resources,
                     env.ws.combat.round_number,
                 )
                 if decision.action is None:
@@ -131,7 +135,7 @@ def run_expert_episodes(agent_arch: str, n: int, seed: int) -> Counter:
                                  env.ws.combat.round_number)
             if not opp.is_alive():
                 break
-            env._run_opponent_turn()
+            env._run_opponent_turn(opp_id)
             env._end_of_round_tick()
     return counter
 

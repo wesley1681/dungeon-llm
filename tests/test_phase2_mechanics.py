@@ -76,6 +76,51 @@ def test_sneak_attack_does_not_fire_without_sneak_dice():
     assert res.get("sneak_attack_damage", 0) == 0
 
 
+def test_hidden_grants_advantage_on_outgoing_attack():
+    """Hidden's on_outgoing_attack hook should bump the d20 to advantage."""
+    from trpg.engine.combat import resolve_attack
+    from trpg.engine.status import Hidden
+    ws, A, B = _two_char_world()
+    A.add_status(Hidden(applied_round=0))
+    bd: dict = {}
+    with patch("trpg.engine.combat.roll_d20", return_value=15):
+        resolve_attack(A, B, A.weapons[0], mode="normal", breakdown=bd)
+    assert bd["mode"] == "advantage"
+
+
+def test_hidden_dropped_after_attack():
+    """Making any attack (hit or miss) reveals the attacker — Hidden goes away."""
+    from trpg.engine.status import Hidden
+    ws, A, B = _two_char_world()
+    A.add_status(Hidden(applied_round=0))
+    assert A.has_status("hidden")
+    with patch("trpg.engine.combat.roll_d20", return_value=20), \
+         patch("trpg.engine.combat.roll", return_value=4):
+        execute_action(
+            {"type": "ATTACK", "skill_id": "test_handwritten", "attacker": "a", "target": "b",
+             "weapon": "短劍", "consumes": ["action"]}, ws
+        )
+    assert not A.has_status("hidden"), "Hidden should drop after attacking"
+
+
+def test_sneak_attack_fires_when_attacker_has_advantage():
+    """1v1 sneak attack: hidden attacker → advantage → sneak fires (no ally needed)."""
+    from trpg.engine.status import Hidden
+    ws, A, B = _two_char_world(attacker_sneak="2d6")
+    A.add_status(Hidden(applied_round=0))
+    B.hp = 100; B.max_hp = 100
+    # d20=15 (non-crit) → weapon 1d6=4, then sneak 2d6=(3,3)
+    with patch("trpg.engine.combat.roll_d20", return_value=15), \
+         patch("trpg.engine.combat.roll", side_effect=[4, 3, 3]):
+        res = execute_action(
+            {"type": "ATTACK", "skill_id": "test_handwritten", "attacker": "a", "target": "b",
+             "weapon": "短劍", "consumes": ["action"]}, ws
+        )
+    assert res["hit"] is True
+    assert res["roll_breakdown"]["mode"] == "advantage"
+    assert res.get("sneak_attack_damage", 0) > 0
+
+
 def test_channel_divinity_uses_tracked_in_ability_uses():
     c = Character(name="x", race="", class_="牧師", level=2,
                   stats=Stats(), hp=20, max_hp=20, ac=12, is_npc=False)

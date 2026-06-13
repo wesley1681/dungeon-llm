@@ -50,6 +50,18 @@ class WorldState:
     # Each entry: {"speaker": str, "text": str, "room_id": str|None, "present": list[str]}
     # speaker is a char_id, or "gm", or "system".
 
+    # ── Off-turn decision hooks (reactions / legendary actions) ──────────────
+    # Optional injectable deciders. None = engine default (the historical
+    # hardcoded greedy behaviour). The RL env sets these to route a
+    # MODEL-CONTROLLED creature's reaction / legendary-action CHOICE through its
+    # policy net, while scripted opponents keep the greedy default. A decider
+    # only PICKS among the LEGAL options the engine assembles (reaction budget /
+    # spell slots / range already filtered) — it can never bypass legality, only
+    # decide whether and which legal option to spend. See combat.ReactionContext
+    # / combat_policy.LegendaryContext for the payload each receives.
+    reaction_decider: Optional[object] = None
+    legendary_decider: Optional[object] = None
+
     def log_event(self, speaker: str, text: str, *,
                   room_id: Optional[str] = None,
                   present: Optional[list[str]] = None) -> dict:
