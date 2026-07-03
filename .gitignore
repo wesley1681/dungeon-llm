@@ -41,3 +41,6 @@ scripts/_*.txt
 scripts/_*.json
 scripts/*_fingerprints.json
 /combat_log.txt
+
+# Scratch run logs (train/eval/bc/ppo/mirror *.log, battle.jsonl, compare.txt)
+/logs/
