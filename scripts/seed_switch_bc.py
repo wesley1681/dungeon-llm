@@ -288,13 +288,22 @@ def collect_self_anchor(net, n_states, seed, rng, pools_by_level, p_mon=0.5,
             a_lvl = int(min(8, max(3, round(eq)))) if math.isfinite(eq) else 8
             agent = rng.choice(STANDARD_ARCHETYPES)
             opp, o_lvl = mon, MONSTER_DEFS[mon].natural_level
+            is_class = False
         else:
             a_lvl = rng.randint(5, 8)
             agent = rng.choice(STANDARD_ARCHETYPES)
             opp, o_lvl = rng.choice(STANDARD_ARCHETYPES), None
             o_lvl = a_lvl
-        env = CombatEnvV2(seed=seed * 1_000_003 + ep, n_agents=1, n_opps=1)
-        env.reset(agent_archs=[agent], opp_archs=[opp],
+            is_class = True
+        # Include 1v2 class states: the fighters' resource-TIMING (when to surge /
+        # heal / not dodge) that DAgger fixed is a 1v2 phenomenon — a 1v1-only
+        # anchor lets the switch BC erode it (measured: bm/champion 70->40). For
+        # class-vs-class, sample n_opps in {1,1,2} so the anchor pins 1v2 play too.
+        n_opp = rng.choice([1, 1, 2]) if is_class else 1
+        o_archs = [opp] + [rng.choice(STANDARD_ARCHETYPES)
+                           for _ in range(n_opp - 1)]
+        env = CombatEnvV2(seed=seed * 1_000_003 + ep, n_agents=1, n_opps=n_opp)
+        env.reset(agent_archs=[agent], opp_archs=o_archs,
                   level=a_lvl, opp_level=o_lvl)
         obs = blind_np_single(build_obs(env.ws, env.current_agent_id,
                                         env.resources))
@@ -612,7 +621,8 @@ def main():
             _, acc_a = bc_loss_step(net, ob, torch.from_numpy(a_act[sel]),
                                     torch.from_numpy(a_tt[sel]), optim)
         if step % 50 == 0 or step == 1:
-            jw = net.skill_heads[0].weight[0, -1].item()
+            # typed join = net.tjoin_col（-1 是 cimmun 欄；ncol-1 位置漂移 bug 家族）
+            jw = net.skill_heads[0].weight[0, net.tjoin_col].item()
             print(f"  step {step:4d}  switch-acc={acc_s.get('skill', 0):.2f}  "
                   f"self-acc={acc_sa.get('skill', 0):.2f}  "
                   f"old-acc={acc_a.get('skill', float('nan')):.2f}  "

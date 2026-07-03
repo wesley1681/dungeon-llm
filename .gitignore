@@ -35,3 +35,8 @@ eval/_subagent_prompts/
 *.jsonl
 /eval_results/
 /observation1
+
+# Scripts scratch output (probe/eval run logs, fingerprint dumps)
+scripts/_*.txt
+scripts/*_fingerprints.json
+/combat_log.txt

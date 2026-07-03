@@ -49,17 +49,22 @@ def test_heal_tag_restores_hp():
 
 
 def test_status_tag_adds_effect():
+    # status_effects 裝 StatusEffect 物件（非字串）——字串 in 永遠 False；
+    # 用引擎原生 has_status 查名字。
     world = _make_world()
     cleaned, results = parse_and_resolve("[STATUS: aria +poisoned]", world)
-    assert "poisoned" in world.characters["aria"].status_effects
+    assert world.characters["aria"].has_status("poisoned")
     assert "艾里亞" in results[0]
 
 
 def test_status_tag_removes_effect():
+    # 舊版直接 append 字串再驗字串 not-in 物件列表＝永遠 True＝瞎測試。
+    # 改用引擎路徑（+ 標籤）建立狀態，再驗 - 標籤真的移除。
     world = _make_world()
-    world.characters["aria"].status_effects.append("poisoned")
+    parse_and_resolve("[STATUS: aria +poisoned]", world)
+    assert world.characters["aria"].has_status("poisoned")
     cleaned, results = parse_and_resolve("[STATUS: aria -poisoned]", world)
-    assert "poisoned" not in world.characters["aria"].status_effects
+    assert not world.characters["aria"].has_status("poisoned")
 
 
 def test_initiative_tag_creates_combat_state():

@@ -27,7 +27,12 @@ from .action import decode_action, ACTION_DIMS
 # factory registry, so registering monsters/synths before importing this
 # module can't leak them into random archetype sampling or eval panels.
 ARCHETYPE_LIST: tuple[str, ...] = STANDARD_ARCHETYPES
-LAYOUTS = ("open", "open", "walls", "difficult", "lava")
+# Per-episode layout sampling pool (uniform choice). Default mix = mostly open
+# with 1/5 walls. Overridable via TRPG_LAYOUTS (comma-separated) to bias the
+# curriculum — e.g. "walls,walls,open,difficult" for a wall-peeking fine-tune —
+# without code edits. Default value is bit-identical to the historical tuple.
+LAYOUTS = tuple((os.environ.get("TRPG_LAYOUTS")
+                 or "open,open,walls,difficult,lava").split(","))
 
 _MAX_SUB_ACTIONS_PER_TURN = 5
 
@@ -81,6 +86,18 @@ ACTION_STEP_COST = float(os.environ.get("TRPG_ACTION_STEP_COST", "0.0"))
 WASTED_MOVE_COST = float(os.environ.get("TRPG_WASTED_MOVE_COST", "0.4"))
 WASTED_MOVE_THRESH = 0.5
 
+# Mitigation credit for the PBRS potential. The HP-only Φ rewards immediate HP
+# trades but is BLIND to control (frighten/prone/sleep/stun) whose payoff is
+# REDUCED FUTURE incoming damage — so PPO erodes the very control actions the
+# expert wins with (probe: kit-usage WR gap). With coef>0, Φ discounts an
+# enemy's HP contribution by how much its combat EFFECTIVENESS is suppressed,
+# so applying control immediately raises Φ. Effectiveness is read from GENERAL
+# engine signals — is_incapacitated() (the shared INCAPACITATING_STATUSES
+# registry) and the on_outgoing_attack advantage hook — NOT a status-name list,
+# so any future disabling status counts automatically. Default 0.0 = HP-only Φ,
+# bit-exact with the original (no perturbation to other training).
+MITIGATION_COEF = float(os.environ.get("TRPG_MITIGATION_COEF", "0.0"))
+
 # Weighted team configs: (n_agents, n_opps, weight)
 # Balanced(1v1,2v2,3v3) ≈55%, ±1(2v1,3v2,1v2,2v3) ≈36%, ±2(3v1,1v3) ≈9%
 _TEAM_CONFIGS = [
@@ -127,6 +144,7 @@ class CombatEnvV2:
         self.opp_archs: list[str] = []
         self._opp_policies: dict[str, Any] = {}
         self._opponent_override = None
+        self._opponent_blind = True
         self._reward_shaping = REWARD_SHAPING_COEF
         self._action_step_cost = ACTION_STEP_COST
         self._wasted_move_cost = WASTED_MOVE_COST
@@ -154,8 +172,16 @@ class CombatEnvV2:
     def use_heuristic_opponent(self) -> None:
         self._opponent_override = "heuristic"
 
-    def use_self_play_opponent(self, net) -> None:
+    def use_self_play_opponent(self, net, blind: bool = True) -> None:
+        # blind defaults True: every model in the unified pipeline is trained
+        # with its own archetype one-hot ZEROED (the blind contract). Feeding a
+        # blind-trained net the non-blind obs makes it read identity one-hots
+        # its weights never adapted to → degenerate opponents (measured: a
+        # blind net on the opp seat dodged-only vs a weak enemy, never
+        # attacking). Was previously hardcoded blind=False here, which careful
+        # callers (train_unified, play_gui) worked around by forcing blind=True.
         self._opponent_override = net
+        self._opponent_blind = blind
 
     def reset(self, *, level: int | None = None, opp_level: int | None = None,
               layout: str | None = None,
@@ -218,6 +244,13 @@ class CombatEnvV2:
         )
         setup_combat_positions(self.ws, self.ws.combat, rng=self._rng)
         self._apply_layout(layout)
+        # Obstacles are painted AFTER positioning, so a combatant can end up
+        # standing inside a freshly-added wall rect — then every move toward the
+        # enemy immediately hits the wall it's in (0 displacement) and the
+        # creature is frozen for the whole episode. Evict anyone caught inside a
+        # wall to the nearest free, in-bounds cell. Open layouts have no blocked
+        # cells, so this is a no-op there (bit-exact with the historical path).
+        self._evict_from_walls()
 
         self._opp_policies = {}
         for oid, arch in zip(self._opp_ids, self.opp_archs):
@@ -229,7 +262,8 @@ class CombatEnvV2:
             else:
                 from .neural_policy import NeuralCombatPolicy
                 self._opp_policies[oid] = NeuralCombatPolicy(
-                    self._opponent_override, device="cpu")
+                    self._opponent_override, device="cpu",
+                    blind=getattr(self, "_opponent_blind", True))
 
         self._step_count = 0
         self._initiative_order = all_ids
@@ -245,19 +279,82 @@ class CombatEnvV2:
         self._prev_phi = self._potential()
         return build_obs(self.ws, self._current_agent_id, self.resources), {}
 
+    @staticmethod
+    def _combat_effectiveness(ch) -> float:
+        """How much of `ch`'s offensive threat is intact, in [0,1], from GENERAL
+        engine signals only (no status-name list): 0 if it cannot act
+        (is_incapacitated → INCAPACITATING_STATUSES registry); reduced if its
+        own attacks are forced to disadvantage (fold the on_outgoing_attack
+        hook over its modifiers — frighten/prone/blind etc.). Used by the
+        mitigation-credit Φ so control plays earn immediate potential."""
+        if ch.is_incapacitated():
+            return 0.0
+        mode = "normal"
+        for m in ch.iter_modifiers():
+            try:
+                mode = m.on_outgoing_attack(ch, None, None, mode)
+            except Exception:
+                pass
+        return 0.6 if mode == "disadvantage" else 1.0
+
     def _potential(self) -> float:
         """Φ(s) for potential-based shaping: Σ team hp-frac − Σ opp hp-frac.
 
         Rises when the agent damages opponents, falls when the team takes
-        damage — so COEF·(Φ' − Φ) densely rewards favourable HP trades.
+        damage — so COEF·(Φ' − Φ) densely rewards favourable HP trades. With
+        MITIGATION_COEF>0, an opponent's HP contribution is additionally
+        discounted by its suppressed combat effectiveness, so CONTROL plays
+        (frighten/prone/sleep/stun) raise Φ immediately instead of being
+        invisible to the HP-only signal (and thus eroded by PPO).
         """
         team = sum(max(0.0, self.ws.characters[a].hp)
                    / max(1, self.ws.characters[a].max_hp)
                    for a in self._agent_ids)
-        opp = sum(max(0.0, self.ws.characters[o].hp)
-                  / max(1, self.ws.characters[o].max_hp)
-                  for o in self._opp_ids)
+        opp = 0.0
+        for o in self._opp_ids:
+            c = self.ws.characters[o]
+            hpf = max(0.0, c.hp) / max(1, c.max_hp)
+            if MITIGATION_COEF > 0.0 and hpf > 0.0:
+                eff = self._combat_effectiveness(c)
+                hpf *= 1.0 - MITIGATION_COEF * (1.0 - eff)
+            opp += hpf
         return team - opp
+
+    def _evict_from_walls(self) -> None:
+        """Move any combatant standing on a BLOCKED (wall) cell to the nearest
+        free, in-bounds cell. General — no layout/coordinate hardcoding; keyed
+        only on the engine's own is_blocked. Avoids stacking two evictees on the
+        same cell. No blocked cells (open layout) → no-op."""
+        bf = self.ws.combat.battlefield if self.ws.combat else None
+        if bf is None:
+            return
+        from ..engine.vec2 import Vec2
+        occupied: set[tuple[int, int]] = set()
+        for ch in self.ws.characters.values():
+            if not bf.is_blocked(ch.position):
+                occupied.add(bf._cell(ch.position))
+        for ch in self.ws.characters.values():
+            if not bf.is_blocked(ch.position):
+                continue
+            best = None
+            # Expanding rings of 0.5m offsets until a free, unoccupied cell.
+            r = bf.grid_resolution
+            for ring in range(1, int(max(bf.width, bf.height) / r) + 1):
+                cands = []
+                for dx in range(-ring, ring + 1):
+                    for dy in range(-ring, ring + 1):
+                        if max(abs(dx), abs(dy)) != ring:
+                            continue   # only the new outer ring
+                        p = Vec2(ch.position.x + dx * r, ch.position.y + dy * r)
+                        if (bf.in_bounds(p) and not bf.is_blocked(p)
+                                and bf._cell(p) not in occupied):
+                            cands.append(p)
+                if cands:
+                    best = min(cands, key=lambda p: ch.position.distance_to(p))
+                    break
+            if best is not None:
+                ch.position = best
+                occupied.add(bf._cell(best))
 
     def _apply_layout(self, layout: str) -> None:
         if layout == "open":
@@ -267,6 +364,14 @@ class CombatEnvV2:
         if layout == "walls":
             bf.add_rect_obstacle(7.5, 11.5, 8.5, 13.5)
             bf.add_rect_obstacle(7.5, 16.5, 8.5, 18.5)
+        elif layout == "pillar":
+            # Central vertical wall with a mid gap. Combatants placed on
+            # opposite sides frequently START with no line of sight, so the
+            # policy must flank / peek to engage — the wall-peeking curriculum.
+            cx = bf.width * 0.5
+            bf.add_rect_obstacle(cx - 0.75, 0.0, cx + 0.75, bf.height * 0.40)
+            bf.add_rect_obstacle(cx - 0.75, bf.height * 0.60,
+                                 cx + 0.75, bf.height)
         elif layout == "difficult":
             bf.add_rect_terrain(8.0, 0.0, 10.0, 30.0, TerrainType.DIFFICULT)
         elif layout == "lava":
@@ -305,6 +410,19 @@ class CombatEnvV2:
                 if best is None or d < best:
                     best = d
         return best
+
+    def _any_enemy_los(self, agent) -> bool:
+        """True if `agent` has line of sight to any living opponent. With no
+        battlefield/terrain there is always LoS (open-field default)."""
+        bf = self.ws.combat.battlefield if self.ws.combat else None
+        if bf is None:
+            return True
+        for oid in self._opp_ids:
+            o = self.ws.characters.get(oid)
+            if (o is not None and o.is_alive()
+                    and bf.has_line_of_sight(agent.position, o.position)):
+                return True
+        return False
 
     def _begin_turn(self, agent_id: str) -> None:
         agent = self.ws.characters[agent_id]
@@ -400,14 +518,38 @@ class CombatEnvV2:
         resources = self._agent_resources.get(
             cid, {"action": 0, "bonus_action": 0, "movement": 0.0})
 
+        # Rule guard (mirror of _run_opponent_turn's incapacitated skip): an
+        # incapacitated agent cannot act — force END instead of executing the
+        # policy's action. Without this, _advance_to_next_agent's bounded-loop
+        # fallthrough (agent paralyzed from round 1, e.g. opponent won
+        # initiative during reset and cast hold) hands control to a paralyzed
+        # agent and every policy action bounces off execute_action as ERROR —
+        # wasted sub-actions + dead_action noise. The turn is lost by rule
+        # either way; skipping execution is behaviour-neutral.
+        if agent.is_incapacitated():
+            action = (0, 0, 0)
+
         action_dict = decode_action(action, self.ws, cid)
         # Distance to nearest living enemy BEFORE acting — used to detect a MOVE
         # that changed nothing tactically (wasted-movement penalty below).
         # decode_action does not move the agent, so this is the pre-move state.
-        enemy_dist_before = (
-            self._nearest_enemy_dist(agent)
-            if (action_dict is not None and action_dict.get("type") == "MOVE")
-            else None)
+        is_move = action_dict is not None and action_dict.get("type") == "MOVE"
+        enemy_dist_before = self._nearest_enemy_dist(agent) if is_move else None
+        # LoS to any enemy BEFORE the move. The wasted-move test is a straight-
+        # line distance heuristic, which is only MEANINGFUL when the agent can
+        # actually engage along that line — i.e. when it already has line of
+        # sight. When every enemy is wall-blocked, no distance closes the fight
+        # and the correct play is a LATERAL flank: a multi-turn walk around the
+        # wall whose intermediate steps change neither straight-line distance
+        # NOR (yet) LoS. Taxing those steps punishes the exact behaviour we want
+        # (diag: pillar flank stalls 90% — multi-step, each step penalised;
+        # walls resolves 57% — one-step peek). So the wasted penalty applies
+        # ONLY while the agent HAS LoS (dithering in the open); while blocked,
+        # any reposition is potential flank progress and is never wasted — the
+        # positive signal is regaining LoS then attacking (HP-PBRS), not a
+        # distance delta. In open layouts los_before is always True, so this is
+        # bit-exact with the original distance-only rule there.
+        los_before = self._any_enemy_los(agent) if is_move else False
 
         wasted_move = False
         result: dict[str, Any] | None = None
@@ -423,7 +565,12 @@ class CombatEnvV2:
                         resources["movement"] = 0.0
                     # A move that didn't change engagement range with the nearest
                     # enemy by WASTED_MOVE_THRESH metres did nothing useful.
-                    if enemy_dist_before is not None:
+                    # (Reverted from a melee-only "must close" variant: gating the
+                    # penalty on _has_ranged_attack exempted nearly every kit — a
+                    # goblin's shortbow, a warlock's eldritch blast — and switched
+                    # the cost OFF, un-fixing war. The original lateral test is
+                    # known-good: it gave the pilot's clean war fix.)
+                    if enemy_dist_before is not None and los_before:
                         d_after = self._nearest_enemy_dist(agent)
                         if (d_after is not None
                                 and abs(d_after - enemy_dist_before)
@@ -519,6 +666,7 @@ class CombatEnvV2:
             return
         resources = {"action": 1, "bonus_action": 1, "movement": MOVE_BUDGET_M}
         policy = self._opp_policies[opp_id]
+        errored: set = set()
         for _ in range(_MAX_SUB_ACTIONS_PER_TURN):
             if not opp.is_alive():
                 break
@@ -527,8 +675,39 @@ class CombatEnvV2:
             if decision.fled or decision.action is None:
                 break
             r = execute_action(decision.action, self.ws)
-            if r.get("type") != "ERROR":
-                consume_resources(resources, decision.action, r)
+            if r.get("type") == "ERROR":
+                # Mirror the agent path (step(): ERROR → resources["action"]=0):
+                # a mask-legal but engine-illegal pick costs the turn's action
+                # instead of being retried forever. Case in point (play_gui seed
+                # audit): tarrasque_swallow needs a `restrained` target; the
+                # entity-mask all-illegal-row restore leaves it selectable in 1v1,
+                # so a neural opp re-picks it every iteration on UNCHANGED state
+                # and spins to the sub-action cap doing nothing. Charging the
+                # action makes the skill mask drop it next iteration (no action to
+                # pay) so the policy falls to its next-best LEGAL sub-action
+                # (move / bonus). Belt-and-suspenders: the SAME illegal
+                # (skill,target) twice = a policy insisting on it regardless of the
+                # mask → end the turn (guarantees termination even for a
+                # mask-ignoring policy). The devs special-cased ONE spin source
+                # (incapacitated skip above); this closes the general one.
+                resources["action"] = 0
+                sig = (decision.action.get("skill_id")
+                       or decision.action.get("type"),
+                       decision.action.get("target"))
+                if sig in errored:
+                    break
+                errored.add(sig)
+                continue
+            consume_resources(resources, decision.action, r)
+            # Mirror the agent path (step()): a no-op / wasted MOVE zeroes the
+            # movement budget. Without this, a NEURAL opponent (self-play / GUI)
+            # that greedily emits a zero-distance move never spends movement and
+            # loops on no-op moves up to the sub-action cap — never attacking.
+            # Scripted opponents never emit no-op moves, so they are unaffected.
+            if (decision.action.get("type") == "MOVE"
+                    and (r.get("distance", 0) < 0.01
+                         or resources["movement"] < 0.5)):
+                resources["movement"] = 0.0
             if decision.ended:
                 break
             if (resources["action"] <= 0 and resources["bonus_action"] <= 0

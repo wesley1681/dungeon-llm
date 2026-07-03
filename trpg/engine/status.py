@@ -219,7 +219,8 @@ class Charmed(StatusEffect):
         super().__init__(name="charmed", expires_on="never",
                          applied_round=applied_round, source_id=source_id)
     # The actual attack-block lives in combat.py's ATTACK handler:
-    # if target.has_status("charmed") and the charmed.source_id == attacker_id → reject.
+    # if the ATTACKER has charmed with source_id == target_id → reject
+    # (the charmed one cannot strike its charmer; the reverse is legal).
 
 
 class Evasion(StatusEffect):

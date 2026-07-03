@@ -5,8 +5,9 @@ from trpg.rl.model import CombatPolicyNet
 from trpg.engine.skill import SKILL_FEATURE_DIM
 from trpg.rl.obs import (ENTITY_DIM, N_ENTITY_SLOTS, N_GRID,
                           N_ENTITY_GRID_CHANNELS,
-                          N_DISTANCE_GRID_CHANNELS, END_FEATURES_DIM,
-                          N_DECISION_CTX)
+                          N_DISTANCE_GRID_CHANNELS, N_LOS_GRID_CHANNELS,
+                          N_REACH_GRID_CHANNELS, N_THREAT_GRID_CHANNELS,
+                          END_FEATURES_DIM, N_DECISION_CTX)
 
 
 def test_bc_loss_step_returns_scalar():
@@ -21,6 +22,9 @@ def test_bc_loss_step_returns_scalar():
         "terrain":       torch.randn(4, N_GRID, N_GRID),
         "entity_grid":   torch.randn(4, N_ENTITY_GRID_CHANNELS, N_GRID, N_GRID),
         "distance_grid": torch.randn(4, N_DISTANCE_GRID_CHANNELS, N_GRID, N_GRID),
+        "los_grid":      torch.randn(4, N_LOS_GRID_CHANNELS, N_GRID, N_GRID),
+        "reach_grid":    torch.randn(4, N_REACH_GRID_CHANNELS, N_GRID, N_GRID),
+        "threat_grid":   torch.randn(4, N_THREAT_GRID_CHANNELS, N_GRID, N_GRID),
         "end_features":  torch.randn(4, END_FEATURES_DIM),
         "decision_context": torch.zeros(4, N_DECISION_CTX),
     }
@@ -43,6 +47,9 @@ def test_train_bc_returns_history():
         "terrain":       np.zeros((10, N_GRID, N_GRID), dtype=np.float32),
         "entity_grid":   np.zeros((10, N_ENTITY_GRID_CHANNELS, N_GRID, N_GRID), dtype=np.float32),
         "distance_grid": np.zeros((10, N_DISTANCE_GRID_CHANNELS, N_GRID, N_GRID), dtype=np.float32),
+        "los_grid":      np.zeros((10, N_LOS_GRID_CHANNELS, N_GRID, N_GRID), dtype=np.float32),
+        "reach_grid":    np.zeros((10, N_REACH_GRID_CHANNELS, N_GRID, N_GRID), dtype=np.float32),
+        "threat_grid":   np.zeros((10, N_THREAT_GRID_CHANNELS, N_GRID, N_GRID), dtype=np.float32),
         "end_features":  np.zeros((10, END_FEATURES_DIM), dtype=np.float32),
         "decision_context": np.zeros((10, N_DECISION_CTX), dtype=np.float32),
     }

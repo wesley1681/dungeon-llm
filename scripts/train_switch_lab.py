@@ -49,7 +49,7 @@ from trpg.engine.skill import available_skills
 from trpg.engine.items import WEAPON_DEFS, Weapon
 from trpg.scenarios.archetypes import (CLASS_DEFS, ARCHETYPE_FACTORIES,
                                        ARCHETYPE_ROLES, ClassDef, TraitGrant,
-                                       _factory)
+                                       SkillGrant, _factory, _WIZARD_SLOTS)
 from trpg.scenarios.monsters import register_monsters, MONSTER_DEFS
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -70,6 +70,12 @@ _TRAIN_WEAPONS = {           # name -> (dice, damage_type)
     "火焰之刃": ("1d8", "火"), "冰霜之刃": ("1d8", "冰"),
     "雷鳴之錘": ("1d8", "雷鳴"), "劇毒之刃": ("1d8", "毒"),
     "聖光之刃": ("1d8", "光耀"),
+    # 強酸/閃電 weapons (2d6 to match probe_heldout_switch's eval kits) — added
+    # so 強酸/閃電 become IN-DISTRIBUTION injectable columns. Earlier they were
+    # held-out (zero-shot test): D(閃電) transferred zero-shot but E(強酸+club)
+    # stayed at 0%. The goal wants the model to actually switch on these, so we
+    # train them directly (鈍擊/棍棒 fallback column too) → A/D/E in-distribution.
+    "閃電刃": ("2d6", "閃電"), "酸蝕之刃": ("2d6", "強酸"),
 }
 KITS = [
     ("ckit_sw_sp", ("長劍", "短劍"),     ("斬擊", "穿刺")),
@@ -80,8 +86,28 @@ KITS = [
     ("ckit_th_ra", ("雷鳴之錘", "聖光之刃"), ("雷鳴", "光耀")),
     ("ckit_po_sw", ("劇毒之刃", "長劍"),    ("毒", "斬擊")),
     ("ckit_ra_sp", ("聖光之刃", "短劍"),    ("光耀", "穿刺")),
+    # acid/lightning + club (鈍擊) kits = the previously-failing A/D/E regime,
+    # now in-distribution (same weapons as probe_heldout_switch's E/D kits).
+    ("ckit_ac_cl", ("酸蝕之刃", "棍棒"),    ("強酸", "鈍擊")),
+    ("ckit_zap_cl", ("閃電刃", "棍棒"),     ("閃電", "鈍擊")),
+    ("ckit_ac_sw", ("酸蝕之刃", "長劍"),    ("強酸", "斬擊")),
+    ("ckit_zap_sp", ("閃電刃", "短劍"),     ("閃電", "穿刺")),
 ]
 INJECT_NONE_W = 0.20   # rest split evenly over the kit's two types
+
+# Spell+weapon kits: a damaging SPELL of one type + a weapon of another. Inject
+# immunity to the spell's type → the model must DROP the spell for the weapon
+# (the A regime of probe_heldout_switch: sword+fireball vs fire-immune, which a
+# weapon-only lab never teaches because its only alternative-to-immune options
+# are weapons). (aid, weapons, spell_skill_ids, (spell_type, weapon_type)).
+SPELL_KITS = [
+    ("ckit_sw_fb", ("長劍",),       ("fireball_ev",),     ("火", "斬擊")),
+    ("ckit_sp_is", ("短劍",),       ("ice_storm_ev",),    ("冰", "穿刺")),
+]
+
+# What collect()/report() SAMPLE from (weapon kits + spell kits, types only).
+SAMPLE_KITS = [(aid, w, t) for (aid, w, t) in KITS] + \
+              [(aid, None, t) for (aid, _w, _sk, t) in SPELL_KITS]
 
 
 def register_train_kits():
@@ -96,6 +122,19 @@ def register_train_kits():
             hp_base=10, hp_per_level=6, ac=16,
             weapons=weapons, proficiencies=("STR", "CON"), skills=(),
             traits=(TraitGrant("extra_attack", min_level=5),))
+        CLASS_DEFS[aid] = cd
+        ARCHETYPE_FACTORIES[aid] = _factory(aid)
+        ARCHETYPE_ROLES[aid] = cd.role
+    for aid, weapons, skill_ids, _types in SPELL_KITS:
+        cd = ClassDef(
+            archetype_id=aid, default_name=aid, class_display="訓練合成",
+            role="front",
+            stat_block=dict(STR=16, DEX=12, CON=14, INT=16, WIS=10, CHA=10),
+            hp_base=9, hp_per_level=6, ac=15,
+            weapons=weapons, proficiencies=("STR", "CON"),
+            spell_ability="INT", spell_slots_table=_WIZARD_SLOTS,
+            skills=tuple(SkillGrant(s, min_level=5) for s in skill_ids),
+            traits=())
         CLASS_DEFS[aid] = cd
         ARCHETYPE_FACTORIES[aid] = _factory(aid)
         ARCHETYPE_ROLES[aid] = cd.role
@@ -122,7 +161,7 @@ def collect(net, n_steps, seed, rng, enemy, level, gamma=0.99, lam=0.95):
     wrong = ndmg = 0           # wrong-type damaging actions when something immune
     olvl = MONSTER_DEFS[enemy].natural_level
     while len(rew_l) < n_steps:
-        kit_id, _w, types = rng.choice(KITS)
+        kit_id, _w, types = rng.choice(SAMPLE_KITS)
         imm = _sample_inject(rng, types)
         env = CombatEnvV2(seed=seed * 1_000_003 + ep, n_agents=1, n_opps=1)
         env.reset(agent_archs=[kit_id], opp_archs=[enemy],
@@ -222,9 +261,12 @@ def eval_variant(net, kit_id, enemy, level, immune, kill_desc, games):
 
 def report(net, enemy, level, games, tag):
     d, _ = descriptor_weight_norm(net)
-    sj = float(np.mean([h.weight[0, -1].item() for h in net.skill_heads]))
+    # typed join = net.tjoin_col，不是 -1（cimmun 欄）——ncol-1 位置漂移 bug 曾讓
+    # v7 rsw 手術訓練/監看錯欄位（typed join 全程凍結、pooled 欄變唯一載體）。
+    sj = float(np.mean([h.weight[0, net.tjoin_col].item()
+                        for h in net.skill_heads]))
     out = [f"  [{tag}] desc-norm={d:.3f} skill-join={sj:+.3f}"]
-    for kit_id, _w, types in KITS:
+    for kit_id, _w, types in SAMPLE_KITS:
         for immune in types:
             w_on, wr_on = eval_variant(net, kit_id, enemy, level, immune,
                                        False, games)
@@ -254,6 +296,15 @@ def main():
     p.add_argument("--eval_every", type=int, default=5)
     p.add_argument("--eval_games", type=int, default=24)
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--freeze_except_switch", action="store_true",
+                   help="freeze ALL params except the descriptor->skill-switch "
+                        "carrier channels (entity_mlp[0] descriptor input cols + "
+                        "skill_heads join column) + critic. These channels are "
+                        "~0 in no-resist play (class-vs-class), so normal "
+                        "fighter/walls behaviour is ~unchanged while the switch "
+                        "learns -> NO SWA-merge needed, NO weak-signal dilution, "
+                        "NO fighter erosion (the LoS-only-surgery pattern for "
+                        "trait-switch). Pair with --anchor_batches 0.")
     args = p.parse_args()
 
     out_dir = Path(args.out_dir); out_dir.mkdir(parents=True, exist_ok=True)
@@ -263,6 +314,49 @@ def main():
     rng = random.Random(args.seed)
     torch.manual_seed(args.seed); np.random.seed(args.seed)
     net = load_student(args.warm)
+    if args.freeze_except_switch:
+        # Isolate the descriptor->skill-switch carrier (the LoS-only pattern).
+        # Train ONLY: entity_mlp[0] descriptor INPUT columns (read enemy
+        # typed_resist) + skill_heads JOIN column (last input col = skill-type x
+        # resist) + critic. Everything else frozen + grad-masked, so the
+        # no-resist (class-vs-class) pathway is untouched -> zero fighter/wall
+        # erosion, and NO SWA dilution of the weak A/acid signals.
+        # Resist-ISOLATED carrier: entity_mlp[0] TYPED-RESIST sub-columns
+        # (I_DESC_RESIST..+N_DAMAGE_TYPES = (multiplier-1) per damage type, which
+        # is EXACTLY 0 for every non-resistant creature incl all classes) +
+        # skill_heads JOIN column + critic. Both are 0 in class-vs-class play ->
+        # the no-resist pathway is bit-exact = zero fighter/wall erosion; but
+        # unlike the join column alone (capacity-starved: wrong% stuck 0.50),
+        # the N_DAMAGE_TYPES resist columns give the encoder enough capacity to
+        # learn the switch. (The FULL descriptor block is NOT isolated — it also
+        # carries always-on level/HP/AC, so training it erodes class play:
+        # measured open 67->56. Only the typed-resist tail is resist-conditional.)
+        from trpg.rl.obs import I_DESC_RESIST, N_DAMAGE_TYPES
+        for p_ in net.parameters():
+            p_.requires_grad_(False)
+        for p_ in net.critic.parameters():
+            p_.requires_grad_(True)
+        rs, re_ = I_DESC_RESIST, I_DESC_RESIST + N_DAMAGE_TYPES
+
+        def _cols_only(lo, hi):
+            def hook(g):
+                gg = torch.zeros_like(g); gg[:, lo:hi] = g[:, lo:hi]; return gg
+            return hook
+
+        ew = net.entity_mlp[0].weight
+        ew.requires_grad_(True)
+        ew.register_hook(_cols_only(rs, re_))
+        for h in net.skill_heads:
+            h.weight.requires_grad_(True)
+            # typed join = net.tjoin_col。歷史 bug：這裡曾寫 ncol-1，但牆波
+            # blocked_feat(+64) 與 cimmun join(+1) append 在 typed join 之後
+            # → v7 rsw 手術實際訓練的是 cimmun 欄（對 lab 敵人特徵恆 0＝零梯度），
+            # typed join 全程凍結、13 個 pooled resist 欄成唯一載體＝捷徑根源。
+            h.weight.register_hook(_cols_only(net.tjoin_col, net.tjoin_col + 1))
+        n_tr = sum(p_.numel() for p_ in net.parameters() if p_.requires_grad)
+        print(f"[freeze_except_switch] trainable={n_tr} (entity typed-resist "
+              f"cols {rs}:{re_} + skill_heads join col + critic; grad-masked; "
+              f"resist-isolated = class-play bit-exact)", flush=True)
     print(f"warm={args.warm} enemy={args.enemy} L{args.level} "
           f"kits={[k[0] for k in KITS]} anchor={args.anchor_batches} "
           f"ent={args.ent_coef}", flush=True)
@@ -272,10 +366,31 @@ def main():
         obs_np, act_np, tt_np = load_dataset(Path(DATASET_PATH))
         obs_np = {k: v.copy() for k, v in obs_np.items()}
         obs_np["entities"] = migrate_entities_v3_to_v4(obs_np["entities"])
+        # pre-12j dataset stores 53-wide skill features; the net's skill_proj is
+        # now 66-wide (damage-type soft one-hot tail). Zero-pad = bit-exact.
+        want = net.skill_proj.in_features
+        sk = obs_np["skills"]
+        if sk.shape[-1] < want:
+            pad = np.zeros(sk.shape[:-1] + (want - sk.shape[-1],), dtype=sk.dtype)
+            obs_np["skills"] = np.concatenate([sk, pad], axis=-1)
+        # pre-reaction-wave dataset lacks decision_context (all-zero on normal
+        # turns); pre-los-grid dataset lacks los_grid (open-field expert data =
+        # all ones). Both zero/one-fill = bit-exact migration.
+        if "decision_context" not in obs_np:
+            from trpg.rl.obs import N_DECISION_CTX
+            n = obs_np["skills"].shape[0]
+            obs_np["decision_context"] = np.zeros((n, N_DECISION_CTX),
+                                                  dtype=np.float32)
+        if "los_grid" not in obs_np:
+            from trpg.rl.obs import N_LOS_GRID_CHANNELS, N_GRID
+            n = obs_np["skills"].shape[0]
+            obs_np["los_grid"] = np.ones((n, N_LOS_GRID_CHANNELS, N_GRID, N_GRID),
+                                         dtype=np.float32)
         blind_self_identity_np(obs_np)
         anchor = (obs_np, act_np, tt_np)
 
-    optim = torch.optim.Adam(net.parameters(), lr=args.lr)
+    optim = torch.optim.Adam(
+        [p_ for p_ in net.parameters() if p_.requires_grad], lr=args.lr)
     print("baseline:", flush=True)
     report(net, args.enemy, args.level, args.eval_games, "u0")
     for update in range(1, args.updates + 1):

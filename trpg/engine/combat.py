@@ -219,7 +219,13 @@ def resolve_attack(attacker: Character, target: Character,
     `d20`, `stat_mod_kind`, `stat_mod`, `prof`, `modifiers` (list of
     `(name, delta)`), and `total`. Used by the display layer to show e.g.
     `[d20(7)+STR(2)+prof(2)+blessed(3)]` so players can verify buffs landed.
+
+    Side effect: bumps ``target._incoming_attempts`` — a monotone counter of
+    attack ATTEMPTS (hit or miss). Consumers (the RL repeat-dodge mask)
+    snapshot it to ask "any attack pressure since my last dodge?"; a missed
+    attack still counts (the dodge may be exactly why it missed).
     """
+    target._incoming_attempts = getattr(target, "_incoming_attempts", 0) + 1
     if weapon is None:
         weapon = attacker.get_weapon()
     if "精巧" in (weapon.properties if weapon else []):
@@ -1651,6 +1657,21 @@ def _execute_action_impl(action: dict, world_state: WorldState) -> dict:
             cond = next(s for s in INCAPACITATING_STATUSES if actor.has_status(s))
             return {"type": "ERROR",
                     "message": f"{actor.name} 處於 {cond} 狀態，無法行動"}
+        # Offensive-attempt bookkeeping (RL engage guard): a monotone counter of
+        # attack/damaging-cast ATTEMPTS by this actor — weapon swings and
+        # damaging abilities (save-based spells included; hit/miss irrelevant).
+        # Consumers ask "has this character ever even TRIED to deal damage".
+        if actor is not None:
+            _sid = action.get("skill_id", "")
+            _off = t in ("ATTACK", "SPELL_ATTACK")
+            if not _off and _sid:
+                from .abilities import ABILITY_REGISTRY
+                _ab = ABILITY_REGISTRY.get(_sid)
+                _off = (_ab is not None
+                        and getattr(_ab.features, "expected_damage", 0) > 0)
+            if _off:
+                actor._outgoing_attempts = getattr(
+                    actor, "_outgoing_attempts", 0) + 1
 
     # ── ATTACK ────────────────────────────────────────────────────────────────
     if t == "ATTACK":
@@ -1682,15 +1703,22 @@ def _execute_action_impl(action: dict, world_state: WorldState) -> dict:
         if not in_range:
             return {"type": "ERROR", "message": reason}
 
-        # Charmed condition: cannot attack the charmer
+        # Charmed condition: the charmed creature cannot attack its charmer
+        # (Charmed docstring = the spec). Direction was inverted before 07-03:
+        # the old check blocked the CHARMER from striking its victim and let
+        # the victim swing back — a beholder that landed charm_ray could never
+        # bite that target again (miner mine|666|0230: 7 dead_action turns).
         from .status import StatusEffect as _SE
         attacker_id = next(
             (cid for cid, c in world_state.characters.items() if c is attacker), None
         )
-        for fx in target.status_effects:
-            if isinstance(fx, _SE) and fx.name == "charmed" and fx.source_id == attacker_id:
+        target_id = next(
+            (cid for cid, c in world_state.characters.items() if c is target), None
+        )
+        for fx in attacker.status_effects:
+            if isinstance(fx, _SE) and fx.name == "charmed" and fx.source_id == target_id:
                 return {"type": "ERROR",
-                        "message": f"{target.name} 被魅惑，無法攻擊 {attacker.name}"}
+                        "message": f"{attacker.name} 被魅惑，無法攻擊 {target.name}"}
 
         if weapon.ammo:
             if not attacker.has_ammo(weapon.ammo):
@@ -2803,6 +2831,10 @@ def _execute_action_impl(action: dict, world_state: WorldState) -> dict:
             return {"type": "ERROR", "message": "找不到角色"}
         round_num = world_state.combat.round_number if world_state.combat else 0
         char.add_status(Dodging(applied_round=round_num))
+        # Repeat-dodge bookkeeping (RL null-effect mask): remember when we
+        # dodged and how much attack pressure existed at that moment.
+        char._last_dodge_round = round_num
+        char._dodge_snapshot = getattr(char, "_incoming_attempts", 0)
         return {
             "type":      "DODGE",
             "character": char.name,

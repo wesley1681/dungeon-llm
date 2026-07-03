@@ -136,7 +136,7 @@ _register(Ability(
     engine_ready=True,
     min_level=1, builder=lambda actor, target, coord, char=None: {
         "type": "HEAL", "caster": actor, "target": actor,
-        "dice": f"1d10+{char.level if char else 3}", "range_m": 0.0,
+        "dice": f"1d10+{int(char.level) if char else 3}", "range_m": 0.0,
         "consumes": ["bonus_action"],
     },
 ))
@@ -176,11 +176,11 @@ _register(Ability(
     ),
     engine_ready=True,
     min_level=3, builder=lambda actor, target, coord, char=None: {
-        "type": "ATTACK", "attacker": actor, "target": target, "weapon": "長劍",
+        "type": "ATTACK", "attacker": actor, "target": target, "weapon": "",
         "rider_save_dc": 14, "rider_save_stat": "STR", "rider_status": "prone",
         "consumes": ["action"],
     },
-    engine_todo="weapon hard-coded 長劍; each maneuver tracks its own 4-use pool "
+    engine_todo="each maneuver tracks its own 4-use pool "
                 "(max_uses) rather than a shared superiority-die pool — a "
                 "deliberate from-the-engine simplification, no schema impact.",
 ))
@@ -464,11 +464,9 @@ _register(Ability(
     engine_ready=True,
     min_level=2, builder=lambda actor, target, coord, char=None: {
         "type": "ATTACK", "attacker": actor, "target": target,
-        "weapon": "長劍", "reckless": True,
+        "weapon": "", "reckless": True,
         "consumes": ["action"],
     },
-    engine_todo="weapon hard-coded to 長劍; works correctly for any melee "
-                "weapon since the reckless flag is weapon-agnostic",
 ))
 
 # ── Shared resource sentinels ─────────────────────────────────────────────────
@@ -534,7 +532,7 @@ _register(Ability(
     engine_ready=True,
     min_level=3, refresh_on="short_rest", max_uses=4,
     builder=lambda actor, target, coord, char=None: {
-        "type": "ATTACK", "attacker": actor, "target": target, "weapon": "長劍",
+        "type": "ATTACK", "attacker": actor, "target": target, "weapon": "",
         "rider_status": "distracted",
         "consumes": ["action"],
     },
@@ -559,7 +557,7 @@ _register(Ability(
     engine_ready=True,
     min_level=3, refresh_on="short_rest", max_uses=4,
     builder=lambda actor, target, coord, char=None: {
-        "type": "ATTACK", "attacker": actor, "target": target, "weapon": "長劍",
+        "type": "ATTACK", "attacker": actor, "target": target, "weapon": "",
         "rider_save_dc": 14, "rider_save_stat": "WIS", "rider_status": "frightened",
         "consumes": ["action"],
     },
@@ -650,7 +648,7 @@ _register(Ability(
     engine_ready=True,
     min_level=3, refresh_on="never", max_uses=0,
     builder=lambda actor, target, coord, char=None: {
-        "type": "ATTACK", "attacker": actor, "target": target, "weapon": "長劍",
+        "type": "ATTACK", "attacker": actor, "target": target, "weapon": "",
         "consumes": ["bonus_action"],
     },
 ))
@@ -672,7 +670,7 @@ _register(Ability(
                 "且只能長休消除，對單場戰鬥（RL episode 內）幾乎無影響；無 schema 衝擊。",
     min_level=3, refresh_on="never", max_uses=0,
     builder=lambda actor, target, coord, char=None: {
-        "type": "ATTACK", "attacker": actor, "target": target, "weapon": "長劍",
+        "type": "ATTACK", "attacker": actor, "target": target, "weapon": "",
         "consumes": ["bonus_action"],
     },
 ))
@@ -1205,7 +1203,7 @@ _register(Ability(
     engine_ready=True,
     min_level=1, refresh_on="long_rest", max_uses=3,
     builder=lambda actor, target, coord, char=None: {
-        "type": "ATTACK", "attacker": actor, "target": target, "weapon": "長劍",
+        "type": "ATTACK", "attacker": actor, "target": target, "weapon": "",
         "consumes": ["bonus_action"],
     },
 ))
@@ -1317,7 +1315,7 @@ _register(Ability(
     engine_todo="傷害固定 2d8（1 環）；之後可按 slot 等級縮放。",
     min_level=2, refresh_on="never", max_uses=0,
     builder=lambda actor, target, coord, char=None: {
-        "type": "ATTACK", "attacker": actor, "target": target, "weapon": "長劍",
+        "type": "ATTACK", "attacker": actor, "target": target, "weapon": "",
         "divine_smite_slot": 1,
         "consumes": ["action"],
     },
@@ -1445,7 +1443,7 @@ _register(Ability(
     engine_todo="固定 1 環（2d8）；之後可擴展為按 slot 等級縮放。",
     min_level=2, refresh_on="never", max_uses=0,
     builder=lambda actor, target, coord, char=None: {
-        "type": "ATTACK", "attacker": actor, "target": target, "weapon": "長劍",
+        "type": "ATTACK", "attacker": actor, "target": target, "weapon": "",
         "divine_smite_slot": 1,
         "consumes": ["action"],
     },

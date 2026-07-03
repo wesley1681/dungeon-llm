@@ -9,7 +9,8 @@ import numpy as np
 from ..engine.character import Character
 from ..engine.world_state import WorldState
 from ..engine.skill import (available_skills, kit_features, SKILL_FEATURE_DIM,
-                            STATUS_SLOTS, N_STATUS_SLOTS, N_SAVE_STATS)
+                            STATUS_SLOTS, N_STATUS_SLOTS, N_SAVE_STATS,
+                            I_SKILL_EXPECTED_DAMAGE, SKILL_EV_OBS_CAP)
 from ..engine.combat import MOVE_BUDGET_M
 from ..engine.status import MODIFIER_CLASSES
 from ..engine.vec2 import Battlefield, TerrainType, Vec2
@@ -136,12 +137,31 @@ REGEN_NORM  = 30.0   # troll heals 10/turn; higher-tier regen tops out ~20-30
 LEGRES_NORM = 3.0    # 5e legendary creatures: 3/day, single-combat encounters
 N_V5_TRAIT = 4
 
+# obs v6 (2026-07-01): per-entity CONDITION-IMMUNITY descriptor — which of the
+# STATUS_SLOTS conditions bounce off this creature (undead vs poison/charm,
+# elementals vs paralyze/prone/restrained, bosses vs the big control set). The
+# engine already models it (character.condition_immunities, applied in combat)
+# and the SCRIPTED expert reads it to skip wasting a control ability on an
+# immune target (combat_policy._... "target immune -> continue") — but it was
+# INVISIBLE to the policy, the exact mirror of the pre-12j typed-resist blind
+# spot. A control-caster model sinks hold_person / poison / stun into an immune
+# golem and can never learn not to, because immunity is an arbitrary per-
+# creature list not derivable from any other obs field. Appended AFTER the v5
+# trait tail (same strict-prefix trick) so every pre-v6 column index stays
+# valid. Aligned to STATUS_SLOTS — SAME order as the skill row's applies_status
+# bits — so the model's skill↔entity join can dot "this ability inflicts C"
+# against "the target is immune to C" as ONE shared weight = the zero-shot
+# carrier (pure one-hot cannot cover unseen (condition, monster) pairs — the
+# orthogonality argument that made the damage-type join necessary in 12j).
+N_V6_CIMMUN = N_STATUS_SLOTS   # 16 — one bit per STATUS_SLOTS condition
+
 ENTITY_DIM = (7 + N_ARCHETYPES + N_RL_STATUS + 1 + N_V3_EXTRA
-              + N_V4_DESC + N_V5_TRAIT)
+              + N_V4_DESC + N_V5_TRAIT + N_V6_CIMMUN)
 # layout: 7 base + archetype multi-hot + status multi-hot + is_concentrating
 #         + v3 tail (level, max_hp, ac, is_dying, death_succ, death_fail)
 #         + v4 capability descriptor (N_V4_DESC)
 #         + v5 passive-trait descriptor (N_V5_TRAIT)
+#         + v6 condition-immunity descriptor (N_V6_CIMMUN)
 # Named column indices — consumers must use these, never arithmetic from the
 # row end (the v4 append broke every negative-offset assumption once already).
 I_ENT_ENEMY  = 4    # base-feature col: 1.0 = this row is an enemy of self
@@ -162,24 +182,47 @@ I_TRAIT_PACK   = ENT_TRAIT_START + 0
 I_TRAIT_REGEN  = ENT_TRAIT_START + 1
 I_TRAIT_UNDEAD = ENT_TRAIT_START + 2
 I_TRAIT_LEGRES = ENT_TRAIT_START + 3
+# v6 condition-immunity tail — aligned to STATUS_SLOTS (same order as the skill
+# row's applies_status); named start, consumers use this, never row-end math.
+ENT_CIMMUN_START = ENT_TRAIT_START + N_V5_TRAIT
+I_DESC_CIMMUN = ENT_CIMMUN_START
 _ENTITY_DIM_V3 = 7 + N_ARCHETYPES + N_RL_STATUS + 1 + N_V3_EXTRA   # pre-v4 width
 _ENTITY_DIM_V4 = (7 + N_ARCHETYPES + N_RL_STATUS + 1 + N_V3_EXTRA
                   + N_V4_DESC)   # pre-v5 width (v4 descriptor, no trait tail)
+_ENTITY_DIM_V5 = _ENTITY_DIM_V4 + N_V5_TRAIT   # pre-v6 width (v5 trait, no cimmun)
+
+
+def migrate_entities_v5_to_v6(entities):
+    """Append the N_V6_CIMMUN zero condition-immunity columns to a v5-width
+    entity array (strict append, no rescale — v6 added no NORM changes).
+    Idempotent: returns unchanged if already v6-width."""
+    import numpy as _np
+    if entities.shape[-1] == ENTITY_DIM:
+        return entities
+    assert entities.shape[-1] == _ENTITY_DIM_V5, (
+        f"expected v5 width {_ENTITY_DIM_V5}, got {entities.shape[-1]}")
+    pad = _np.zeros(entities.shape[:-1] + (N_V6_CIMMUN,), dtype=_np.float32)
+    return _np.concatenate([entities.astype(_np.float32, copy=True), pad],
+                           axis=-1)
 
 
 def migrate_entities_v4_to_v5(entities):
     """Append the N_V5_TRAIT zero passive-trait columns to a v4-width entity
-    array (strict append, no rescale — v5 added no NORM changes). Replays pre-v5
-    datasets through a migrated v5 net. Idempotent: returns unchanged if already
-    v5-width."""
+    array (strict append, no rescale — v5 added no NORM changes), then chain the
+    v5→v6 condition-immunity append so callers land at the live width no matter
+    how many tails have since been added. Idempotent: returns unchanged if
+    already current-width; passes a v5-width array straight to the v6 step."""
     import numpy as _np
     if entities.shape[-1] == ENTITY_DIM:
         return entities
+    if entities.shape[-1] == _ENTITY_DIM_V5:
+        return migrate_entities_v5_to_v6(entities)
     assert entities.shape[-1] == _ENTITY_DIM_V4, (
         f"expected v4 width {_ENTITY_DIM_V4}, got {entities.shape[-1]}")
     pad = _np.zeros(entities.shape[:-1] + (N_V5_TRAIT,), dtype=_np.float32)
-    return _np.concatenate([entities.astype(_np.float32, copy=True), pad],
-                           axis=-1)
+    out = _np.concatenate([entities.astype(_np.float32, copy=True), pad],
+                          axis=-1)   # now v5 width
+    return migrate_entities_v5_to_v6(out)         # → current (v6) width
 
 
 def migrate_entities_v3_to_v4(entities):
@@ -195,6 +238,8 @@ def migrate_entities_v3_to_v4(entities):
     import numpy as _np
     if entities.shape[-1] == ENTITY_DIM:
         return entities
+    if entities.shape[-1] == _ENTITY_DIM_V5:
+        return migrate_entities_v5_to_v6(entities)
     if entities.shape[-1] == _ENTITY_DIM_V4:
         return migrate_entities_v4_to_v5(entities)
     assert entities.shape[-1] == _ENTITY_DIM_V3, (
@@ -204,7 +249,7 @@ def migrate_entities_v3_to_v4(entities):
     out[..., I_ENT_MAXHP] *= (V3_MAXHP_NORM / MAXHP_NORM)
     pad = _np.zeros(out.shape[:-1] + (N_V4_DESC,), dtype=_np.float32)
     out = _np.concatenate([out, pad], axis=-1)   # now v4 width
-    return migrate_entities_v4_to_v5(out)         # → current (v5) width
+    return migrate_entities_v4_to_v5(out)         # → current (v6) width
 
 
 # obs decision-context (2026-06-13, reaction/legendary wave): a small per-step
@@ -289,8 +334,58 @@ N_ENTITY_GRID_CHANNELS = 3       # [self, ally, enemy]
 # spatial reasoning" job. grid_head reads these as channels of spatial_feat.
 N_DISTANCE_GRID_CHANNELS = 2     # [dist_to_self, dist_to_nearest_enemy]
 
+# Pre-computed per-cell LINE OF SIGHT to the nearest enemy. Whether standing at
+# a cell grants LoS depends on walls on the cell->enemy segment — a NON-local
+# property the pointwise-linear grid_head cannot derive from a cell's own
+# terrain/entity/distance features (probe_los_gridfit: linear acc = baseline
+# from those, = 100% once this channel is added). Without it the policy hugs
+# the wall face and never flanks (diag_wall_los). 1.0 = LoS, 0.0 = blocked (and
+# 1.0 everywhere when no live enemy, mirroring distance_grid's no-enemy rule).
+N_LOS_GRID_CHANNELS = 1          # [los_to_nearest_enemy]
+
+# Pre-computed per-cell WEAPON-REACH proximity to the nearest enemy: reach/dist
+# capped at 1.0, so a cell WITHIN my weapon reach of the nearest enemy = 1.0 and
+# it falls off smoothly outside. 1.5m melee reach is a HARD threshold that a
+# linear grid_head over the SMOOTH distance channel cannot represent (proven:
+# probe_reach_stall — at a stationary target the head ranks a 1.72m cell ABOVE a
+# 0.54m one, so the model closes to ~1.72m, can never step the last 0.22m into
+# reach, dodge-loops and NEVER attacks = the user's original "enemy won't come
+# fight me" bug). This channel gives the head the explicit in-reach signal it
+# was missing, so it can prefer a cell it can actually ATTACK from. No live
+# enemy → all-ones (mirrors distance/los no-enemy convention).
+N_REACH_GRID_CHANNELS = 1        # [reach_proximity_to_nearest_enemy]
+
+# Pre-computed per-cell MELEE-THREAT flag: 1.0 if a melee enemy could reach this
+# cell and attack it on ITS next turn (within one move + a melee swing of any
+# live enemy's current position). This is the perception signal a kiting policy
+# needs: a ranged attacker should STEP OFF a threatened cell (reposition) and
+# STAND on a safe one (end the turn, keep casting). Measured root cause
+# (probe_kite_sweep / trace endp): the blind end_head decides reposition-vs-end
+# on RESOURCE availability, NOT on whether the current cell is dangerous (post-
+# cast endp at a SAFE 11m = 0.335 < a THREATENED 1m = 0.436 — it kites either
+# way and corners itself). Distance-to-enemy is in obs but the "can it reach me
+# next turn" THRESHOLD is invisible to the linear heads, exactly like the 1.5m
+# reach threshold was — so kite-DAgger only flips the GLOBAL move direction
+# (retreat-always) instead of learning the conditional. This channel injects the
+# threatened/safe boundary so end_head can learn "safe → stop, threatened →
+# kite". No live enemy → all-zeros (no threat).
+N_THREAT_GRID_CHANNELS = 1       # [melee_threat_at_cell]
+
+# Threat reach = IMMEDIATE melee danger: a cell within a melee reach + one short
+# step of an enemy's CURRENT position. Deliberately NOT "enemy move + reach"
+# (~10.5m): the +43-WR kite gate triggered only when an enemy was ~adjacent
+# (≤2.5m) and that minimal reactive kiting won — a full-move threat radius marks
+# nearly the whole field "threatened" so the policy kites every turn and drifts
+# to the wall (measured: radius 10.5 → ranged WR still −9). A small radius makes
+# end_head fire "stop kiting" as soon as the agent has stepped out of immediate
+# melee, so it kites ONCE (far, via the move-head) then casts-and-holds. Fixed
+# melee reach (not the enemy's equipped-weapon range) so a ranged enemy doesn't
+# paint the whole field threatened — kiting is about escaping MELEE pin.
+ENEMY_THREAT_RADIUS_M = 1.5 + 1.5
+
 OBS_KEYS = ("skills", "skill_mask", "entities", "resources", "terrain",
-            "entity_grid", "distance_grid", "end_features", "decision_context")
+            "entity_grid", "distance_grid", "los_grid", "reach_grid",
+            "threat_grid", "end_features", "decision_context")
 
 # Hand-picked features feeding end_head directly (bypasses the shared encoder
 # so end_head doesn't inherit the encoder's drift). 8 scalars + archetype:
@@ -495,6 +590,22 @@ def trait_descriptor(char: Character) -> np.ndarray:
     ], dtype=np.float32)
 
 
+def condition_immunity_descriptor(char: Character) -> np.ndarray:
+    """Build the N_V6_CIMMUN condition-immunity tail for one creature (see the v6
+    constant block). Multi-hot over STATUS_SLOTS: 1.0 = the creature is immune to
+    that condition (the engine no-ops an application of it). Aligned to
+    STATUS_SLOTS — the SAME order/length as the skill row's applies_status bits —
+    so it dots cleanly against them in the model's skill↔entity join. Read
+    straight off char.condition_immunities; cheap (16 bits), recomputed per row,
+    no cache. Names outside STATUS_SLOTS (engine-only conditions) are skipped —
+    they have no aligned skill bit to join against."""
+    out = np.zeros(N_V6_CIMMUN, dtype=np.float32)
+    for name in (getattr(char, "condition_immunities", None) or ()):
+        if name in STATUS_SLOTS:
+            out[STATUS_SLOTS.index(name)] = 1.0
+    return out
+
+
 def _entity_row(char: Character, self_char: Character,
                 bf_size_x: float, bf_size_y: float,
                 is_self: bool, is_enemy: bool) -> np.ndarray:
@@ -557,7 +668,8 @@ def _entity_row(char: Character, self_char: Character,
         min(1.0, char.death_saves.get("failures", 0) / 3.0),
     ], dtype=np.float32)
     return np.concatenate([base, arch_oh, status_mh, is_concentrating, v3_tail,
-                           capability_descriptor(char), trait_descriptor(char)])
+                           capability_descriptor(char), trait_descriptor(char),
+                           condition_immunity_descriptor(char)])
 
 
 def entities_obs(ws: WorldState, agent_id: str) -> np.ndarray:
@@ -611,7 +723,15 @@ def skills_obs(ws: WorldState, agent_id: str,
     mask = np.zeros(N_SKILL_SLOTS, dtype=np.float32)
 
     for i, sk in enumerate(skills[:N_SKILL_SLOTS]):
-        skill_mat[i] = np.asarray(sk.features.as_vector(), dtype=np.float32)
+        vec = np.asarray(sk.features.as_vector(), dtype=np.float32)
+        # Bound OOD-large expected_damage back onto the training manifold so an
+        # unseen ultra-EV skill (a grafted swallow/breath) can't corrupt the
+        # unnormalised skill_proj → pooled embedding → trunk-collapse → passive
+        # turtling. No-op for every trained kit (all ≤ SKILL_EV_OBS_CAP). See
+        # skill.SKILL_EV_OBS_CAP.
+        if vec[I_SKILL_EXPECTED_DAMAGE] > SKILL_EV_OBS_CAP:
+            vec[I_SKILL_EXPECTED_DAMAGE] = SKILL_EV_OBS_CAP
+        skill_mat[i] = vec
         mask[i] = 1.0
     return skill_mat, mask
 
@@ -701,6 +821,186 @@ def distance_grid_obs(ws: WorldState, agent_id: str) -> np.ndarray:
     return np.stack([dist_self, dist_enemy], axis=0).astype(np.float32)
 
 
+def reach_grid_obs(ws: WorldState, agent_id: str) -> np.ndarray:
+    """Per-cell WEAPON-REACH proximity to the nearest live enemy.
+
+    Returns: float32[N_REACH_GRID_CHANNELS, N_GRID, N_GRID]
+      channel 0 — min(1.0, my_reach / dist(cell, nearest_enemy)). 1.0 for any
+                  cell from which I'd be WITHIN weapon reach of the nearest
+                  enemy (can attack); falls off smoothly outside reach so the
+                  pointwise-linear grid_head has a monotone gradient to climb
+                  INTO reach. 1.0 everywhere with no live enemy (mirrors
+                  distance/los no-enemy convention).
+
+    The distance channel is smooth and normalised by the field diagonal, so the
+    1.5m melee threshold is invisible to a linear head — it cannot tell "0.5m =
+    can attack" from "1.7m = cannot". This channel injects exactly that hard
+    boundary as a perception feature (the policy still chooses).
+    """
+    out = np.ones((N_REACH_GRID_CHANNELS, N_GRID, N_GRID), dtype=np.float32)
+    self_char = ws.characters[agent_id]
+    try:
+        reach = float(self_char.get_weapon().range_normal) if self_char.weapons else 1.5
+    except Exception:
+        reach = 1.5
+    if reach <= 0:
+        reach = 1.5
+    _, enemy_ids = partition_entities(ws, agent_id)
+    live = [ws.characters[cid].position
+            for cid in enemy_ids if ws.characters[cid].is_alive()]
+    if not live:
+        return out
+    bf = ws.combat.battlefield if (ws.combat and ws.combat.battlefield) else None
+    cell_size = bf.width / N_GRID if bf else GRID_CELL_SIZE_M
+    xs = (np.arange(N_GRID, dtype=np.float32) + 0.5) * cell_size
+    ys = (np.arange(N_GRID, dtype=np.float32) + 0.5) * cell_size
+    xx, yy = np.meshgrid(xs, ys, indexing="ij")
+    per_enemy = np.stack([np.sqrt((xx - p.x) ** 2 + (yy - p.y) ** 2) for p in live],
+                         axis=0)
+    dist_enemy = per_enemy.min(axis=0)
+    # BINARY in-reach flag (sharp threshold). A smooth reach/dist barely separates
+    # an in-reach cell (1.0m→1.0) from a just-outside one (1.72m→0.87, only 0.13
+    # below) — too little contrast for the grid-head to flip onto the attackable
+    # cell. The hard 1.0/0.0 step gives the exact in/out boundary the linear head
+    # can't synthesise from the smooth distance channel; distance_grid still
+    # supplies the gradient to APPROACH from far.
+    in_reach = (dist_enemy <= reach + 1e-6).astype(np.float32)
+    return in_reach[None, :, :]
+
+
+def threat_grid_obs(ws: WorldState, agent_id: str) -> np.ndarray:
+    """Per-cell MELEE-THREAT flag for the kiting decision.
+
+    Returns: float32[N_THREAT_GRID_CHANNELS, N_GRID, N_GRID]
+      channel 0 — 1.0 if ANY live enemy could move-and-melee this cell on its
+                  next turn (cell within ENEMY_THREAT_RADIUS_M of that enemy's
+                  current position); 0.0 if safe. All-zeros with no live enemy.
+
+    Binary, like reach_grid: the linear end/grid heads can't synthesise the
+    "enemy can reach me next turn" boundary from the smooth distance channel, so
+    they decide reposition-vs-end on resources instead and over-kite. The hard
+    flag gives end_head the in/out-of-danger signal directly: stand (end) on a
+    safe cell, step off a threatened one. The policy still chooses.
+    """
+    out = np.zeros((N_THREAT_GRID_CHANNELS, N_GRID, N_GRID), dtype=np.float32)
+    _, enemy_ids = partition_entities(ws, agent_id)
+    live = [ws.characters[cid].position
+            for cid in enemy_ids if ws.characters[cid].is_alive()]
+    if not live:
+        return out
+    bf = ws.combat.battlefield if (ws.combat and ws.combat.battlefield) else None
+    cell_size = bf.width / N_GRID if bf else GRID_CELL_SIZE_M
+    xs = (np.arange(N_GRID, dtype=np.float32) + 0.5) * cell_size
+    ys = (np.arange(N_GRID, dtype=np.float32) + 0.5) * cell_size
+    xx, yy = np.meshgrid(xs, ys, indexing="ij")
+    per_enemy = np.stack([np.sqrt((xx - p.x) ** 2 + (yy - p.y) ** 2) for p in live],
+                         axis=0)
+    dist_enemy = per_enemy.min(axis=0)
+    threatened = (dist_enemy <= ENEMY_THREAT_RADIUS_M + 1e-6).astype(np.float32)
+    return threatened[None, :, :]
+
+
+def los_grid_obs(ws: WorldState, agent_id: str) -> np.ndarray:
+    """Per-cell line-of-sight PROXIMITY to the nearest live enemy.
+
+    Returns: float32[N_LOS_GRID_CHANNELS, N_GRID, N_GRID]
+      channel 0 — 1.0 if a creature standing at the cell centre would have an
+                  unobstructed line to the nearest live enemy; otherwise a
+                  graded value 1/(1+d) where d is the GEODESIC (walk-around-the-
+                  wall, 8-connected) cell distance from this cell to the nearest
+                  line-of-sight cell. Walls / unreachable cells → ~0. 1.0
+                  everywhere with no live enemy / no battlefield (mirrors
+                  distance_grid's no-enemy convention).
+
+    Why graded, not binary: the pointwise grid_head scores each cell from its
+    OWN features, so a binary has-LoS flag lets it prefer cells that ALREADY
+    see the enemy but gives NO gradient to WALK toward one when no reachable
+    cell sees yet — the agent flanks to the wall corner then stalls (measured:
+    latEnd plateaus at the pillar edge, self-play freeze unchanged). The
+    geodesic proximity rises monotonically along a walkable path to a sightline
+    cell, so the linear head can climb it AROUND the wall = a multi-step flank.
+    In open layouts every cell has LoS → proximity is 1.0 everywhere = a
+    constant channel = bit-exact with the all-ones fast path (open play, hence
+    symmetric team combat, is untouched). It is a PERCEPTION feature, the same
+    kind as the existing distance-to-enemy channel — the policy still chooses;
+    this only lets it see where the flank is.
+    """
+    out = np.ones((N_LOS_GRID_CHANNELS, N_GRID, N_GRID), dtype=np.float32)
+    bf = ws.combat.battlefield if (ws.combat and ws.combat.battlefield) else None
+    if bf is None:
+        return out
+    wall = np.asarray(bf.cells) == int(TerrainType.BLOCKED)   # [ny, nx]
+    # Fast path: no walls → no sight-blockers → LoS everywhere (the all-ones
+    # default). The common open/difficult/lava layouts hit this every step,
+    # avoiding the ray cast entirely.
+    if not wall.any():
+        return out
+    _, enemy_ids = partition_entities(ws, agent_id)
+    live = [ws.characters[cid].position
+            for cid in enemy_ids if ws.characters[cid].is_alive()]
+    if not live:
+        return out
+
+    cell_size = bf.width / N_GRID
+    res = bf.grid_resolution
+    ny, nx = wall.shape
+    coord = (np.arange(N_GRID, dtype=np.float32) + 0.5) * cell_size
+    cx, cy = np.meshgrid(coord, coord, indexing="ij")        # [N_GRID, N_GRID]
+
+    # Vectorised ray cast: sample every cell->enemy segment at once. The same
+    # half-resolution step and endpoint-exclusion as Battlefield.has_line_of_
+    # sight; a single fixed K (sized to the diagonal) over-samples short rays
+    # harmlessly. Per-enemy blocked grid, then combine by each cell's nearest.
+    diag = (bf.width ** 2 + bf.height ** 2) ** 0.5
+    K = max(2, int(np.ceil(diag / (res * 0.5))))
+    ex = np.array([p.x for p in live], dtype=np.float32)
+    ey = np.array([p.y for p in live], dtype=np.float32)
+    d2 = np.stack([(cx - px) ** 2 + (cy - py) ** 2 for px, py in zip(ex, ey)])
+    nearest = d2.argmin(axis=0)                              # [N_GRID, N_GRID]
+    los = np.ones((N_GRID, N_GRID), dtype=bool)
+    ts = (np.arange(1, K, dtype=np.float32) / K)             # exclude endpoints
+    for ei in range(len(live)):
+        blocked = np.zeros((N_GRID, N_GRID), dtype=bool)
+        for t in ts:
+            px = cx + (ex[ei] - cx) * t
+            py = cy + (ey[ei] - cy) * t
+            ix = np.clip((px / res).astype(np.int32), 0, nx - 1)
+            iy = np.clip((py / res).astype(np.int32), 0, ny - 1)
+            blocked |= wall[iy, ix]
+        sel = nearest == ei
+        los[sel] = ~blocked[sel]
+
+    # Graded proximity = 1/(1+geodesic distance to the nearest LoS cell). A
+    # multi-source 8-connected BFS from the LoS cells over the walkable grid
+    # (wall cells are non-traversable, distance ∞). Min-plus relaxation: cheap
+    # on 30×30, converges in ≤ a few × N iterations. The result is a field that
+    # peaks (=1) on sightline cells and decays AROUND walls, so a pointwise
+    # argmax over reachable cells steps along a path toward the flank.
+    ix_g = np.clip((cx / res).astype(np.int32), 0, nx - 1)
+    iy_g = np.clip((cy / res).astype(np.int32), 0, ny - 1)
+    wall_cell = wall[iy_g, ix_g]                             # [N_GRID, N_GRID]
+    INF = np.float32(1e9)
+    dist = np.where(los & ~wall_cell, np.float32(0.0), INF).astype(np.float32)
+    dist[wall_cell] = INF
+    for _ in range(N_GRID * 2):
+        padded = np.pad(dist, 1, constant_values=INF)
+        best = dist.copy()
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                if dx == 0 and dy == 0:
+                    continue
+                neigh = padded[1 + dx:1 + dx + N_GRID, 1 + dy:1 + dy + N_GRID]
+                best = np.minimum(best, neigh + np.float32(1.0))
+        best[wall_cell] = INF
+        if np.array_equal(best, dist):
+            break
+        dist = best
+    prox = (1.0 / (1.0 + dist)).astype(np.float32)
+    prox[wall_cell] = 0.0
+    out[0] = prox
+    return out
+
+
 def build_obs(ws: WorldState, agent_id: str, resources: dict,
               decision_context: np.ndarray | None = None,
               skills: list | None = None) -> dict:
@@ -721,6 +1021,9 @@ def build_obs(ws: WorldState, agent_id: str, resources: dict,
         "terrain":          terrain_obs(ws.combat.battlefield),
         "entity_grid":      entity_grid_obs(ws, agent_id),
         "distance_grid":    distance_grid_obs(ws, agent_id),
+        "los_grid":         los_grid_obs(ws, agent_id),
+        "reach_grid":       reach_grid_obs(ws, agent_id),
+        "threat_grid":      threat_grid_obs(ws, agent_id),
         "end_features":     end_features(ws, agent_id, resources),
         "decision_context": (zero_decision_context() if decision_context is None
                              else decision_context.astype(np.float32)),

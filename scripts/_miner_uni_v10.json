@@ -1,0 +1,3487 @@
+{
+ "model": "rg_u0010.pt",
+ "n_scen": 200,
+ "n_dec": 6058,
+ "det_rows": [
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "n": 109,
+   "games": 15,
+   "lost_in_affected": 0.0,
+   "lifts": [
+    [
+     "enemy:prone",
+     7.8,
+     1.0
+    ],
+    [
+     "mutation:enemy_prone",
+     6.5,
+     1.0
+    ],
+    [
+     "shape:1v2",
+     3.8,
+     1.0
+    ],
+    [
+     "opp:passive",
+     2.4,
+     1.0
+    ]
+   ],
+   "chans": {
+    "WHOLE_desc(sanity)": "4/32",
+    "applies_status": "3/7",
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": "3/32",
+    "enemy_ac": "18/32",
+    "enemy_level": "0/32",
+    "enemy_maxhp": "7/32",
+    "is_caster": "2/15",
+    "save_union": "4/15",
+    "self_status": "8/12",
+    "terrain": "0/11"
+   },
+   "oracle_dep": {},
+   "known": null,
+   "examples": [
+    "mine|0|0005#t2",
+    "mine|0|0005#t5",
+    "mine|0|0005#t8"
+   ]
+  },
+  {
+   "detector": "no_engage(expert_parity)",
+   "fatal": false,
+   "n": 2,
+   "games": 2,
+   "lost_in_affected": 0.5,
+   "lifts": [
+    [
+     "mutation:self_restrained",
+     10.0,
+     0.5
+    ],
+    [
+     "dlvl:-3",
+     2.0,
+     0.5
+    ],
+    [
+     "shape:1v2",
+     1.9,
+     0.5
+    ],
+    [
+     "layout:open",
+     1.6,
+     1.0
+    ]
+   ],
+   "chans": {},
+   "oracle_dep": {},
+   "known": null,
+   "examples": [
+    "mine|0|0082~open#t6",
+    "mine|0|0141#t50"
+   ]
+  }
+ ],
+ "pair_rows": [
+  {
+   "dim": "layout:difficult",
+   "ident": "assassin",
+   "n": 2,
+   "main_wr": 0.5,
+   "twin_wr": 0.5,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:difficult",
+   "ident": "bandit",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:difficult",
+   "ident": "basilisk",
+   "n": 1,
+   "main_wr": 0.0,
+   "twin_wr": 0.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:difficult",
+   "ident": "berserker",
+   "n": 2,
+   "main_wr": 0.5,
+   "twin_wr": 0.5,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:difficult",
+   "ident": "champion",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:difficult",
+   "ident": "chimera_omni",
+   "n": 2,
+   "main_wr": 0.5,
+   "twin_wr": 0.5,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:difficult",
+   "ident": "chimera_trickhealer",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:difficult",
+   "ident": "dire_wolf",
+   "n": 2,
+   "main_wr": 0.5,
+   "twin_wr": 0.5,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:difficult",
+   "ident": "divination",
+   "n": 2,
+   "main_wr": 0.5,
+   "twin_wr": 0.5,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:difficult",
+   "ident": "ghoul",
+   "n": 1,
+   "main_wr": 0.0,
+   "twin_wr": 0.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:difficult",
+   "ident": "kobold",
+   "n": 1,
+   "main_wr": 0.0,
+   "twin_wr": 0.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:difficult",
+   "ident": "life",
+   "n": 1,
+   "main_wr": 0.0,
+   "twin_wr": 0.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:difficult",
+   "ident": "mage_npc",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:difficult",
+   "ident": "orc",
+   "n": 2,
+   "main_wr": 0.5,
+   "twin_wr": 0.5,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:difficult",
+   "ident": "owlbear",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:difficult",
+   "ident": "shadow",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:difficult",
+   "ident": "storm_ogre",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:difficult",
+   "ident": "totem_bear",
+   "n": 2,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:difficult",
+   "ident": "vengeance",
+   "n": 3,
+   "main_wr": 0.3333333333333333,
+   "twin_wr": 0.3333333333333333,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:difficult",
+   "ident": "war",
+   "n": 2,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:difficult",
+   "ident": "wight",
+   "n": 1,
+   "main_wr": 0.0,
+   "twin_wr": 0.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:difficult",
+   "ident": "wolf",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:lava",
+   "ident": "arcane_trickster",
+   "n": 1,
+   "main_wr": 0.0,
+   "twin_wr": 0.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:lava",
+   "ident": "battle_master",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:lava",
+   "ident": "berserker",
+   "n": 2,
+   "main_wr": 0.5,
+   "twin_wr": 0.5,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:lava",
+   "ident": "chimera_omni",
+   "n": 2,
+   "main_wr": 0.5,
+   "twin_wr": 0.5,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:lava",
+   "ident": "chimera_trickhealer",
+   "n": 1,
+   "main_wr": 0.0,
+   "twin_wr": 0.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:lava",
+   "ident": "devotion",
+   "n": 2,
+   "main_wr": 0.5,
+   "twin_wr": 0.5,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:lava",
+   "ident": "dire_wolf",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:lava",
+   "ident": "frost_troll",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:lava",
+   "ident": "gargoyle",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 0.0,
+   "drop": 1.0
+  },
+  {
+   "dim": "layout:lava",
+   "ident": "ghoul",
+   "n": 1,
+   "main_wr": 0.0,
+   "twin_wr": 0.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:lava",
+   "ident": "mage_npc",
+   "n": 2,
+   "main_wr": 0.5,
+   "twin_wr": 1.0,
+   "drop": -0.5
+  },
+  {
+   "dim": "layout:lava",
+   "ident": "ogre",
+   "n": 2,
+   "main_wr": 0.5,
+   "twin_wr": 0.5,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:lava",
+   "ident": "orc",
+   "n": 3,
+   "main_wr": 0.6666666666666666,
+   "twin_wr": 0.6666666666666666,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:lava",
+   "ident": "plague_wight",
+   "n": 4,
+   "main_wr": 0.5,
+   "twin_wr": 0.5,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:lava",
+   "ident": "shadow",
+   "n": 5,
+   "main_wr": 0.4,
+   "twin_wr": 0.2,
+   "drop": 0.2
+  },
+  {
+   "dim": "layout:lava",
+   "ident": "wolf",
+   "n": 1,
+   "main_wr": 0.0,
+   "twin_wr": 0.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:pillar",
+   "ident": "basilisk",
+   "n": 1,
+   "main_wr": 0.0,
+   "twin_wr": 0.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:pillar",
+   "ident": "berserker",
+   "n": 1,
+   "main_wr": 0.0,
+   "twin_wr": 1.0,
+   "drop": -1.0
+  },
+  {
+   "dim": "layout:pillar",
+   "ident": "chimera_trickhealer",
+   "n": 1,
+   "main_wr": 0.0,
+   "twin_wr": 0.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:pillar",
+   "ident": "evocation",
+   "n": 1,
+   "main_wr": 0.0,
+   "twin_wr": 0.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:pillar",
+   "ident": "gargoyle",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:pillar",
+   "ident": "kobold",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:pillar",
+   "ident": "mage_npc",
+   "n": 2,
+   "main_wr": 0.0,
+   "twin_wr": 0.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:pillar",
+   "ident": "owlbear",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:pillar",
+   "ident": "plague_wight",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:pillar",
+   "ident": "totem_bear",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:pillar",
+   "ident": "wight",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:pillar",
+   "ident": "wolf",
+   "n": 1,
+   "main_wr": 0.0,
+   "twin_wr": 0.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:pillar",
+   "ident": "zombie",
+   "n": 1,
+   "main_wr": 0.0,
+   "twin_wr": 0.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:walls",
+   "ident": "arcane_trickster",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:walls",
+   "ident": "assassin",
+   "n": 2,
+   "main_wr": 0.0,
+   "twin_wr": 0.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:walls",
+   "ident": "basilisk",
+   "n": 1,
+   "main_wr": 0.0,
+   "twin_wr": 0.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:walls",
+   "ident": "battle_master",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:walls",
+   "ident": "berserker",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:walls",
+   "ident": "champion",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:walls",
+   "ident": "chimera_gish",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:walls",
+   "ident": "chimera_trickhealer",
+   "n": 3,
+   "main_wr": 0.6666666666666666,
+   "twin_wr": 0.6666666666666666,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:walls",
+   "ident": "dire_wolf",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:walls",
+   "ident": "divination",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:walls",
+   "ident": "evocation",
+   "n": 3,
+   "main_wr": 0.0,
+   "twin_wr": 0.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:walls",
+   "ident": "frost_troll",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:walls",
+   "ident": "ghoul",
+   "n": 2,
+   "main_wr": 0.5,
+   "twin_wr": 0.5,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:walls",
+   "ident": "goblin",
+   "n": 1,
+   "main_wr": 0.0,
+   "twin_wr": 0.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:walls",
+   "ident": "kobold",
+   "n": 2,
+   "main_wr": 0.5,
+   "twin_wr": 0.5,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:walls",
+   "ident": "manticore",
+   "n": 1,
+   "main_wr": 0.0,
+   "twin_wr": 0.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:walls",
+   "ident": "ogre",
+   "n": 1,
+   "main_wr": 0.0,
+   "twin_wr": 0.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:walls",
+   "ident": "owlbear",
+   "n": 2,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:walls",
+   "ident": "shadow",
+   "n": 1,
+   "main_wr": 0.0,
+   "twin_wr": 0.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:walls",
+   "ident": "storm_ogre",
+   "n": 1,
+   "main_wr": 0.0,
+   "twin_wr": 0.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:walls",
+   "ident": "totem_bear",
+   "n": 2,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:walls",
+   "ident": "vengeance",
+   "n": 1,
+   "main_wr": 0.0,
+   "twin_wr": 0.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:walls",
+   "ident": "wight",
+   "n": 1,
+   "main_wr": 0.0,
+   "twin_wr": 0.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:walls",
+   "ident": "wolf",
+   "n": 1,
+   "main_wr": 0.0,
+   "twin_wr": 0.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:walls",
+   "ident": "zombie",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "mutation:immune",
+   "ident": "arcane_trickster",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "mutation:immune",
+   "ident": "assassin",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "mutation:immune",
+   "ident": "basilisk",
+   "n": 2,
+   "main_wr": 0.0,
+   "twin_wr": 0.5,
+   "drop": -0.5
+  },
+  {
+   "dim": "mutation:immune",
+   "ident": "battle_master",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 0.0,
+   "drop": 1.0
+  },
+  {
+   "dim": "mutation:immune",
+   "ident": "berserker",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "mutation:immune",
+   "ident": "champion",
+   "n": 2,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "mutation:immune",
+   "ident": "devotion",
+   "n": 1,
+   "main_wr": 0.0,
+   "twin_wr": 1.0,
+   "drop": -1.0
+  },
+  {
+   "dim": "mutation:immune",
+   "ident": "dire_wolf",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "mutation:immune",
+   "ident": "evocation",
+   "n": 1,
+   "main_wr": 0.0,
+   "twin_wr": 1.0,
+   "drop": -1.0
+  },
+  {
+   "dim": "mutation:immune",
+   "ident": "frost_troll",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "mutation:immune",
+   "ident": "gargoyle",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "mutation:immune",
+   "ident": "kobold",
+   "n": 1,
+   "main_wr": 0.0,
+   "twin_wr": 0.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "mutation:immune",
+   "ident": "life",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "mutation:immune",
+   "ident": "mage_npc",
+   "n": 5,
+   "main_wr": 0.6,
+   "twin_wr": 1.0,
+   "drop": -0.4
+  },
+  {
+   "dim": "mutation:immune",
+   "ident": "manticore",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "mutation:immune",
+   "ident": "orc",
+   "n": 1,
+   "main_wr": 0.0,
+   "twin_wr": 0.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "mutation:immune",
+   "ident": "plague_wight",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "mutation:immune",
+   "ident": "shadow",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "mutation:immune",
+   "ident": "skeleton",
+   "n": 1,
+   "main_wr": 0.0,
+   "twin_wr": 0.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "mutation:immune",
+   "ident": "totem_bear",
+   "n": 4,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "mutation:immune",
+   "ident": "vengeance",
+   "n": 1,
+   "main_wr": 0.0,
+   "twin_wr": 0.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "mutation:immune",
+   "ident": "war",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "mutation:immune",
+   "ident": "zombie",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "mutation:resist",
+   "ident": "basilisk",
+   "n": 1,
+   "main_wr": 0.0,
+   "twin_wr": 0.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "mutation:resist",
+   "ident": "chimera_omni",
+   "n": 2,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "mutation:resist",
+   "ident": "chimera_trickhealer",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "mutation:resist",
+   "ident": "goblin",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "mutation:resist",
+   "ident": "owlbear",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "mutation:resist",
+   "ident": "shadow",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "mutation:resist",
+   "ident": "vengeance",
+   "n": 1,
+   "main_wr": 0.0,
+   "twin_wr": 0.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "mutation:vuln",
+   "ident": "dire_wolf",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "mutation:vuln",
+   "ident": "ogre",
+   "n": 1,
+   "main_wr": 0.0,
+   "twin_wr": 0.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "mutation:vuln",
+   "ident": "owlbear",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "mutation:vuln",
+   "ident": "skeleton",
+   "n": 1,
+   "main_wr": 0.0,
+   "twin_wr": 0.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "mutation:vuln",
+   "ident": "wight",
+   "n": 1,
+   "main_wr": 0.0,
+   "twin_wr": 0.0,
+   "drop": 0.0
+  }
+ ],
+ "expert_rows": [
+  [
+   "war",
+   0,
+   0,
+   "mine|0|0039"
+  ],
+  [
+   "assassin",
+   0,
+   1,
+   "mine|0|0178"
+  ]
+ ],
+ "events": [
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0005",
+   "ident": "ghoul",
+   "turn": 2,
+   "tags": [
+    "layout:walls",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": false,
+    "enemy_level": false,
+    "enemy_maxhp": false,
+    "enemy_ac": false,
+    "WHOLE_desc(sanity)": false,
+    "terrain": false
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0005",
+   "ident": "ghoul",
+   "turn": 5,
+   "tags": [
+    "layout:walls",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": false,
+    "enemy_level": false,
+    "enemy_maxhp": false,
+    "enemy_ac": false,
+    "WHOLE_desc(sanity)": false,
+    "terrain": false
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0005",
+   "ident": "ghoul",
+   "turn": 8,
+   "tags": [
+    "layout:walls",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": false,
+    "enemy_level": false,
+    "enemy_maxhp": false,
+    "enemy_ac": false,
+    "WHOLE_desc(sanity)": false,
+    "terrain": false
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0005",
+   "ident": "ghoul",
+   "turn": 11,
+   "tags": [
+    "layout:walls",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": false,
+    "enemy_level": false,
+    "enemy_maxhp": false,
+    "enemy_ac": false,
+    "WHOLE_desc(sanity)": false,
+    "terrain": false
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0005",
+   "ident": "ghoul",
+   "turn": 14,
+   "tags": [
+    "layout:walls",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0005",
+   "ident": "ghoul",
+   "turn": 17,
+   "tags": [
+    "layout:walls",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0005",
+   "ident": "ghoul",
+   "turn": 20,
+   "tags": [
+    "layout:walls",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0005",
+   "ident": "ghoul",
+   "turn": 24,
+   "tags": [
+    "layout:walls",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0005~open",
+   "ident": "ghoul",
+   "turn": 2,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:3",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0005~open",
+   "ident": "ghoul",
+   "turn": 5,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:3",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0005~open",
+   "ident": "ghoul",
+   "turn": 8,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:3",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0005~open",
+   "ident": "ghoul",
+   "turn": 11,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:3",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0005~open",
+   "ident": "ghoul",
+   "turn": 14,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:3",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0005~open",
+   "ident": "ghoul",
+   "turn": 17,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:3",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0005~open",
+   "ident": "ghoul",
+   "turn": 20,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:3",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0005~open",
+   "ident": "ghoul",
+   "turn": 24,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:3",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0006",
+   "ident": "orc",
+   "turn": 4,
+   "tags": [
+    "layout:lava",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": false,
+    "is_caster": false,
+    "save_union": false,
+    "enemy_level": false,
+    "enemy_maxhp": false,
+    "enemy_ac": false,
+    "WHOLE_desc(sanity)": false
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0006",
+   "ident": "orc",
+   "turn": 7,
+   "tags": [
+    "layout:lava",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": false,
+    "is_caster": false,
+    "save_union": false,
+    "enemy_level": false,
+    "enemy_maxhp": false,
+    "enemy_ac": false,
+    "WHOLE_desc(sanity)": false
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0006~open",
+   "ident": "orc",
+   "turn": 4,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": false,
+    "is_caster": false,
+    "save_union": false,
+    "enemy_level": false,
+    "enemy_maxhp": false,
+    "enemy_ac": false,
+    "WHOLE_desc(sanity)": false
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0006~open",
+   "ident": "orc",
+   "turn": 7,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": false,
+    "is_caster": false,
+    "save_union": false,
+    "enemy_level": false,
+    "enemy_maxhp": false,
+    "enemy_ac": false,
+    "WHOLE_desc(sanity)": false
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0021",
+   "ident": "berserker",
+   "turn": 8,
+   "tags": [
+    "layout:walls",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "enemy:prone",
+    "self:raging",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": false,
+    "is_caster": false,
+    "applies_status": false,
+    "save_union": false,
+    "enemy_level": false,
+    "enemy_maxhp": false,
+    "enemy_ac": false,
+    "WHOLE_desc(sanity)": false,
+    "terrain": false,
+    "self_status": false
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0021",
+   "ident": "berserker",
+   "turn": 12,
+   "tags": [
+    "layout:walls",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "enemy:prone",
+    "self:raging",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": true,
+    "is_caster": false,
+    "applies_status": false,
+    "save_union": false,
+    "enemy_level": false,
+    "enemy_maxhp": true,
+    "enemy_ac": true,
+    "WHOLE_desc(sanity)": false,
+    "terrain": false,
+    "self_status": true
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0021",
+   "ident": "berserker",
+   "turn": 17,
+   "tags": [
+    "layout:walls",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "enemy:prone",
+    "self:raging",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": false,
+    "is_caster": false,
+    "applies_status": false,
+    "save_union": false,
+    "enemy_level": false,
+    "enemy_maxhp": true,
+    "enemy_ac": true,
+    "WHOLE_desc(sanity)": false,
+    "terrain": false,
+    "self_status": true
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0021~open",
+   "ident": "berserker",
+   "turn": 8,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "enemy:prone",
+    "self:raging",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": false,
+    "is_caster": false,
+    "applies_status": false,
+    "save_union": false,
+    "enemy_level": false,
+    "enemy_maxhp": false,
+    "enemy_ac": false,
+    "WHOLE_desc(sanity)": false,
+    "self_status": false
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0021~open",
+   "ident": "berserker",
+   "turn": 12,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "enemy:prone",
+    "self:raging",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0021~open",
+   "ident": "berserker",
+   "turn": 17,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "enemy:prone",
+    "self:raging",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0051",
+   "ident": "evocation",
+   "turn": 4,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "enemy:prone",
+    "out_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": false,
+    "enemy_level": false,
+    "enemy_maxhp": false,
+    "enemy_ac": false,
+    "WHOLE_desc(sanity)": false
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "no_engage(expert_parity)",
+   "fatal": false,
+   "scen_key": "mine|0|0082~open",
+   "ident": "basilisk",
+   "turn": 6,
+   "tags": [
+    "opp:script",
+    "shape:1v2",
+    "mutation:none",
+    "dlvl:0",
+    "layout:open",
+    "expert_parity"
+   ],
+   "detail": "turns=6 0攻擊嘗試",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": true
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0122",
+   "ident": "kobold",
+   "turn": 3,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": false,
+    "is_caster": true,
+    "save_union": true,
+    "enemy_level": false,
+    "enemy_maxhp": true,
+    "enemy_ac": true,
+    "WHOLE_desc(sanity)": false
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0122",
+   "ident": "kobold",
+   "turn": 5,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": false,
+    "is_caster": true,
+    "save_union": true,
+    "enemy_level": false,
+    "enemy_maxhp": true,
+    "enemy_ac": true,
+    "WHOLE_desc(sanity)": false
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0122",
+   "ident": "kobold",
+   "turn": 7,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": false,
+    "is_caster": false,
+    "save_union": true,
+    "enemy_level": false,
+    "enemy_maxhp": true,
+    "enemy_ac": true,
+    "WHOLE_desc(sanity)": false
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0122",
+   "ident": "kobold",
+   "turn": 9,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": false,
+    "is_caster": false,
+    "save_union": true,
+    "enemy_level": false,
+    "enemy_maxhp": true,
+    "enemy_ac": true,
+    "WHOLE_desc(sanity)": false
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0122",
+   "ident": "kobold",
+   "turn": 11,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0122",
+   "ident": "kobold",
+   "turn": 13,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0122",
+   "ident": "kobold",
+   "turn": 15,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0122",
+   "ident": "kobold",
+   "turn": 17,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0122",
+   "ident": "kobold",
+   "turn": 19,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0122",
+   "ident": "kobold",
+   "turn": 21,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0122",
+   "ident": "kobold",
+   "turn": 23,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0122",
+   "ident": "kobold",
+   "turn": 25,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0122",
+   "ident": "kobold",
+   "turn": 27,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0122",
+   "ident": "kobold",
+   "turn": 29,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0122",
+   "ident": "kobold",
+   "turn": 31,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0122",
+   "ident": "kobold",
+   "turn": 33,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0122",
+   "ident": "kobold",
+   "turn": 35,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0122",
+   "ident": "kobold",
+   "turn": 37,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0122",
+   "ident": "kobold",
+   "turn": 39,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0122",
+   "ident": "kobold",
+   "turn": 41,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0130",
+   "ident": "devotion",
+   "turn": 6,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "self:sacred_weapon_buff",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": false,
+    "is_caster": false,
+    "applies_status": true,
+    "save_union": false,
+    "enemy_level": false,
+    "enemy_maxhp": true,
+    "enemy_ac": true,
+    "WHOLE_desc(sanity)": true,
+    "self_status": true
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0130",
+   "ident": "devotion",
+   "turn": 9,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "self:sacred_weapon_buff",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": false,
+    "is_caster": false,
+    "applies_status": true,
+    "save_union": false,
+    "enemy_level": false,
+    "enemy_maxhp": false,
+    "enemy_ac": true,
+    "WHOLE_desc(sanity)": true,
+    "self_status": false
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0130",
+   "ident": "devotion",
+   "turn": 12,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "self:sacred_weapon_buff",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": false,
+    "is_caster": false,
+    "applies_status": true,
+    "save_union": false,
+    "enemy_level": false,
+    "enemy_maxhp": false,
+    "enemy_ac": true,
+    "WHOLE_desc(sanity)": false,
+    "self_status": false
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0134",
+   "ident": "totem_bear",
+   "turn": 4,
+   "tags": [
+    "layout:pillar",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "enemy:prone",
+    "self:raging",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": false,
+    "enemy_level": false,
+    "enemy_maxhp": false,
+    "enemy_ac": true,
+    "WHOLE_desc(sanity)": false,
+    "terrain": false,
+    "self_status": true
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0134",
+   "ident": "totem_bear",
+   "turn": 6,
+   "tags": [
+    "layout:pillar",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "enemy:prone",
+    "self:raging",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": false,
+    "enemy_level": false,
+    "enemy_maxhp": false,
+    "enemy_ac": true,
+    "WHOLE_desc(sanity)": false,
+    "terrain": false,
+    "self_status": true
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0134",
+   "ident": "totem_bear",
+   "turn": 8,
+   "tags": [
+    "layout:pillar",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "enemy:prone",
+    "self:raging",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": false,
+    "enemy_level": false,
+    "enemy_maxhp": false,
+    "enemy_ac": true,
+    "WHOLE_desc(sanity)": false,
+    "terrain": false,
+    "self_status": true
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0134",
+   "ident": "totem_bear",
+   "turn": 10,
+   "tags": [
+    "layout:pillar",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "enemy:prone",
+    "self:raging",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": false,
+    "enemy_level": false,
+    "enemy_maxhp": false,
+    "enemy_ac": true,
+    "WHOLE_desc(sanity)": false,
+    "terrain": false,
+    "self_status": true
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0134~open",
+   "ident": "totem_bear",
+   "turn": 4,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "enemy:prone",
+    "self:raging",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0134~open",
+   "ident": "totem_bear",
+   "turn": 6,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "enemy:prone",
+    "self:raging",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0134~open",
+   "ident": "totem_bear",
+   "turn": 8,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "enemy:prone",
+    "self:raging",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0134~open",
+   "ident": "totem_bear",
+   "turn": 10,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "enemy:prone",
+    "self:raging",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "no_engage(expert_parity)",
+   "fatal": false,
+   "scen_key": "mine|0|0141",
+   "ident": "plague_wight",
+   "turn": 50,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v1",
+    "mutation:self_restrained",
+    "dlvl:-3",
+    "expert_parity"
+   ],
+   "detail": "turns=50 0攻擊嘗試",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0149",
+   "ident": "orc",
+   "turn": 3,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0149",
+   "ident": "orc",
+   "turn": 5,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0149",
+   "ident": "orc",
+   "turn": 7,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0149",
+   "ident": "orc",
+   "turn": 9,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0149",
+   "ident": "orc",
+   "turn": 11,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0149",
+   "ident": "orc",
+   "turn": 13,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0149",
+   "ident": "orc",
+   "turn": 15,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0149",
+   "ident": "orc",
+   "turn": 17,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0149",
+   "ident": "orc",
+   "turn": 19,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0149",
+   "ident": "orc",
+   "turn": 21,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0149",
+   "ident": "orc",
+   "turn": 23,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0149",
+   "ident": "orc",
+   "turn": 25,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0149",
+   "ident": "orc",
+   "turn": 27,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0149",
+   "ident": "orc",
+   "turn": 29,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0149~open",
+   "ident": "orc",
+   "turn": 3,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0149~open",
+   "ident": "orc",
+   "turn": 5,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0149~open",
+   "ident": "orc",
+   "turn": 7,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0149~open",
+   "ident": "orc",
+   "turn": 9,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0149~open",
+   "ident": "orc",
+   "turn": 11,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0149~open",
+   "ident": "orc",
+   "turn": 13,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0149~open",
+   "ident": "orc",
+   "turn": 15,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0149~open",
+   "ident": "orc",
+   "turn": 17,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0149~open",
+   "ident": "orc",
+   "turn": 19,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0149~open",
+   "ident": "orc",
+   "turn": 21,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0149~open",
+   "ident": "orc",
+   "turn": 23,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0149~open",
+   "ident": "orc",
+   "turn": 25,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0149~open",
+   "ident": "orc",
+   "turn": 27,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0149~open",
+   "ident": "orc",
+   "turn": 29,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0154",
+   "ident": "commoner",
+   "turn": 3,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": false,
+    "enemy_level": false,
+    "enemy_maxhp": false,
+    "enemy_ac": true,
+    "WHOLE_desc(sanity)": false
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0154",
+   "ident": "commoner",
+   "turn": 5,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": false,
+    "enemy_level": false,
+    "enemy_maxhp": false,
+    "enemy_ac": true,
+    "WHOLE_desc(sanity)": false
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0154",
+   "ident": "commoner",
+   "turn": 7,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": false,
+    "enemy_level": false,
+    "enemy_maxhp": false,
+    "enemy_ac": true,
+    "WHOLE_desc(sanity)": false
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0154",
+   "ident": "commoner",
+   "turn": 9,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": false,
+    "enemy_level": false,
+    "enemy_maxhp": false,
+    "enemy_ac": true,
+    "WHOLE_desc(sanity)": false
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0154",
+   "ident": "commoner",
+   "turn": 11,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0154",
+   "ident": "commoner",
+   "turn": 13,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0154",
+   "ident": "commoner",
+   "turn": 15,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0154",
+   "ident": "commoner",
+   "turn": 17,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0154",
+   "ident": "commoner",
+   "turn": 19,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0154",
+   "ident": "commoner",
+   "turn": 21,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0154",
+   "ident": "commoner",
+   "turn": 23,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0154",
+   "ident": "commoner",
+   "turn": 25,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0154",
+   "ident": "commoner",
+   "turn": 27,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0154",
+   "ident": "commoner",
+   "turn": 29,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0177",
+   "ident": "arcane_trickster",
+   "turn": 1,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "self:hidden",
+    "enemy:prone",
+    "out_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": false,
+    "enemy_level": false,
+    "enemy_maxhp": false,
+    "enemy_ac": true,
+    "WHOLE_desc(sanity)": false,
+    "self_status": true
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0177",
+   "ident": "arcane_trickster",
+   "turn": 9,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "enemy:asleep",
+    "enemy:prone",
+    "out_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": false,
+    "enemy_level": false,
+    "enemy_maxhp": false,
+    "enemy_ac": false,
+    "WHOLE_desc(sanity)": false
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0177",
+   "ident": "arcane_trickster",
+   "turn": 11,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "enemy:prone",
+    "out_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": true,
+    "enemy_level": false,
+    "enemy_maxhp": false,
+    "enemy_ac": false,
+    "WHOLE_desc(sanity)": true
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0177",
+   "ident": "arcane_trickster",
+   "turn": 13,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "enemy:prone",
+    "out_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": true,
+    "enemy_level": false,
+    "enemy_maxhp": false,
+    "enemy_ac": false,
+    "WHOLE_desc(sanity)": true
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0177",
+   "ident": "arcane_trickster",
+   "turn": 15,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "enemy:prone",
+    "out_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0177",
+   "ident": "arcane_trickster",
+   "turn": 17,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "enemy:prone",
+    "out_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0177",
+   "ident": "arcane_trickster",
+   "turn": 19,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "enemy:prone",
+    "out_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0177",
+   "ident": "arcane_trickster",
+   "turn": 21,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "enemy:prone",
+    "out_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|0|0177",
+   "ident": "arcane_trickster",
+   "turn": 24,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "self:hidden",
+    "enemy:prone",
+    "out_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  }
+ ]
+}

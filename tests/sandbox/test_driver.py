@@ -40,6 +40,10 @@ def test_run_combat_returns_outcome_dict():
 
 
 def test_run_combat_user_can_kill_opponent():
+    # 活骰測試：種全域骰，否則依賴前面測試消耗的 RNG 流＝順序脆弱
+    #（20 回合上限內殺不掉 L3 evocation 是機率事件，不種子會偶發翻紅）
+    import random
+    random.seed(7)
     ws = build_world_state(
         agent_arch="berserker", opponent_arch="evocation", level=3,
         agent_pos=Vec2(15.0, 15.5), opp_pos=Vec2(15.0, 16.0),  # in melee

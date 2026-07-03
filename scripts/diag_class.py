@@ -22,6 +22,8 @@ from trpg.rl.model import (CombatPolicyNet, apply_resource_mask,
 from trpg.engine.combat_policy import make_archetype_policy
 from trpg.rl.action import encode_action, decode_action
 from trpg.engine.skill import available_skills
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from train_population import blind_np_single
 
 model_path = sys.argv[1]
 arch = sys.argv[2]
@@ -63,8 +65,10 @@ for gi in range(games):
         else:
             enc = encode_action(dec.action, env.ws, actor)
             expert_acts[skill_name(env.ws, actor, enc[0]) if enc[0] >= 0 else "?"] += 1
-        # model's action
-        obs_t = {k: torch.from_numpy(v).unsqueeze(0) for k, v in obs.items()}
+        # model's action. BLIND the self-identity one-hot: the unified students
+        # are trained with it zeroed, so feeding the live obs corrupts them.
+        ob_b = blind_np_single(obs)
+        obs_t = {k: torch.from_numpy(v).unsqueeze(0) for k, v in ob_b.items()}
         with torch.no_grad():
             end_l, s, e, g = net(obs_t)
         s = apply_resource_mask(s, env.resources, env.ws, actor)

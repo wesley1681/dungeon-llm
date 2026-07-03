@@ -41,9 +41,9 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from trpg.rl.env_v2 import CombatEnvV2
+from trpg.rl.env_v2 import CombatEnvV2, _TEAM_CONFIGS, LAYOUTS
 from trpg.rl.model import (CombatPolicyNet, apply_resource_mask,
-                           apply_entity_mask, pick_action)
+                           apply_entity_mask, pick_action, _SPATIAL_C)
 from trpg.rl.train_ppo import _sample_action, _compute_gae, ppo_update
 from trpg.rl.train_bc import bc_loss_step
 from trpg.engine.skill import available_skills
@@ -123,26 +123,102 @@ def blind_np_single(obs: dict) -> dict:
 
 # ── Rollout ──────────────────────────────────────────────────────────────────
 
+def _sample_team_arch(rng, p_synth, slot):
+    """One team-seat identity: a synth with prob p_synth, else a standard
+    class. (Monsters stay on the 1v1 path — their fair level pairing is
+    per-creature and doesn't generalise to mixed teams.)"""
+    if rng.random() < p_synth:
+        return fresh_synth(rng, slot=slot)
+    return rng.choice(STANDARD_IDS)
+
+
+# Layouts whose terrain actually BLOCKS line of sight (so a held-position enemy
+# can sit out of sight and the agent must flank). difficult/lava slow movement
+# but don't block LoS, so a hold-opponent there teaches nothing.
+_LOS_BLOCKING_LAYOUTS = ("walls", "pillar")
+
+# When set (list of class ids), the rollout runs ONLY lone-FOCUS-vs-2-standard
+# 1v2/1v3 episodes — no synth/monster/other-class dilution. Set from --focus_only.
+_FOCUS_ONLY = None
+
+
+class _StationaryPolicy:
+    """Opponent that holds position and never acts. Paired with a LoS-blocking
+    layout it creates the ONLY regime that rewards flanking: an enemy that will
+    NOT walk into view on its own, so the agent must reposition to regain line
+    of sight before it can deal any damage. Approaching scripted experts hand
+    LoS back for free (the enemy comes around the wall) → they reward WAITING,
+    not flanking (measured: pillar blocked-runs resolve 90% by enemy-move), so
+    the LoS row never gets a flank gradient without this."""
+    def decide(self, opp_id, opp, ws, resources, round_number):
+        from types import SimpleNamespace
+        return SimpleNamespace(action=None, fled=False, ended=True)
+
+
 def collect_population_rollout(net, n_steps: int, seed: int, p_synth: float,
                                rng: random.Random, gamma=0.99, lam=0.95,
-                               mon_pool=(), p_mon_agent=0.0, p_mon_opp=0.0):
-    """Sequential 1v1 rollout; per-episode identity sampling; blinded obs.
+                               mon_pool=(), p_mon_agent=0.0, p_mon_opp=0.0,
+                               p_team=0.0, p_hold=0.0):
+    """Sequential rollout; per-episode identity sampling; blinded obs.
+
+    With prob ``p_team`` the episode is a MULTI-seat arrangement (1vN / Nv1 /
+    NvN drawn from _TEAM_CONFIGS, classes+synths only) so the policy trains on
+    the team sizes the 1v1-only history never covered; otherwise the existing
+    1v1 path (with monster matchups) runs. The rollout loop is team-agnostic —
+    it keys transitions on env.current_agent_id and the reward/PBRS are already
+    team-level — so multi-seat needs only the env shape + arch lists here.
 
     Episodes always run to completion (the last one may overshoot n_steps a
     little) so GAE never bootstraps across an episode boundary mid-stream.
-    Returns (batch, ident_tags) — ident_tags[i] is the identity GROUP of
-    step i: the archetype id for standard classes, "synth" for synthesized.
+    Returns (batch, ident_tags) — ident_tags[i] is the identity GROUP of step i.
     """
     net.eval()
     obs_l, act_l, lp_l, rew_l, val_l, done_l = [], [], [], [], [], []
     skm_l, enm_l, grm_l, tag_l = [], [], [], []
     ep = 0
+    # team configs with at least one side >1 (exclude the plain 1v1)
+    team_cfgs = [c for c in _TEAM_CONFIGS if c[0] + c[1] > 2]
+    team_wts = [c[2] for c in team_cfgs]
     while len(rew_l) < n_steps:
-        ident, tag, a_lvl, opp, o_lvl = sample_episode_spec(
-            rng, mon_pool, p_synth, p_mon_agent, p_mon_opp, ep)
-        env = CombatEnvV2(seed=seed * 1_000_003 + ep, n_agents=1, n_opps=1)
-        obs, _ = env.reset(agent_archs=[ident], opp_archs=[opp],
-                           level=a_lvl, opp_level=o_lvl)
+        if _FOCUS_ONLY:
+            # Diagnostic/targeted regime: lone FOCUS-class agent vs 2 standard
+            # experts (the exact 1v2 gap), NO other-class / synth / monster
+            # dilution. Isolates whether PPO erosion is population-averaging or
+            # the shared-head/reward itself.
+            ident = rng.choice(_FOCUS_ONLY)
+            no_ = rng.choice([2, 2, 3])
+            o_archs = [rng.choice(STANDARD_IDS) for _ in range(no_)]
+            tag = ident
+            env = CombatEnvV2(seed=seed * 1_000_003 + ep, n_agents=1, n_opps=no_)
+            obs, _ = env.reset(agent_archs=[ident], opp_archs=o_archs,
+                               level=5, opp_level=rng.randint(2, 5))
+        elif team_cfgs and rng.random() < p_team:
+            na, no_, _ = rng.choices(team_cfgs, weights=team_wts, k=1)[0]
+            a_archs = [_sample_team_arch(rng, p_synth, ep * 16 + i)
+                       for i in range(na)]
+            o_archs = [rng.choice(STANDARD_IDS) for _ in range(no_)]
+            lvl = rng.randint(3, 8)
+            tag = "team"
+            env = CombatEnvV2(seed=seed * 1_000_003 + ep,
+                              n_agents=na, n_opps=no_)
+            obs, _ = env.reset(agent_archs=a_archs, opp_archs=o_archs,
+                               level=lvl, opp_level=lvl)
+        else:
+            ident, tag, a_lvl, opp, o_lvl = sample_episode_spec(
+                rng, mon_pool, p_synth, p_mon_agent, p_mon_opp, ep)
+            env = CombatEnvV2(seed=seed * 1_000_003 + ep, n_agents=1, n_opps=1)
+            # Sample the layout HERE (instead of letting reset pick) so we can
+            # pair a held-position enemy with a LoS-blocking layout — the only
+            # regime that gives the LoS row a flank gradient. The choice uses
+            # the same LAYOUTS pool reset would, so the distribution is intact.
+            layout = rng.choice(LAYOUTS)
+            obs, _ = env.reset(agent_archs=[ident], opp_archs=[opp],
+                               level=a_lvl, opp_level=o_lvl, layout=layout)
+            if (p_hold > 0.0 and layout in _LOS_BLOCKING_LAYOUTS
+                    and rng.random() < p_hold):
+                for oid in env.opp_ids:
+                    env._opp_policies[oid] = _StationaryPolicy()
+                tag = "hold"
         obs = blind_np_single(obs)
         done = False
         while not done:
@@ -366,6 +442,15 @@ def main():
     p.add_argument("--anchor_batches", type=int, default=4,
                    help="BC replay minibatches per update (0 = no anchor)")
     p.add_argument("--dataset", type=str, default=str(DATASET_PATH))
+    p.add_argument("--focus_only", type=str, default="",
+                   help="comma-sep class ids: rollout ONLY lone-vs-2-standard "
+                        "1v2/1v3 for these (no dilution). Isolates PPO erosion "
+                        "cause; also the targeted-improve regime.")
+    p.add_argument("--kit_anchor", type=str, default="",
+                   help="dir with seed_kit_bc's kit_demos.npz + self_anchor.npz "
+                        "(current-obs, blinded). When set, the BC-replay anchor "
+                        "uses THESE instead of the distill dataset — keeps the "
+                        "freshly-seeded expert kit actions from PPO erosion.")
     p.add_argument("--eval_every", type=int, default=5)
     p.add_argument("--chim_games", type=int, default=2)
     p.add_argument("--std_games", type=int, default=1)
@@ -376,8 +461,46 @@ def main():
                    help="prob the agent identity is a 1v1-viable monster")
     p.add_argument("--mon_max_level", type=float, default=8.0,
                    help="equiv-level ceiling for the 1v1 monster pool")
+    p.add_argument("--p_team", type=float, default=0.0,
+                   help="fraction of episodes that are multi-seat 1vN/Nv1/NvN "
+                        "(classes+synths) — the arrangement the 1v1 history "
+                        "never trained")
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--p_hold", type=float, default=0.0,
+                   help="fraction of LoS-blocking-layout (walls/pillar) 1v1 "
+                        "episodes whose enemy HOLDS POSITION (never acts) — the "
+                        "regime that forces the agent to flank to regain line "
+                        "of sight. Safe under --train_grid_los_only: only the "
+                        "LoS row learns, so this cannot distort normal play.")
+    p.add_argument("--los_lr", type=float, default=2e-3,
+                   help="learning rate for the grid LoS row under "
+                        "--train_grid_los_only (open-invariant -> safe to make "
+                        "aggressive; it must grow from 0 to ~L2 2 to flank)")
+    p.add_argument("--los_boost_lr", type=float, default=0.0,
+                   help="COMBINED mode (full net trains, NOT frozen): put the "
+                        "grid LoS row (grad-masked to that one row) in its OWN "
+                        "high-lr group while the rest of the net trains at --lr. "
+                        "The LoS row must grow fast (from 0) so flank MOVE cells "
+                        "complete; the trunk/skill-head learn the open-safe-ish "
+                        "'move when blocked' decision gently at --lr (+anchor). "
+                        "This is the freeze fix the bit-exact LoS-only mode "
+                        "cannot reach (56%% of blocked turns are non-move skill "
+                        "choices). 0 = off.")
+    p.add_argument("--train_grid_los_only", action="store_true",
+                   help="freeze ALL params except the grid-head's LoS-channel "
+                        "weight (grid_query_projs last output row) + the critic. "
+                        "In open fields the LoS channel is all-ones -> a constant "
+                        "shift to every cell logit -> argmax unchanged -> open "
+                        "behaviour (and 2v2) is BIT-EXACT vs base regardless of "
+                        "how this weight moves. Only walled-layout cell choice "
+                        "can change -> the model LEARNS to flank without any "
+                        "global drift. Pair with a wall-heavy TRPG_LAYOUTS.")
     args = p.parse_args()
+
+    global _FOCUS_ONLY
+    if args.focus_only:
+        _FOCUS_ONLY = [s.strip() for s in args.focus_only.split(",") if s.strip()]
+        print(f"FOCUS-ONLY rollout: {_FOCUS_ONLY} (lone vs 2-3 standard)", flush=True)
 
     out_dir = Path(args.out_dir); out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "BLIND").write_text("population fine-tune of blind student\n")
@@ -388,6 +511,91 @@ def main():
     torch.manual_seed(args.seed); np.random.seed(args.seed)
 
     net = load_student(args.warm)
+    if args.train_grid_los_only:
+        # ── LoS-channel-only fine-tune ───────────────────────────────────
+        # Freeze the whole net, then re-enable ONLY: (a) the critic (a
+        # standalone value net — training it sharpens advantages but cannot
+        # touch the policy), and (b) the grid-head's LoS-channel weight, the
+        # LAST output row of every grid_query_projs[i] (grid_query[:,los] =
+        # how strongly a cell's "can I see the enemy from here" feature scores
+        # it). A grad hook zeroes every other row so the rest of the projection
+        # (terrain/entity/distance queries) stays frozen. In open fields the
+        # LoS channel is all-ones (los_grid fast path) -> grid_query[los]*1 is
+        # the SAME additive constant on every cell logit -> argmax over cells
+        # is invariant to this weight -> open-field play (hence symmetric 2v2)
+        # is bit-exact vs base no matter what this weight learns. Only walled
+        # layouts (LoS varies cell-to-cell) get a behaviour change: the policy
+        # can learn to prefer cells that restore line of sight = flank a wall.
+        los_row = _SPATIAL_C - 1
+        for p_ in net.parameters():
+            p_.requires_grad_(False)
+        for p_ in net.critic.parameters():
+            p_.requires_grad_(True)
+
+        def _los_row_only(row):
+            def hook(grad):
+                g = torch.zeros_like(grad)
+                g[row] = grad[row]
+                return g
+            return hook
+
+        los_params = []
+        for proj in net.grid_query_projs:
+            proj.weight.requires_grad_(True)
+            proj.bias.requires_grad_(True)
+            proj.weight.register_hook(_los_row_only(los_row))
+            proj.bias.register_hook(_los_row_only(los_row))
+            los_params += [proj.weight, proj.bias]
+        # ALSO train the skill-head's blocked-skill block (last 64 input cols =
+        # blockedness × sk_emb). Like the LoS row it is EXACTLY ZERO in open
+        # (blockedness=0) → open skill choice stays bit-exact for any weights →
+        # zero 2v2 cost — but it lets the policy learn to CHOOSE move (vs
+        # buff/end) when wall-blocked, the half the grid LoS row can't reach.
+        # Grad-masked to the trailing 64 columns so the rest of the head (open
+        # skill choice) never moves.
+        def _last_cols_only(ncols):
+            def hook(grad):
+                g = torch.zeros_like(grad)
+                g[:, -ncols:] = grad[:, -ncols:]
+                return g
+            return hook
+
+        for hd in net.skill_heads:
+            hd.weight.requires_grad_(True)
+            hd.weight.register_hook(_last_cols_only(64))
+            los_params.append(hd.weight)
+        net._los_params = los_params  # picked up by the optimizer below
+        n_train = sum(p_.numel() for p_ in net.parameters() if p_.requires_grad)
+        print(f"[train_grid_los_only] frozen except critic + grid_query LoS "
+              f"row {los_row}/{_SPATIAL_C} + skill_head blocked block (last 64 "
+              f"cols); trainable params={n_train} (grad-masked, open bit-exact)",
+              flush=True)
+    elif args.los_boost_lr > 0.0:
+        # ── COMBINED mode: full net trains at --lr, LoS row at --los_boost_lr ─
+        # Nothing is frozen. The grid LoS row is grad-masked (only row los_row
+        # of grid_query_projs moves) and put in a high-lr group so flank MOVE
+        # cells actually complete; the rest of the net (trunk/skill-head) trains
+        # gently at --lr so it can also learn to CHOOSE move when blocked — the
+        # part the bit-exact LoS-only mode structurally cannot fix. Heavy anchor
+        # replay (--anchor_batches) pins open-field skill choice against drift.
+        los_row = _SPATIAL_C - 1
+
+        def _los_row_only(row):
+            def hook(grad):
+                g = torch.zeros_like(grad)
+                g[row] = grad[row]
+                return g
+            return hook
+
+        los_params = []
+        for proj in net.grid_query_projs:
+            proj.weight.register_hook(_los_row_only(los_row))
+            proj.bias.register_hook(_los_row_only(los_row))
+            los_params += [proj.weight, proj.bias]
+        net._los_params = los_params
+        print(f"[los_boost] full net @lr={args.lr}; grid LoS row "
+              f"{los_row}/{_SPATIAL_C} grad-masked @lr={args.los_boost_lr}",
+              flush=True)
     print(f"warm-start={args.warm}  p_synth={args.p_synth} "
           f"steps={args.steps} updates={args.updates} "
           f"anchor={args.anchor_batches}x{args.batch}", flush=True)
@@ -396,19 +604,94 @@ def main():
           f"{mon_pool}", flush=True)
 
     anchor = None
-    if args.anchor_batches > 0:
+    if args.anchor_batches > 0 and args.kit_anchor:
+        # Current-obs anchor (seed_kit_bc output): kit_demos.npz teaches/keeps the
+        # expert's high-value actions; self_anchor.npz pins std12 behaviour. Both
+        # were saved as blinded CURRENT obs (build_obs on the live net), so NO
+        # migration and NO re-blinding — this is the anti-erosion anchor for the
+        # PPO-exceed phase (warm from a seed_kit checkpoint).
+        kd = Path(args.kit_anchor)
+        parts = []
+        for fn in ("kit_demos.npz", "self_anchor.npz"):
+            z = np.load(kd / fn)
+            o = {k[4:]: z[k] for k in z.files if k.startswith("obs_")}
+            parts.append((o, z["actions"], z["target_types"]))
+        keys = parts[0][0].keys()
+        obs_np = {k: np.concatenate([p[0][k] for p in parts], axis=0)
+                  for k in keys}
+        act_np = np.concatenate([p[1] for p in parts], axis=0)
+        tt_np = np.concatenate([p[2] for p in parts], axis=0)
+        anchor = (obs_np, act_np, tt_np)
+        print(f"kit anchor: {len(act_np)} pairs (current-obs, no migration)",
+              flush=True)
+    elif args.anchor_batches > 0:
         obs_np, act_np, tt_np = load_dataset(Path(args.dataset))
         obs_np = {k: v.copy() for k, v in obs_np.items()}
         # pre-v4 distill dataset stores v3-width entities; migrate to v4 so the
         # anchor replays through the migrated net (rescale + zero descriptors).
         obs_np["entities"] = migrate_entities_v3_to_v4(obs_np["entities"])
+        # pre-12j distill dataset stores 53-wide skill features; the net's
+        # skill_proj is now 66-wide (damage-type soft one-hot appended at the
+        # tail, cols 53-65). Zero-pad those new columns — bit-exact migration,
+        # same contract as the obs-v4 entity descriptor padding.
+        want = net.skill_proj.in_features
+        sk = obs_np["skills"]
+        if sk.shape[-1] < want:
+            pad = np.zeros(sk.shape[:-1] + (want - sk.shape[-1],),
+                           dtype=sk.dtype)
+            obs_np["skills"] = np.concatenate([sk, pad], axis=-1)
+        # pre-reaction-wave dataset lacks the decision_context channel; normal
+        # turns carry the all-zero context (no reaction/legendary trigger), so
+        # zero-fill is the bit-exact migration.
+        if "decision_context" not in obs_np:
+            from trpg.rl.obs import N_DECISION_CTX
+            n = obs_np["skills"].shape[0]
+            obs_np["decision_context"] = np.zeros((n, N_DECISION_CTX),
+                                                  dtype=np.float32)
+        # pre-los-grid dataset: the per-cell LoS channel. The BC anchor is
+        # open-field expert data (no walls) → LoS everywhere = all ones, the
+        # same no-wall convention los_grid_obs itself returns.
+        if "los_grid" not in obs_np:
+            from trpg.rl.obs import N_LOS_GRID_CHANNELS, N_GRID
+            n = obs_np["skills"].shape[0]
+            obs_np["los_grid"] = np.ones(
+                (n, N_LOS_GRID_CHANNELS, N_GRID, N_GRID), dtype=np.float32)
         blind_self_identity_np(obs_np)
         anchor = (obs_np, act_np, tt_np)
         print(f"anchor dataset: {len(act_np)} pairs "
               f"(blinded, entities->v4 {obs_np['entities'].shape[-1]}d)",
               flush=True)
 
-    optim = torch.optim.Adam(net.parameters(), lr=args.lr)
+    if args.train_grid_los_only:
+        # The LoS row is grad-masked AND open-invariant (bit-exact for any
+        # magnitude), so it carries zero risk to open play no matter how fast it
+        # moves — but it starts at exactly 0 and must grow to ~the magnitude of
+        # the frozen distance query (L2~2) to outweigh the "close distance"
+        # pull that drives melee into the wall. At the base lr (1e-4) that took
+        # ~150 updates (measured: L2 0.045 after 7). So give the LoS row its own
+        # aggressive lr; the critic keeps the gentle lr (it affects value, not
+        # policy, and high lr would destabilise it).
+        los_ids = {id(p_) for p_ in net._los_params}
+        critic_ps = [p_ for p_ in net.parameters()
+                     if p_.requires_grad and id(p_) not in los_ids]
+        optim = torch.optim.Adam([
+            {"params": net._los_params, "lr": args.los_lr},
+            {"params": critic_ps, "lr": args.lr},
+        ])
+        print(f"  optimizer: LoS-row lr={args.los_lr}  critic lr={args.lr}",
+              flush=True)
+    elif args.los_boost_lr > 0.0:
+        los_ids = {id(p_) for p_ in net._los_params}
+        rest_ps = [p_ for p_ in net.parameters() if id(p_) not in los_ids]
+        optim = torch.optim.Adam([
+            {"params": net._los_params, "lr": args.los_boost_lr},
+            {"params": rest_ps, "lr": args.lr},
+        ])
+        print(f"  optimizer: LoS-row lr={args.los_boost_lr}  rest lr={args.lr}",
+              flush=True)
+    else:
+        optim = torch.optim.Adam(
+            [p_ for p_ in net.parameters() if p_.requires_grad], lr=args.lr)
 
     print("baseline probes (update 0):", flush=True)
     chim0 = chimera_probe(net, games=args.chim_games)
@@ -425,7 +708,8 @@ def main():
         batch, tags, n_eps = collect_population_rollout(
             net, args.steps, seed=args.seed * 7919 + update,
             p_synth=args.p_synth, rng=rng, mon_pool=mon_pool,
-            p_mon_agent=args.p_mon_agent, p_mon_opp=args.p_mon_opp)
+            p_mon_agent=args.p_mon_agent, p_mon_opp=args.p_mon_opp,
+            p_team=args.p_team, p_hold=args.p_hold)
         info = ppo_update(net, batch, optim, n_epochs=args.epochs,
                           batch_size=args.batch, ent_coef=args.ent_coef,
                           device="cpu",

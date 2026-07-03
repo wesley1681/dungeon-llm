@@ -1,0 +1,8666 @@
+{
+ "model": "uni_v5.pt",
+ "n_scen": 80,
+ "n_dec": 2683,
+ "det_rows": [
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "n": 180,
+   "games": 6,
+   "lost_in_affected": 0.0,
+   "lifts": [
+    [
+     "mutation:immune:穿刺",
+     3.7,
+     0.5
+    ],
+    [
+     "opp:mirror",
+     3.4,
+     0.61
+    ],
+    [
+     "shape:2v1",
+     3.3,
+     0.61
+    ],
+    [
+     "layout:lava",
+     2.6,
+     0.36
+    ]
+   ],
+   "chans": {},
+   "oracle_dep": {},
+   "known": "legality-mask-leak",
+   "examples": [
+    "mine|3|0004#t5",
+    "mine|3|0004#t8",
+    "mine|3|0004#t11"
+   ]
+  },
+  {
+   "detector": "heal_full",
+   "fatal": true,
+   "n": 34,
+   "games": 32,
+   "lost_in_affected": 0.21875,
+   "lifts": [
+    [
+     "out_reach",
+     2.9,
+     0.85
+    ],
+    [
+     "shape:2v1",
+     2.7,
+     0.5
+    ],
+    [
+     "opp:mirror",
+     1.8,
+     0.32
+    ],
+    [
+     "mutation:none",
+     1.6,
+     0.59
+    ]
+   ],
+   "chans": {
+    "WHOLE_desc(sanity)": "2/12",
+    "applies_status": "0/1",
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": "0/12",
+    "condition_immunity": "0/8",
+    "enemy_ac": "4/12",
+    "enemy_level": "0/12",
+    "enemy_maxhp": "0/12",
+    "is_caster": "0/1",
+    "save_union": "0/1",
+    "terrain": "0/5",
+    "typed_resist": "6/10"
+   },
+   "oracle_dep": {},
+   "known": "bm-heal-full-second-wind",
+   "examples": [
+    "mine|3|0000#t4",
+    "mine|3|0000~open#t4",
+    "mine|3|0000~noimm#t12"
+   ]
+  },
+  {
+   "detector": "no_engage",
+   "fatal": true,
+   "n": 28,
+   "games": 28,
+   "lost_in_affected": 0.7142857142857143,
+   "lifts": [
+    [
+     "mutation:immune",
+     2.1,
+     0.79
+    ],
+    [
+     "mutation:immune:斬擊",
+     2.1,
+     0.32
+    ],
+    [
+     "shape:1v1",
+     1.4,
+     0.82
+    ],
+    [
+     "opp:script",
+     1.2,
+     0.46
+    ]
+   ],
+   "chans": {},
+   "oracle_dep": {},
+   "known": "v7-immune-dodge-collapse",
+   "examples": [
+    "mine|3|0000#t62",
+    "mine|3|0000~open#t62",
+    "mine|3|0002#t19"
+   ]
+  },
+  {
+   "detector": "immune_hit",
+   "fatal": true,
+   "n": 4,
+   "games": 4,
+   "lost_in_affected": 1.0,
+   "lifts": [
+    [
+     "mutation:immune:火",
+     149.1,
+     0.5
+    ],
+    [
+     "mutation:immune:光耀",
+     20.6,
+     0.5
+    ],
+    [
+     "opp:mirror",
+     4.1,
+     0.75
+    ],
+    [
+     "mutation:immune",
+     2.7,
+     1.0
+    ]
+   ],
+   "chans": {
+    "WHOLE_desc(sanity)": "0/4",
+    "applies_status": "0/2",
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": "0/4",
+    "condition_immunity": "0/2",
+    "enemy_ac": "0/4",
+    "enemy_level": "0/4",
+    "enemy_maxhp": "0/4",
+    "is_caster": "0/2",
+    "save_union": "0/2",
+    "terrain": "0/1",
+    "typed_resist": "0/2"
+   },
+   "oracle_dep": {
+    "typed_resist": 2
+   },
+   "known": "v5-no-switch-wasted-attacks",
+   "examples": [
+    "mine|3|0066#t0",
+    "mine|3|0070#t12",
+    "mine|3|0070~open#t12"
+   ]
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "n": 140,
+   "games": 11,
+   "lost_in_affected": 0.0,
+   "lifts": [
+    [
+     "mutation:enemy_prone",
+     4.8,
+     1.0
+    ],
+    [
+     "enemy:prone",
+     4.6,
+     1.0
+    ],
+    [
+     "shape:1v2",
+     4.3,
+     1.0
+    ],
+    [
+     "opp:passive",
+     2.3,
+     1.0
+    ]
+   ],
+   "chans": {
+    "WHOLE_desc(sanity)": "6/22",
+    "applies_status": "0/6",
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": "8/22",
+    "enemy_ac": "12/22",
+    "enemy_level": "2/22",
+    "enemy_maxhp": "10/22",
+    "is_caster": "4/10",
+    "save_union": "2/14",
+    "self_status": "4/8",
+    "terrain": "0/14"
+   },
+   "oracle_dep": {},
+   "known": null,
+   "examples": [
+    "mine|3|0004#t5",
+    "mine|3|0004#t8",
+    "mine|3|0004#t11"
+   ]
+  },
+  {
+   "detector": "aoe_ally",
+   "fatal": false,
+   "n": 1,
+   "games": 1,
+   "lost_in_affected": 0.0,
+   "lifts": [
+    [
+     "shape:2v1",
+     5.4,
+     1.0
+    ],
+    [
+     "out_reach",
+     3.4,
+     1.0
+    ],
+    [
+     "mutation:none",
+     2.7,
+     1.0
+    ],
+    [
+     "opp:script",
+     2.6,
+     1.0
+    ]
+   ],
+   "chans": {},
+   "oracle_dep": {},
+   "known": null,
+   "examples": [
+    "mine|3|0012~open#t0"
+   ]
+  }
+ ],
+ "pair_rows": [
+  {
+   "dim": "layout:difficult",
+   "ident": "battle_master",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:difficult",
+   "ident": "berserker",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:difficult",
+   "ident": "champion",
+   "n": 2,
+   "main_wr": 0.5,
+   "twin_wr": 0.5,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:difficult",
+   "ident": "evocation",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:difficult",
+   "ident": "kobold",
+   "n": 1,
+   "main_wr": 0.0,
+   "twin_wr": 0.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:difficult",
+   "ident": "life",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:difficult",
+   "ident": "orc",
+   "n": 2,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:difficult",
+   "ident": "owlbear",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:difficult",
+   "ident": "storm_ogre",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:difficult",
+   "ident": "war",
+   "n": 1,
+   "main_wr": 0.0,
+   "twin_wr": 0.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:difficult",
+   "ident": "zombie",
+   "n": 1,
+   "main_wr": 0.0,
+   "twin_wr": 0.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:lava",
+   "ident": "berserker",
+   "n": 1,
+   "main_wr": 0.0,
+   "twin_wr": 0.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:lava",
+   "ident": "chimera_gish",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:lava",
+   "ident": "evocation",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:lava",
+   "ident": "frost_troll",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:lava",
+   "ident": "ghoul",
+   "n": 2,
+   "main_wr": 0.5,
+   "twin_wr": 0.5,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:lava",
+   "ident": "manticore",
+   "n": 2,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:lava",
+   "ident": "orc",
+   "n": 2,
+   "main_wr": 0.5,
+   "twin_wr": 0.5,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:lava",
+   "ident": "plague_wight",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:lava",
+   "ident": "skeleton",
+   "n": 3,
+   "main_wr": 0.0,
+   "twin_wr": 0.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:lava",
+   "ident": "totem_bear",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:lava",
+   "ident": "wight",
+   "n": 1,
+   "main_wr": 0.0,
+   "twin_wr": 0.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:pillar",
+   "ident": "manticore",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:pillar",
+   "ident": "war",
+   "n": 2,
+   "main_wr": 0.5,
+   "twin_wr": 0.5,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:walls",
+   "ident": "arcane_trickster",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:walls",
+   "ident": "champion",
+   "n": 1,
+   "main_wr": 0.0,
+   "twin_wr": 0.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:walls",
+   "ident": "chimera_trickhealer",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:walls",
+   "ident": "devotion",
+   "n": 1,
+   "main_wr": 0.0,
+   "twin_wr": 0.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:walls",
+   "ident": "dire_wolf",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:walls",
+   "ident": "divination",
+   "n": 1,
+   "main_wr": 0.0,
+   "twin_wr": 0.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:walls",
+   "ident": "mage_npc",
+   "n": 1,
+   "main_wr": 0.0,
+   "twin_wr": 0.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:walls",
+   "ident": "manticore",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:walls",
+   "ident": "orc",
+   "n": 1,
+   "main_wr": 0.0,
+   "twin_wr": 0.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:walls",
+   "ident": "owlbear",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:walls",
+   "ident": "plague_wight",
+   "n": 3,
+   "main_wr": 0.6666666666666666,
+   "twin_wr": 0.6666666666666666,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:walls",
+   "ident": "shadow",
+   "n": 2,
+   "main_wr": 0.5,
+   "twin_wr": 0.5,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:walls",
+   "ident": "totem_bear",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:walls",
+   "ident": "wight",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "layout:walls",
+   "ident": "wolf",
+   "n": 1,
+   "main_wr": 0.0,
+   "twin_wr": 0.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "mutation:immune",
+   "ident": "basilisk",
+   "n": 1,
+   "main_wr": 0.0,
+   "twin_wr": 0.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "mutation:immune",
+   "ident": "berserker",
+   "n": 1,
+   "main_wr": 0.0,
+   "twin_wr": 1.0,
+   "drop": -1.0
+  },
+  {
+   "dim": "mutation:immune",
+   "ident": "champion",
+   "n": 2,
+   "main_wr": 0.0,
+   "twin_wr": 1.0,
+   "drop": -1.0
+  },
+  {
+   "dim": "mutation:immune",
+   "ident": "chimera_trickhealer",
+   "n": 2,
+   "main_wr": 0.5,
+   "twin_wr": 0.5,
+   "drop": 0.0
+  },
+  {
+   "dim": "mutation:immune",
+   "ident": "dire_wolf",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "mutation:immune",
+   "ident": "ghoul",
+   "n": 1,
+   "main_wr": 0.0,
+   "twin_wr": 1.0,
+   "drop": -1.0
+  },
+  {
+   "dim": "mutation:immune",
+   "ident": "life",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "mutation:immune",
+   "ident": "mage_npc",
+   "n": 2,
+   "main_wr": 0.0,
+   "twin_wr": 1.0,
+   "drop": -1.0
+  },
+  {
+   "dim": "mutation:immune",
+   "ident": "manticore",
+   "n": 2,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "mutation:immune",
+   "ident": "orc",
+   "n": 1,
+   "main_wr": 0.0,
+   "twin_wr": 1.0,
+   "drop": -1.0
+  },
+  {
+   "dim": "mutation:immune",
+   "ident": "shadow",
+   "n": 1,
+   "main_wr": 0.0,
+   "twin_wr": 0.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "mutation:immune",
+   "ident": "skeleton",
+   "n": 2,
+   "main_wr": 0.0,
+   "twin_wr": 0.5,
+   "drop": -0.5
+  },
+  {
+   "dim": "mutation:immune",
+   "ident": "storm_ogre",
+   "n": 1,
+   "main_wr": 0.0,
+   "twin_wr": 1.0,
+   "drop": -1.0
+  },
+  {
+   "dim": "mutation:immune",
+   "ident": "war",
+   "n": 1,
+   "main_wr": 0.0,
+   "twin_wr": 1.0,
+   "drop": -1.0
+  },
+  {
+   "dim": "mutation:immune",
+   "ident": "wight",
+   "n": 1,
+   "main_wr": 1.0,
+   "twin_wr": 1.0,
+   "drop": 0.0
+  },
+  {
+   "dim": "mutation:immune",
+   "ident": "wolf",
+   "n": 2,
+   "main_wr": 0.0,
+   "twin_wr": 0.0,
+   "drop": 0.0
+  }
+ ],
+ "expert_rows": [
+  [
+   "champion",
+   1,
+   1,
+   "mine|3|0060"
+  ]
+ ],
+ "events": [
+  {
+   "detector": "heal_full",
+   "fatal": true,
+   "scen_key": "mine|3|0000",
+   "ident": "champion",
+   "turn": 4,
+   "tags": [
+    "layout:walls",
+    "opp:script",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:斬擊",
+    "out_reach"
+   ],
+   "detail": "second_wind",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": false,
+    "typed_resist": true,
+    "enemy_level": false,
+    "enemy_maxhp": false,
+    "enemy_ac": false,
+    "WHOLE_desc(sanity)": false,
+    "terrain": false
+   },
+   "oracle_dep": "",
+   "lost": true
+  },
+  {
+   "detector": "no_engage",
+   "fatal": true,
+   "scen_key": "mine|3|0000",
+   "ident": "orc",
+   "turn": 62,
+   "tags": [
+    "layout:walls",
+    "opp:script",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:斬擊"
+   ],
+   "detail": "turns=62 dmg=0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": true
+  },
+  {
+   "detector": "heal_full",
+   "fatal": true,
+   "scen_key": "mine|3|0000~open",
+   "ident": "champion",
+   "turn": 4,
+   "tags": [
+    "opp:script",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "layout:open",
+    "mutation:immune:斬擊",
+    "out_reach"
+   ],
+   "detail": "second_wind",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": false,
+    "typed_resist": true,
+    "enemy_level": false,
+    "enemy_maxhp": false,
+    "enemy_ac": false,
+    "WHOLE_desc(sanity)": false
+   },
+   "oracle_dep": "",
+   "lost": true
+  },
+  {
+   "detector": "no_engage",
+   "fatal": true,
+   "scen_key": "mine|3|0000~open",
+   "ident": "orc",
+   "turn": 62,
+   "tags": [
+    "opp:script",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "layout:open",
+    "mutation:immune:斬擊"
+   ],
+   "detail": "turns=62 dmg=0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": true
+  },
+  {
+   "detector": "heal_full",
+   "fatal": true,
+   "scen_key": "mine|3|0000~noimm",
+   "ident": "champion",
+   "turn": 12,
+   "tags": [
+    "layout:walls",
+    "opp:script",
+    "shape:2v1",
+    "dlvl:0",
+    "mutation:none",
+    "in_reach"
+   ],
+   "detail": "second_wind",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": false,
+    "enemy_level": false,
+    "enemy_maxhp": false,
+    "enemy_ac": false,
+    "WHOLE_desc(sanity)": false,
+    "terrain": false
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "heal_full",
+   "fatal": true,
+   "scen_key": "mine|3|0001",
+   "ident": "champion",
+   "turn": 2,
+   "tags": [
+    "layout:walls",
+    "opp:script",
+    "shape:2v1",
+    "mutation:none",
+    "dlvl:3",
+    "out_reach"
+   ],
+   "detail": "second_wind",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": false,
+    "is_caster": false,
+    "applies_status": false,
+    "save_union": false,
+    "enemy_level": false,
+    "enemy_maxhp": false,
+    "enemy_ac": false,
+    "WHOLE_desc(sanity)": false,
+    "terrain": false
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "heal_full",
+   "fatal": true,
+   "scen_key": "mine|3|0001~open",
+   "ident": "champion",
+   "turn": 2,
+   "tags": [
+    "opp:script",
+    "shape:2v1",
+    "mutation:none",
+    "dlvl:3",
+    "layout:open",
+    "out_reach"
+   ],
+   "detail": "second_wind",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "no_engage",
+   "fatal": true,
+   "scen_key": "mine|3|0002",
+   "ident": "ghoul",
+   "turn": 19,
+   "tags": [
+    "layout:lava",
+    "opp:script",
+    "shape:1v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:斬擊"
+   ],
+   "detail": "turns=19 dmg=0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": true
+  },
+  {
+   "detector": "no_engage",
+   "fatal": true,
+   "scen_key": "mine|3|0002~open",
+   "ident": "ghoul",
+   "turn": 19,
+   "tags": [
+    "opp:script",
+    "shape:1v1",
+    "mutation:immune",
+    "dlvl:0",
+    "layout:open",
+    "mutation:immune:斬擊"
+   ],
+   "detail": "turns=19 dmg=0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": true
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0004",
+   "ident": "zombie",
+   "turn": 5,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": true,
+    "is_caster": true,
+    "save_union": false,
+    "enemy_level": false,
+    "enemy_maxhp": false,
+    "enemy_ac": true,
+    "WHOLE_desc(sanity)": true,
+    "terrain": false
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0004",
+   "ident": "zombie",
+   "turn": 5,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:重擊:目標距離 1.6m，超出 重擊 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0004",
+   "ident": "zombie",
+   "turn": 8,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": true,
+    "is_caster": true,
+    "save_union": false,
+    "enemy_level": false,
+    "enemy_maxhp": false,
+    "enemy_ac": true,
+    "WHOLE_desc(sanity)": true,
+    "terrain": false
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0004",
+   "ident": "zombie",
+   "turn": 8,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:重擊:目標距離 1.6m，超出 重擊 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0004",
+   "ident": "zombie",
+   "turn": 11,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": true,
+    "is_caster": true,
+    "save_union": false,
+    "enemy_level": false,
+    "enemy_maxhp": false,
+    "enemy_ac": true,
+    "WHOLE_desc(sanity)": true,
+    "terrain": false
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0004",
+   "ident": "zombie",
+   "turn": 11,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:重擊:目標距離 1.6m，超出 重擊 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0004",
+   "ident": "zombie",
+   "turn": 14,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": true,
+    "is_caster": true,
+    "save_union": false,
+    "enemy_level": false,
+    "enemy_maxhp": false,
+    "enemy_ac": true,
+    "WHOLE_desc(sanity)": true,
+    "terrain": false
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0004",
+   "ident": "zombie",
+   "turn": 14,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:重擊:目標距離 1.6m，超出 重擊 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0004",
+   "ident": "zombie",
+   "turn": 17,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0004",
+   "ident": "zombie",
+   "turn": 17,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:重擊:目標距離 1.6m，超出 重擊 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0004",
+   "ident": "zombie",
+   "turn": 20,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0004",
+   "ident": "zombie",
+   "turn": 20,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:重擊:目標距離 1.6m，超出 重擊 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0004",
+   "ident": "zombie",
+   "turn": 23,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0004",
+   "ident": "zombie",
+   "turn": 23,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:重擊:目標距離 1.6m，超出 重擊 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0004",
+   "ident": "zombie",
+   "turn": 26,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0004",
+   "ident": "zombie",
+   "turn": 26,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:重擊:目標距離 1.6m，超出 重擊 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0004",
+   "ident": "zombie",
+   "turn": 29,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0004",
+   "ident": "zombie",
+   "turn": 29,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:重擊:目標距離 1.6m，超出 重擊 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0004",
+   "ident": "zombie",
+   "turn": 32,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0004",
+   "ident": "zombie",
+   "turn": 32,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:重擊:目標距離 1.6m，超出 重擊 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0004",
+   "ident": "zombie",
+   "turn": 35,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0004",
+   "ident": "zombie",
+   "turn": 35,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:重擊:目標距離 1.6m，超出 重擊 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0004",
+   "ident": "zombie",
+   "turn": 38,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0004",
+   "ident": "zombie",
+   "turn": 38,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:重擊:目標距離 1.6m，超出 重擊 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0004",
+   "ident": "zombie",
+   "turn": 41,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0004",
+   "ident": "zombie",
+   "turn": 41,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:重擊:目標距離 1.6m，超出 重擊 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0004",
+   "ident": "zombie",
+   "turn": 44,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0004",
+   "ident": "zombie",
+   "turn": 44,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:重擊:目標距離 1.6m，超出 重擊 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0004",
+   "ident": "zombie",
+   "turn": 47,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0004",
+   "ident": "zombie",
+   "turn": 47,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:重擊:目標距離 1.6m，超出 重擊 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0004",
+   "ident": "zombie",
+   "turn": 50,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0004",
+   "ident": "zombie",
+   "turn": 50,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:重擊:目標距離 1.6m，超出 重擊 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0004",
+   "ident": "zombie",
+   "turn": 53,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0004",
+   "ident": "zombie",
+   "turn": 53,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:重擊:目標距離 1.6m，超出 重擊 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0004",
+   "ident": "zombie",
+   "turn": 56,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0004",
+   "ident": "zombie",
+   "turn": 56,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:重擊:目標距離 1.6m，超出 重擊 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0004",
+   "ident": "zombie",
+   "turn": 59,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0004",
+   "ident": "zombie",
+   "turn": 59,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:重擊:目標距離 1.6m，超出 重擊 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0004",
+   "ident": "zombie",
+   "turn": 62,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0004",
+   "ident": "zombie",
+   "turn": 62,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:重擊:目標距離 1.6m，超出 重擊 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0004",
+   "ident": "zombie",
+   "turn": 65,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0004",
+   "ident": "zombie",
+   "turn": 65,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:重擊:目標距離 1.6m，超出 重擊 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0004",
+   "ident": "zombie",
+   "turn": 68,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0004",
+   "ident": "zombie",
+   "turn": 68,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:重擊:目標距離 1.6m，超出 重擊 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0004",
+   "ident": "zombie",
+   "turn": 71,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0004",
+   "ident": "zombie",
+   "turn": 71,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:重擊:目標距離 1.6m，超出 重擊 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0004",
+   "ident": "zombie",
+   "turn": 74,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0004",
+   "ident": "zombie",
+   "turn": 74,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:重擊:目標距離 1.6m，超出 重擊 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "no_engage",
+   "fatal": true,
+   "scen_key": "mine|3|0004",
+   "ident": "zombie",
+   "turn": 75,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0"
+   ],
+   "detail": "turns=75 dmg=0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0004~open",
+   "ident": "zombie",
+   "turn": 5,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0004~open",
+   "ident": "zombie",
+   "turn": 5,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:重擊:目標距離 1.6m，超出 重擊 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0004~open",
+   "ident": "zombie",
+   "turn": 8,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0004~open",
+   "ident": "zombie",
+   "turn": 8,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:重擊:目標距離 1.6m，超出 重擊 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0004~open",
+   "ident": "zombie",
+   "turn": 11,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0004~open",
+   "ident": "zombie",
+   "turn": 11,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:重擊:目標距離 1.6m，超出 重擊 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0004~open",
+   "ident": "zombie",
+   "turn": 14,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0004~open",
+   "ident": "zombie",
+   "turn": 14,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:重擊:目標距離 1.6m，超出 重擊 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0004~open",
+   "ident": "zombie",
+   "turn": 17,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0004~open",
+   "ident": "zombie",
+   "turn": 17,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:重擊:目標距離 1.6m，超出 重擊 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0004~open",
+   "ident": "zombie",
+   "turn": 20,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0004~open",
+   "ident": "zombie",
+   "turn": 20,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:重擊:目標距離 1.6m，超出 重擊 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0004~open",
+   "ident": "zombie",
+   "turn": 23,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0004~open",
+   "ident": "zombie",
+   "turn": 23,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:重擊:目標距離 1.6m，超出 重擊 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0004~open",
+   "ident": "zombie",
+   "turn": 26,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0004~open",
+   "ident": "zombie",
+   "turn": 26,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:重擊:目標距離 1.6m，超出 重擊 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0004~open",
+   "ident": "zombie",
+   "turn": 29,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0004~open",
+   "ident": "zombie",
+   "turn": 29,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:重擊:目標距離 1.6m，超出 重擊 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0004~open",
+   "ident": "zombie",
+   "turn": 32,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0004~open",
+   "ident": "zombie",
+   "turn": 32,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:重擊:目標距離 1.6m，超出 重擊 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0004~open",
+   "ident": "zombie",
+   "turn": 35,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0004~open",
+   "ident": "zombie",
+   "turn": 35,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:重擊:目標距離 1.6m，超出 重擊 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0004~open",
+   "ident": "zombie",
+   "turn": 38,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0004~open",
+   "ident": "zombie",
+   "turn": 38,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:重擊:目標距離 1.6m，超出 重擊 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0004~open",
+   "ident": "zombie",
+   "turn": 41,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0004~open",
+   "ident": "zombie",
+   "turn": 41,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:重擊:目標距離 1.6m，超出 重擊 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0004~open",
+   "ident": "zombie",
+   "turn": 44,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0004~open",
+   "ident": "zombie",
+   "turn": 44,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:重擊:目標距離 1.6m，超出 重擊 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0004~open",
+   "ident": "zombie",
+   "turn": 47,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0004~open",
+   "ident": "zombie",
+   "turn": 47,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:重擊:目標距離 1.6m，超出 重擊 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0004~open",
+   "ident": "zombie",
+   "turn": 50,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0004~open",
+   "ident": "zombie",
+   "turn": 50,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:重擊:目標距離 1.6m，超出 重擊 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0004~open",
+   "ident": "zombie",
+   "turn": 53,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0004~open",
+   "ident": "zombie",
+   "turn": 53,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:重擊:目標距離 1.6m，超出 重擊 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0004~open",
+   "ident": "zombie",
+   "turn": 56,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0004~open",
+   "ident": "zombie",
+   "turn": 56,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:重擊:目標距離 1.6m，超出 重擊 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0004~open",
+   "ident": "zombie",
+   "turn": 59,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0004~open",
+   "ident": "zombie",
+   "turn": 59,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:重擊:目標距離 1.6m，超出 重擊 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0004~open",
+   "ident": "zombie",
+   "turn": 62,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0004~open",
+   "ident": "zombie",
+   "turn": 62,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:重擊:目標距離 1.6m，超出 重擊 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0004~open",
+   "ident": "zombie",
+   "turn": 65,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0004~open",
+   "ident": "zombie",
+   "turn": 65,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:重擊:目標距離 1.6m，超出 重擊 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0004~open",
+   "ident": "zombie",
+   "turn": 68,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0004~open",
+   "ident": "zombie",
+   "turn": 68,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:重擊:目標距離 1.6m，超出 重擊 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0004~open",
+   "ident": "zombie",
+   "turn": 71,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0004~open",
+   "ident": "zombie",
+   "turn": 71,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:重擊:目標距離 1.6m，超出 重擊 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0004~open",
+   "ident": "zombie",
+   "turn": 74,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0004~open",
+   "ident": "zombie",
+   "turn": 74,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:重擊:目標距離 1.6m，超出 重擊 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "no_engage",
+   "fatal": true,
+   "scen_key": "mine|3|0004~open",
+   "ident": "zombie",
+   "turn": 75,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open"
+   ],
+   "detail": "turns=75 dmg=0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "no_engage",
+   "fatal": true,
+   "scen_key": "mine|3|0006",
+   "ident": "shadow",
+   "turn": 25,
+   "tags": [
+    "layout:walls",
+    "opp:script",
+    "shape:1v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:黯蝕"
+   ],
+   "detail": "turns=25 dmg=0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": true
+  },
+  {
+   "detector": "no_engage",
+   "fatal": true,
+   "scen_key": "mine|3|0006~open",
+   "ident": "shadow",
+   "turn": 25,
+   "tags": [
+    "opp:script",
+    "shape:1v1",
+    "mutation:immune",
+    "dlvl:0",
+    "layout:open",
+    "mutation:immune:黯蝕"
+   ],
+   "detail": "turns=25 dmg=0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": true
+  },
+  {
+   "detector": "heal_full",
+   "fatal": true,
+   "scen_key": "mine|3|0007",
+   "ident": "champion",
+   "turn": 1,
+   "tags": [
+    "layout:open",
+    "opp:mirror",
+    "shape:1v1",
+    "mutation:self_frightened",
+    "dlvl:3",
+    "self:frightened",
+    "out_reach"
+   ],
+   "detail": "second_wind",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "no_engage",
+   "fatal": true,
+   "scen_key": "mine|3|0009",
+   "ident": "evocation",
+   "turn": 50,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v1",
+    "mutation:none",
+    "dlvl:0"
+   ],
+   "detail": "turns=50 dmg=0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "no_engage",
+   "fatal": true,
+   "scen_key": "mine|3|0011",
+   "ident": "wolf",
+   "turn": 9,
+   "tags": [
+    "layout:open",
+    "opp:mirror",
+    "shape:1v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:穿刺"
+   ],
+   "detail": "turns=9 dmg=0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": true
+  },
+  {
+   "detector": "aoe_ally",
+   "fatal": false,
+   "scen_key": "mine|3|0012~open",
+   "ident": "evocation",
+   "turn": 0,
+   "tags": [
+    "opp:script",
+    "shape:2v1",
+    "mutation:none",
+    "dlvl:0",
+    "layout:open",
+    "out_reach"
+   ],
+   "detail": "fireball_ev",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "heal_full",
+   "fatal": true,
+   "scen_key": "mine|3|0015",
+   "ident": "champion",
+   "turn": 5,
+   "tags": [
+    "layout:walls",
+    "opp:passive",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:黯蝕",
+    "out_reach"
+   ],
+   "detail": "second_wind",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "heal_full",
+   "fatal": true,
+   "scen_key": "mine|3|0015~open",
+   "ident": "champion",
+   "turn": 5,
+   "tags": [
+    "opp:passive",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "layout:open",
+    "mutation:immune:黯蝕",
+    "out_reach"
+   ],
+   "detail": "second_wind",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "heal_full",
+   "fatal": true,
+   "scen_key": "mine|3|0015~noimm",
+   "ident": "champion",
+   "turn": 4,
+   "tags": [
+    "layout:walls",
+    "opp:passive",
+    "shape:2v1",
+    "dlvl:0",
+    "mutation:none",
+    "out_reach"
+   ],
+   "detail": "second_wind",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "heal_full",
+   "fatal": true,
+   "scen_key": "mine|3|0016",
+   "ident": "champion",
+   "turn": 1,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:2v1",
+    "mutation:none",
+    "dlvl:0",
+    "out_reach"
+   ],
+   "detail": "second_wind",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "no_engage",
+   "fatal": true,
+   "scen_key": "mine|3|0017",
+   "ident": "berserker",
+   "turn": 50,
+   "tags": [
+    "layout:lava",
+    "opp:script",
+    "shape:1v1",
+    "mutation:immune",
+    "dlvl:-3",
+    "mutation:immune:斬擊"
+   ],
+   "detail": "turns=50 dmg=0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": true
+  },
+  {
+   "detector": "no_engage",
+   "fatal": true,
+   "scen_key": "mine|3|0017~open",
+   "ident": "berserker",
+   "turn": 50,
+   "tags": [
+    "opp:script",
+    "shape:1v1",
+    "mutation:immune",
+    "dlvl:-3",
+    "layout:open",
+    "mutation:immune:斬擊"
+   ],
+   "detail": "turns=50 dmg=0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": true
+  },
+  {
+   "detector": "heal_full",
+   "fatal": true,
+   "scen_key": "mine|3|0018",
+   "ident": "champion",
+   "turn": 0,
+   "tags": [
+    "layout:open",
+    "opp:mirror",
+    "shape:1v1",
+    "mutation:immune",
+    "dlvl:-3",
+    "mutation:immune:斬擊",
+    "enemy:dodging",
+    "out_reach"
+   ],
+   "detail": "second_wind",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": true
+  },
+  {
+   "detector": "no_engage",
+   "fatal": true,
+   "scen_key": "mine|3|0018",
+   "ident": "champion",
+   "turn": 50,
+   "tags": [
+    "layout:open",
+    "opp:mirror",
+    "shape:1v1",
+    "mutation:immune",
+    "dlvl:-3",
+    "mutation:immune:斬擊"
+   ],
+   "detail": "turns=50 dmg=0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": true
+  },
+  {
+   "detector": "heal_full",
+   "fatal": true,
+   "scen_key": "mine|3|0018~noimm",
+   "ident": "champion",
+   "turn": 0,
+   "tags": [
+    "layout:open",
+    "opp:mirror",
+    "shape:1v1",
+    "dlvl:-3",
+    "mutation:none",
+    "enemy:dodging",
+    "out_reach"
+   ],
+   "detail": "second_wind",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0020",
+   "ident": "life",
+   "turn": 5,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "enemy:prone",
+    "self:spirit_guardians_active",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": false,
+    "is_caster": false,
+    "save_union": false,
+    "enemy_level": false,
+    "enemy_maxhp": false,
+    "enemy_ac": false,
+    "WHOLE_desc(sanity)": false,
+    "terrain": false,
+    "self_status": false
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0020",
+   "ident": "life",
+   "turn": 8,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "enemy:prone",
+    "self:spirit_guardians_active",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": true,
+    "is_caster": false,
+    "save_union": false,
+    "enemy_level": false,
+    "enemy_maxhp": true,
+    "enemy_ac": false,
+    "WHOLE_desc(sanity)": false,
+    "terrain": false,
+    "self_status": false
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0020~open",
+   "ident": "life",
+   "turn": 5,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "enemy:prone",
+    "self:spirit_guardians_active",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": false,
+    "is_caster": false,
+    "save_union": false,
+    "enemy_level": false,
+    "enemy_maxhp": false,
+    "enemy_ac": false,
+    "WHOLE_desc(sanity)": false,
+    "self_status": false
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0020~open",
+   "ident": "life",
+   "turn": 8,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "enemy:prone",
+    "self:spirit_guardians_active",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": true,
+    "is_caster": false,
+    "save_union": false,
+    "enemy_level": false,
+    "enemy_maxhp": true,
+    "enemy_ac": false,
+    "WHOLE_desc(sanity)": false,
+    "self_status": false
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "heal_full",
+   "fatal": true,
+   "scen_key": "mine|3|0028",
+   "ident": "champion",
+   "turn": 2,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:穿刺",
+    "enemy:dodging",
+    "out_reach"
+   ],
+   "detail": "second_wind",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028",
+   "ident": "manticore",
+   "turn": 8,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028",
+   "ident": "manticore",
+   "turn": 8,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028",
+   "ident": "manticore",
+   "turn": 8,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028",
+   "ident": "manticore",
+   "turn": 8,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028",
+   "ident": "manticore",
+   "turn": 8,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028",
+   "ident": "manticore",
+   "turn": 12,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028",
+   "ident": "manticore",
+   "turn": 12,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028",
+   "ident": "manticore",
+   "turn": 12,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028",
+   "ident": "manticore",
+   "turn": 12,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028",
+   "ident": "manticore",
+   "turn": 12,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028",
+   "ident": "manticore",
+   "turn": 16,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028",
+   "ident": "manticore",
+   "turn": 16,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028",
+   "ident": "manticore",
+   "turn": 16,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028",
+   "ident": "manticore",
+   "turn": 16,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028",
+   "ident": "manticore",
+   "turn": 16,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028",
+   "ident": "manticore",
+   "turn": 20,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028",
+   "ident": "manticore",
+   "turn": 20,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028",
+   "ident": "manticore",
+   "turn": 20,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028",
+   "ident": "manticore",
+   "turn": 20,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028",
+   "ident": "manticore",
+   "turn": 20,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028",
+   "ident": "manticore",
+   "turn": 24,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028",
+   "ident": "manticore",
+   "turn": 24,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028",
+   "ident": "manticore",
+   "turn": 24,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028",
+   "ident": "manticore",
+   "turn": 24,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028",
+   "ident": "manticore",
+   "turn": 24,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028",
+   "ident": "manticore",
+   "turn": 28,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028",
+   "ident": "manticore",
+   "turn": 28,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028",
+   "ident": "manticore",
+   "turn": 28,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028",
+   "ident": "manticore",
+   "turn": 28,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028",
+   "ident": "manticore",
+   "turn": 28,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028",
+   "ident": "manticore",
+   "turn": 32,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028",
+   "ident": "manticore",
+   "turn": 32,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028",
+   "ident": "manticore",
+   "turn": 32,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028",
+   "ident": "manticore",
+   "turn": 32,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028",
+   "ident": "manticore",
+   "turn": 32,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028",
+   "ident": "manticore",
+   "turn": 36,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028",
+   "ident": "manticore",
+   "turn": 36,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028",
+   "ident": "manticore",
+   "turn": 36,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028",
+   "ident": "manticore",
+   "turn": 36,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028",
+   "ident": "manticore",
+   "turn": 36,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028",
+   "ident": "manticore",
+   "turn": 40,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028",
+   "ident": "manticore",
+   "turn": 40,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028",
+   "ident": "manticore",
+   "turn": 40,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028",
+   "ident": "manticore",
+   "turn": 40,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028",
+   "ident": "manticore",
+   "turn": 40,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "heal_full",
+   "fatal": true,
+   "scen_key": "mine|3|0028~open",
+   "ident": "champion",
+   "turn": 2,
+   "tags": [
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "layout:open",
+    "mutation:immune:穿刺",
+    "enemy:dodging",
+    "out_reach"
+   ],
+   "detail": "second_wind",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~open",
+   "ident": "manticore",
+   "turn": 8,
+   "tags": [
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "layout:open",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~open",
+   "ident": "manticore",
+   "turn": 8,
+   "tags": [
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "layout:open",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~open",
+   "ident": "manticore",
+   "turn": 8,
+   "tags": [
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "layout:open",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~open",
+   "ident": "manticore",
+   "turn": 8,
+   "tags": [
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "layout:open",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~open",
+   "ident": "manticore",
+   "turn": 8,
+   "tags": [
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "layout:open",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~open",
+   "ident": "manticore",
+   "turn": 12,
+   "tags": [
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "layout:open",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~open",
+   "ident": "manticore",
+   "turn": 12,
+   "tags": [
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "layout:open",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~open",
+   "ident": "manticore",
+   "turn": 12,
+   "tags": [
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "layout:open",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~open",
+   "ident": "manticore",
+   "turn": 12,
+   "tags": [
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "layout:open",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~open",
+   "ident": "manticore",
+   "turn": 12,
+   "tags": [
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "layout:open",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~open",
+   "ident": "manticore",
+   "turn": 16,
+   "tags": [
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "layout:open",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~open",
+   "ident": "manticore",
+   "turn": 16,
+   "tags": [
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "layout:open",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~open",
+   "ident": "manticore",
+   "turn": 16,
+   "tags": [
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "layout:open",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~open",
+   "ident": "manticore",
+   "turn": 16,
+   "tags": [
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "layout:open",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~open",
+   "ident": "manticore",
+   "turn": 16,
+   "tags": [
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "layout:open",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~open",
+   "ident": "manticore",
+   "turn": 20,
+   "tags": [
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "layout:open",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~open",
+   "ident": "manticore",
+   "turn": 20,
+   "tags": [
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "layout:open",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~open",
+   "ident": "manticore",
+   "turn": 20,
+   "tags": [
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "layout:open",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~open",
+   "ident": "manticore",
+   "turn": 20,
+   "tags": [
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "layout:open",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~open",
+   "ident": "manticore",
+   "turn": 20,
+   "tags": [
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "layout:open",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~open",
+   "ident": "manticore",
+   "turn": 24,
+   "tags": [
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "layout:open",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~open",
+   "ident": "manticore",
+   "turn": 24,
+   "tags": [
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "layout:open",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~open",
+   "ident": "manticore",
+   "turn": 24,
+   "tags": [
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "layout:open",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~open",
+   "ident": "manticore",
+   "turn": 24,
+   "tags": [
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "layout:open",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~open",
+   "ident": "manticore",
+   "turn": 24,
+   "tags": [
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "layout:open",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~open",
+   "ident": "manticore",
+   "turn": 28,
+   "tags": [
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "layout:open",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~open",
+   "ident": "manticore",
+   "turn": 28,
+   "tags": [
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "layout:open",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~open",
+   "ident": "manticore",
+   "turn": 28,
+   "tags": [
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "layout:open",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~open",
+   "ident": "manticore",
+   "turn": 28,
+   "tags": [
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "layout:open",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~open",
+   "ident": "manticore",
+   "turn": 28,
+   "tags": [
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "layout:open",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~open",
+   "ident": "manticore",
+   "turn": 32,
+   "tags": [
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "layout:open",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~open",
+   "ident": "manticore",
+   "turn": 32,
+   "tags": [
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "layout:open",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~open",
+   "ident": "manticore",
+   "turn": 32,
+   "tags": [
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "layout:open",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~open",
+   "ident": "manticore",
+   "turn": 32,
+   "tags": [
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "layout:open",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~open",
+   "ident": "manticore",
+   "turn": 32,
+   "tags": [
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "layout:open",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~open",
+   "ident": "manticore",
+   "turn": 36,
+   "tags": [
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "layout:open",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~open",
+   "ident": "manticore",
+   "turn": 36,
+   "tags": [
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "layout:open",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~open",
+   "ident": "manticore",
+   "turn": 36,
+   "tags": [
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "layout:open",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~open",
+   "ident": "manticore",
+   "turn": 36,
+   "tags": [
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "layout:open",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~open",
+   "ident": "manticore",
+   "turn": 36,
+   "tags": [
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "layout:open",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~open",
+   "ident": "manticore",
+   "turn": 40,
+   "tags": [
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "layout:open",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~open",
+   "ident": "manticore",
+   "turn": 40,
+   "tags": [
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "layout:open",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~open",
+   "ident": "manticore",
+   "turn": 40,
+   "tags": [
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "layout:open",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~open",
+   "ident": "manticore",
+   "turn": 40,
+   "tags": [
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "layout:open",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~open",
+   "ident": "manticore",
+   "turn": 40,
+   "tags": [
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "layout:open",
+    "mutation:immune:穿刺",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "heal_full",
+   "fatal": true,
+   "scen_key": "mine|3|0028~noimm",
+   "ident": "champion",
+   "turn": 2,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "dlvl:0",
+    "mutation:none",
+    "enemy:dodging",
+    "out_reach"
+   ],
+   "detail": "second_wind",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~noimm",
+   "ident": "manticore",
+   "turn": 8,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "dlvl:0",
+    "mutation:none",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~noimm",
+   "ident": "manticore",
+   "turn": 8,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "dlvl:0",
+    "mutation:none",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~noimm",
+   "ident": "manticore",
+   "turn": 8,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "dlvl:0",
+    "mutation:none",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~noimm",
+   "ident": "manticore",
+   "turn": 8,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "dlvl:0",
+    "mutation:none",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~noimm",
+   "ident": "manticore",
+   "turn": 8,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "dlvl:0",
+    "mutation:none",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~noimm",
+   "ident": "manticore",
+   "turn": 12,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "dlvl:0",
+    "mutation:none",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~noimm",
+   "ident": "manticore",
+   "turn": 12,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "dlvl:0",
+    "mutation:none",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~noimm",
+   "ident": "manticore",
+   "turn": 12,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "dlvl:0",
+    "mutation:none",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~noimm",
+   "ident": "manticore",
+   "turn": 12,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "dlvl:0",
+    "mutation:none",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~noimm",
+   "ident": "manticore",
+   "turn": 12,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "dlvl:0",
+    "mutation:none",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~noimm",
+   "ident": "manticore",
+   "turn": 16,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "dlvl:0",
+    "mutation:none",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~noimm",
+   "ident": "manticore",
+   "turn": 16,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "dlvl:0",
+    "mutation:none",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~noimm",
+   "ident": "manticore",
+   "turn": 16,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "dlvl:0",
+    "mutation:none",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~noimm",
+   "ident": "manticore",
+   "turn": 16,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "dlvl:0",
+    "mutation:none",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~noimm",
+   "ident": "manticore",
+   "turn": 16,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "dlvl:0",
+    "mutation:none",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~noimm",
+   "ident": "manticore",
+   "turn": 20,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "dlvl:0",
+    "mutation:none",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~noimm",
+   "ident": "manticore",
+   "turn": 20,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "dlvl:0",
+    "mutation:none",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~noimm",
+   "ident": "manticore",
+   "turn": 20,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "dlvl:0",
+    "mutation:none",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~noimm",
+   "ident": "manticore",
+   "turn": 20,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "dlvl:0",
+    "mutation:none",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0028~noimm",
+   "ident": "manticore",
+   "turn": 20,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "dlvl:0",
+    "mutation:none",
+    "seat:opp"
+   ],
+   "detail": "[opp] weapon:長劍:目標距離 2.0m，超出 長劍 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "heal_full",
+   "fatal": true,
+   "scen_key": "mine|3|0033",
+   "ident": "battle_master",
+   "turn": 2,
+   "tags": [
+    "layout:difficult",
+    "opp:script",
+    "shape:1v1",
+    "mutation:none",
+    "dlvl:0",
+    "out_reach"
+   ],
+   "detail": "second_wind",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": false,
+    "typed_resist": false,
+    "condition_immunity": false,
+    "enemy_level": false,
+    "enemy_maxhp": false,
+    "enemy_ac": false,
+    "WHOLE_desc(sanity)": false,
+    "terrain": false
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "heal_full",
+   "fatal": true,
+   "scen_key": "mine|3|0033~open",
+   "ident": "battle_master",
+   "turn": 2,
+   "tags": [
+    "opp:script",
+    "shape:1v1",
+    "mutation:none",
+    "dlvl:0",
+    "layout:open",
+    "out_reach"
+   ],
+   "detail": "second_wind",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": false,
+    "typed_resist": false,
+    "condition_immunity": false,
+    "enemy_level": false,
+    "enemy_maxhp": false,
+    "enemy_ac": false,
+    "WHOLE_desc(sanity)": false
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "no_engage",
+   "fatal": true,
+   "scen_key": "mine|3|0037",
+   "ident": "wight",
+   "turn": 10,
+   "tags": [
+    "layout:open",
+    "opp:script",
+    "shape:1v2",
+    "mutation:none",
+    "dlvl:0"
+   ],
+   "detail": "turns=10 dmg=0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": true
+  },
+  {
+   "detector": "no_engage",
+   "fatal": true,
+   "scen_key": "mine|3|0039",
+   "ident": "skeleton",
+   "turn": 50,
+   "tags": [
+    "layout:lava",
+    "opp:passive",
+    "shape:1v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:穿刺"
+   ],
+   "detail": "turns=50 dmg=0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "no_engage",
+   "fatal": true,
+   "scen_key": "mine|3|0039~open",
+   "ident": "skeleton",
+   "turn": 50,
+   "tags": [
+    "opp:passive",
+    "shape:1v1",
+    "mutation:immune",
+    "dlvl:0",
+    "layout:open",
+    "mutation:immune:穿刺"
+   ],
+   "detail": "turns=50 dmg=0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0042",
+   "ident": "chimera_trickhealer",
+   "turn": 2,
+   "tags": [
+    "layout:walls",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "self:hidden",
+    "enemy:prone",
+    "out_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": false,
+    "applies_status": false,
+    "save_union": false,
+    "enemy_level": false,
+    "enemy_maxhp": true,
+    "enemy_ac": true,
+    "WHOLE_desc(sanity)": false,
+    "terrain": false,
+    "self_status": true
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0042",
+   "ident": "chimera_trickhealer",
+   "turn": 4,
+   "tags": [
+    "layout:walls",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "self:hidden",
+    "enemy:prone",
+    "out_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": false,
+    "applies_status": false,
+    "save_union": false,
+    "enemy_level": false,
+    "enemy_maxhp": true,
+    "enemy_ac": true,
+    "WHOLE_desc(sanity)": false,
+    "terrain": false,
+    "self_status": true
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0042",
+   "ident": "chimera_trickhealer",
+   "turn": 6,
+   "tags": [
+    "layout:walls",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "self:hidden",
+    "enemy:prone",
+    "out_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": false,
+    "applies_status": false,
+    "save_union": false,
+    "enemy_level": false,
+    "enemy_maxhp": true,
+    "enemy_ac": true,
+    "WHOLE_desc(sanity)": false,
+    "terrain": false,
+    "self_status": true
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0042",
+   "ident": "chimera_trickhealer",
+   "turn": 8,
+   "tags": [
+    "layout:walls",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "self:hidden",
+    "enemy:prone",
+    "out_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": false,
+    "applies_status": false,
+    "save_union": false,
+    "enemy_level": false,
+    "enemy_maxhp": true,
+    "enemy_ac": true,
+    "WHOLE_desc(sanity)": false,
+    "terrain": false,
+    "self_status": true
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0042",
+   "ident": "chimera_trickhealer",
+   "turn": 10,
+   "tags": [
+    "layout:walls",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "self:hidden",
+    "enemy:prone",
+    "out_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0042",
+   "ident": "chimera_trickhealer",
+   "turn": 12,
+   "tags": [
+    "layout:walls",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "self:hidden",
+    "enemy:prone",
+    "out_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0042",
+   "ident": "chimera_trickhealer",
+   "turn": 14,
+   "tags": [
+    "layout:walls",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "self:hidden",
+    "enemy:prone",
+    "out_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0042",
+   "ident": "chimera_trickhealer",
+   "turn": 16,
+   "tags": [
+    "layout:walls",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "self:hidden",
+    "enemy:prone",
+    "out_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0042",
+   "ident": "chimera_trickhealer",
+   "turn": 18,
+   "tags": [
+    "layout:walls",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "self:hidden",
+    "enemy:prone",
+    "out_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0042",
+   "ident": "chimera_trickhealer",
+   "turn": 20,
+   "tags": [
+    "layout:walls",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "self:hidden",
+    "enemy:prone",
+    "out_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0042",
+   "ident": "chimera_trickhealer",
+   "turn": 22,
+   "tags": [
+    "layout:walls",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "self:hidden",
+    "enemy:prone",
+    "out_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0042",
+   "ident": "chimera_trickhealer",
+   "turn": 24,
+   "tags": [
+    "layout:walls",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "self:hidden",
+    "enemy:prone",
+    "out_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0042",
+   "ident": "chimera_trickhealer",
+   "turn": 26,
+   "tags": [
+    "layout:walls",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "self:hidden",
+    "enemy:prone",
+    "out_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0042~open",
+   "ident": "chimera_trickhealer",
+   "turn": 2,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "self:hidden",
+    "enemy:prone",
+    "out_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0042~open",
+   "ident": "chimera_trickhealer",
+   "turn": 4,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "self:hidden",
+    "enemy:prone",
+    "out_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0042~open",
+   "ident": "chimera_trickhealer",
+   "turn": 6,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "self:hidden",
+    "enemy:prone",
+    "out_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0042~open",
+   "ident": "chimera_trickhealer",
+   "turn": 8,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "self:hidden",
+    "enemy:prone",
+    "out_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0042~open",
+   "ident": "chimera_trickhealer",
+   "turn": 10,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "self:hidden",
+    "enemy:prone",
+    "out_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0042~open",
+   "ident": "chimera_trickhealer",
+   "turn": 12,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "self:hidden",
+    "enemy:prone",
+    "out_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0042~open",
+   "ident": "chimera_trickhealer",
+   "turn": 14,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "self:hidden",
+    "enemy:prone",
+    "out_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0042~open",
+   "ident": "chimera_trickhealer",
+   "turn": 16,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "self:hidden",
+    "enemy:prone",
+    "out_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0042~open",
+   "ident": "chimera_trickhealer",
+   "turn": 18,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "self:hidden",
+    "enemy:prone",
+    "out_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0042~open",
+   "ident": "chimera_trickhealer",
+   "turn": 20,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "self:hidden",
+    "enemy:prone",
+    "out_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0042~open",
+   "ident": "chimera_trickhealer",
+   "turn": 22,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "self:hidden",
+    "enemy:prone",
+    "out_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0042~open",
+   "ident": "chimera_trickhealer",
+   "turn": 24,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "self:hidden",
+    "enemy:prone",
+    "out_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0042~open",
+   "ident": "chimera_trickhealer",
+   "turn": 26,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "layout:open",
+    "self:hidden",
+    "enemy:prone",
+    "out_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "heal_full",
+   "fatal": true,
+   "scen_key": "mine|3|0044",
+   "ident": "champion",
+   "turn": 0,
+   "tags": [
+    "layout:open",
+    "opp:mirror",
+    "shape:1v1",
+    "mutation:none",
+    "dlvl:0",
+    "enemy:dodging",
+    "out_reach"
+   ],
+   "detail": "second_wind",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0045",
+   "ident": "mage_npc",
+   "turn": 3,
+   "tags": [
+    "layout:walls",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": false,
+    "enemy_level": false,
+    "enemy_maxhp": true,
+    "enemy_ac": true,
+    "WHOLE_desc(sanity)": false,
+    "terrain": false
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0045",
+   "ident": "mage_npc",
+   "turn": 6,
+   "tags": [
+    "layout:walls",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": false,
+    "enemy_level": false,
+    "enemy_maxhp": true,
+    "enemy_ac": true,
+    "WHOLE_desc(sanity)": false,
+    "terrain": false
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0045",
+   "ident": "mage_npc",
+   "turn": 9,
+   "tags": [
+    "layout:walls",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": false,
+    "enemy_level": false,
+    "enemy_maxhp": true,
+    "enemy_ac": true,
+    "WHOLE_desc(sanity)": false,
+    "terrain": false
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0045",
+   "ident": "mage_npc",
+   "turn": 12,
+   "tags": [
+    "layout:walls",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": false,
+    "enemy_level": false,
+    "enemy_maxhp": true,
+    "enemy_ac": true,
+    "WHOLE_desc(sanity)": false,
+    "terrain": false
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0045",
+   "ident": "mage_npc",
+   "turn": 15,
+   "tags": [
+    "layout:walls",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0045",
+   "ident": "mage_npc",
+   "turn": 18,
+   "tags": [
+    "layout:walls",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0045",
+   "ident": "mage_npc",
+   "turn": 21,
+   "tags": [
+    "layout:walls",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0045",
+   "ident": "mage_npc",
+   "turn": 24,
+   "tags": [
+    "layout:walls",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0045",
+   "ident": "mage_npc",
+   "turn": 27,
+   "tags": [
+    "layout:walls",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0045",
+   "ident": "mage_npc",
+   "turn": 30,
+   "tags": [
+    "layout:walls",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0045",
+   "ident": "mage_npc",
+   "turn": 33,
+   "tags": [
+    "layout:walls",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0045",
+   "ident": "mage_npc",
+   "turn": 36,
+   "tags": [
+    "layout:walls",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0045",
+   "ident": "mage_npc",
+   "turn": 39,
+   "tags": [
+    "layout:walls",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0045",
+   "ident": "mage_npc",
+   "turn": 42,
+   "tags": [
+    "layout:walls",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0045",
+   "ident": "mage_npc",
+   "turn": 45,
+   "tags": [
+    "layout:walls",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0045",
+   "ident": "mage_npc",
+   "turn": 48,
+   "tags": [
+    "layout:walls",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0045",
+   "ident": "mage_npc",
+   "turn": 51,
+   "tags": [
+    "layout:walls",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0045",
+   "ident": "mage_npc",
+   "turn": 54,
+   "tags": [
+    "layout:walls",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0045",
+   "ident": "mage_npc",
+   "turn": 57,
+   "tags": [
+    "layout:walls",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0045",
+   "ident": "mage_npc",
+   "turn": 60,
+   "tags": [
+    "layout:walls",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0045",
+   "ident": "mage_npc",
+   "turn": 63,
+   "tags": [
+    "layout:walls",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0045",
+   "ident": "mage_npc",
+   "turn": 66,
+   "tags": [
+    "layout:walls",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0045",
+   "ident": "mage_npc",
+   "turn": 70,
+   "tags": [
+    "layout:walls",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0045",
+   "ident": "mage_npc",
+   "turn": 73,
+   "tags": [
+    "layout:walls",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0045~open",
+   "ident": "mage_npc",
+   "turn": 3,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0045~open",
+   "ident": "mage_npc",
+   "turn": 6,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0045~open",
+   "ident": "mage_npc",
+   "turn": 9,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0045~open",
+   "ident": "mage_npc",
+   "turn": 12,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0045~open",
+   "ident": "mage_npc",
+   "turn": 15,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0045~open",
+   "ident": "mage_npc",
+   "turn": 18,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0045~open",
+   "ident": "mage_npc",
+   "turn": 21,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0045~open",
+   "ident": "mage_npc",
+   "turn": 24,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0045~open",
+   "ident": "mage_npc",
+   "turn": 27,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0045~open",
+   "ident": "mage_npc",
+   "turn": 30,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0045~open",
+   "ident": "mage_npc",
+   "turn": 33,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0045~open",
+   "ident": "mage_npc",
+   "turn": 36,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0045~open",
+   "ident": "mage_npc",
+   "turn": 39,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0045~open",
+   "ident": "mage_npc",
+   "turn": 42,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0045~open",
+   "ident": "mage_npc",
+   "turn": 45,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0045~open",
+   "ident": "mage_npc",
+   "turn": 48,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0045~open",
+   "ident": "mage_npc",
+   "turn": 51,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0045~open",
+   "ident": "mage_npc",
+   "turn": 54,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0045~open",
+   "ident": "mage_npc",
+   "turn": 57,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0045~open",
+   "ident": "mage_npc",
+   "turn": 60,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0045~open",
+   "ident": "mage_npc",
+   "turn": 63,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0045~open",
+   "ident": "mage_npc",
+   "turn": 66,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0045~open",
+   "ident": "mage_npc",
+   "turn": 70,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0045~open",
+   "ident": "mage_npc",
+   "turn": 73,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:-3",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "no_engage",
+   "fatal": true,
+   "scen_key": "mine|3|0048",
+   "ident": "skeleton",
+   "turn": 5,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:1v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:穿刺"
+   ],
+   "detail": "turns=5 dmg=0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": true
+  },
+  {
+   "detector": "no_engage",
+   "fatal": true,
+   "scen_key": "mine|3|0048~open",
+   "ident": "skeleton",
+   "turn": 5,
+   "tags": [
+    "opp:mirror",
+    "shape:1v1",
+    "mutation:immune",
+    "dlvl:0",
+    "layout:open",
+    "mutation:immune:穿刺"
+   ],
+   "detail": "turns=5 dmg=0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": true
+  },
+  {
+   "detector": "heal_full",
+   "fatal": true,
+   "scen_key": "mine|3|0050",
+   "ident": "champion",
+   "turn": 2,
+   "tags": [
+    "layout:open",
+    "opp:script",
+    "shape:2v1",
+    "mutation:none",
+    "dlvl:0",
+    "out_reach"
+   ],
+   "detail": "second_wind",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "heal_full",
+   "fatal": true,
+   "scen_key": "mine|3|0052",
+   "ident": "chimera_gish",
+   "turn": 0,
+   "tags": [
+    "layout:lava",
+    "opp:script",
+    "shape:1v1",
+    "mutation:none",
+    "dlvl:0",
+    "out_reach"
+   ],
+   "detail": "lay_on_hands_ability",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": false,
+    "typed_resist": true,
+    "condition_immunity": false,
+    "enemy_level": false,
+    "enemy_maxhp": false,
+    "enemy_ac": true,
+    "WHOLE_desc(sanity)": false
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "heal_full",
+   "fatal": true,
+   "scen_key": "mine|3|0052",
+   "ident": "chimera_gish",
+   "turn": 2,
+   "tags": [
+    "layout:lava",
+    "opp:script",
+    "shape:1v1",
+    "mutation:none",
+    "dlvl:0",
+    "out_reach"
+   ],
+   "detail": "lay_on_hands_ability",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": false,
+    "typed_resist": false,
+    "condition_immunity": false,
+    "enemy_level": false,
+    "enemy_maxhp": false,
+    "enemy_ac": false,
+    "WHOLE_desc(sanity)": false
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "heal_full",
+   "fatal": true,
+   "scen_key": "mine|3|0052~open",
+   "ident": "chimera_gish",
+   "turn": 0,
+   "tags": [
+    "opp:script",
+    "shape:1v1",
+    "mutation:none",
+    "dlvl:0",
+    "layout:open",
+    "out_reach"
+   ],
+   "detail": "lay_on_hands_ability",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": false,
+    "typed_resist": true,
+    "condition_immunity": false,
+    "enemy_level": false,
+    "enemy_maxhp": false,
+    "enemy_ac": true,
+    "WHOLE_desc(sanity)": false
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "heal_full",
+   "fatal": true,
+   "scen_key": "mine|3|0052~open",
+   "ident": "chimera_gish",
+   "turn": 2,
+   "tags": [
+    "opp:script",
+    "shape:1v1",
+    "mutation:none",
+    "dlvl:0",
+    "layout:open",
+    "out_reach"
+   ],
+   "detail": "lay_on_hands_ability",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": false,
+    "typed_resist": false,
+    "condition_immunity": false,
+    "enemy_level": false,
+    "enemy_maxhp": false,
+    "enemy_ac": false,
+    "WHOLE_desc(sanity)": false
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "no_engage",
+   "fatal": true,
+   "scen_key": "mine|3|0055",
+   "ident": "basilisk",
+   "turn": 50,
+   "tags": [
+    "layout:open",
+    "opp:mirror",
+    "shape:1v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:穿刺"
+   ],
+   "detail": "turns=50 dmg=0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": true
+  },
+  {
+   "detector": "no_engage",
+   "fatal": true,
+   "scen_key": "mine|3|0055~noimm",
+   "ident": "basilisk",
+   "turn": 50,
+   "tags": [
+    "layout:open",
+    "opp:mirror",
+    "shape:1v1",
+    "dlvl:0",
+    "mutation:none"
+   ],
+   "detail": "turns=50 dmg=0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": true
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0056",
+   "ident": "ghoul",
+   "turn": 2,
+   "tags": [
+    "layout:lava",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": false,
+    "enemy_level": false,
+    "enemy_maxhp": false,
+    "enemy_ac": false,
+    "WHOLE_desc(sanity)": false
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0056",
+   "ident": "ghoul",
+   "turn": 5,
+   "tags": [
+    "layout:lava",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": false,
+    "enemy_level": false,
+    "enemy_maxhp": false,
+    "enemy_ac": false,
+    "WHOLE_desc(sanity)": false
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0056",
+   "ident": "ghoul",
+   "turn": 8,
+   "tags": [
+    "layout:lava",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": false,
+    "enemy_level": false,
+    "enemy_maxhp": false,
+    "enemy_ac": false,
+    "WHOLE_desc(sanity)": false
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0056",
+   "ident": "ghoul",
+   "turn": 11,
+   "tags": [
+    "layout:lava",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": false,
+    "enemy_level": false,
+    "enemy_maxhp": false,
+    "enemy_ac": false,
+    "WHOLE_desc(sanity)": false
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0056",
+   "ident": "ghoul",
+   "turn": 14,
+   "tags": [
+    "layout:lava",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0056",
+   "ident": "ghoul",
+   "turn": 17,
+   "tags": [
+    "layout:lava",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:3",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0056~open",
+   "ident": "ghoul",
+   "turn": 2,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:3",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0056~open",
+   "ident": "ghoul",
+   "turn": 5,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:3",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0056~open",
+   "ident": "ghoul",
+   "turn": 8,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:3",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0056~open",
+   "ident": "ghoul",
+   "turn": 11,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:3",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0056~open",
+   "ident": "ghoul",
+   "turn": 14,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:3",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0056~open",
+   "ident": "ghoul",
+   "turn": 17,
+   "tags": [
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:3",
+    "layout:open",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "no_engage",
+   "fatal": true,
+   "scen_key": "mine|3|0063",
+   "ident": "wolf",
+   "turn": 10,
+   "tags": [
+    "layout:walls",
+    "opp:script",
+    "shape:1v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:穿刺"
+   ],
+   "detail": "turns=10 dmg=0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": true
+  },
+  {
+   "detector": "no_engage",
+   "fatal": true,
+   "scen_key": "mine|3|0063~open",
+   "ident": "wolf",
+   "turn": 10,
+   "tags": [
+    "opp:script",
+    "shape:1v1",
+    "mutation:immune",
+    "dlvl:0",
+    "layout:open",
+    "mutation:immune:穿刺"
+   ],
+   "detail": "turns=10 dmg=0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": true
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0064",
+   "ident": "plague_wight",
+   "turn": 5,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": true,
+    "is_caster": false,
+    "applies_status": false,
+    "save_union": true,
+    "enemy_level": true,
+    "enemy_maxhp": false,
+    "enemy_ac": false,
+    "WHOLE_desc(sanity)": true
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "avoid_easy_target",
+   "fatal": false,
+   "scen_key": "mine|3|0064",
+   "ident": "plague_wight",
+   "turn": 8,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "enemy:prone",
+    "in_reach"
+   ],
+   "detail": "hit opp_1 not opp_0",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": true,
+    "is_caster": false,
+    "applies_status": false,
+    "save_union": true,
+    "enemy_level": true,
+    "enemy_maxhp": false,
+    "enemy_ac": false,
+    "WHOLE_desc(sanity)": true
+   },
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0064",
+   "ident": "plague_wight",
+   "turn": 11,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:生命吸取:目標距離 1.5m，超出 生命吸取 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0064",
+   "ident": "plague_wight",
+   "turn": 14,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:生命吸取:目標距離 1.5m，超出 生命吸取 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0064",
+   "ident": "plague_wight",
+   "turn": 17,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:生命吸取:目標距離 1.5m，超出 生命吸取 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0064",
+   "ident": "plague_wight",
+   "turn": 20,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:生命吸取:目標距離 1.5m，超出 生命吸取 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0064",
+   "ident": "plague_wight",
+   "turn": 23,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:生命吸取:目標距離 1.5m，超出 生命吸取 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0064",
+   "ident": "plague_wight",
+   "turn": 26,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:生命吸取:目標距離 1.5m，超出 生命吸取 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0064",
+   "ident": "plague_wight",
+   "turn": 29,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:生命吸取:目標距離 1.5m，超出 生命吸取 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0064",
+   "ident": "plague_wight",
+   "turn": 32,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:生命吸取:目標距離 1.5m，超出 生命吸取 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0064",
+   "ident": "plague_wight",
+   "turn": 35,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:生命吸取:目標距離 1.5m，超出 生命吸取 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0064",
+   "ident": "plague_wight",
+   "turn": 38,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:生命吸取:目標距離 1.5m，超出 生命吸取 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0064",
+   "ident": "plague_wight",
+   "turn": 41,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:生命吸取:目標距離 1.5m，超出 生命吸取 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0064",
+   "ident": "plague_wight",
+   "turn": 44,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:生命吸取:目標距離 1.5m，超出 生命吸取 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0064",
+   "ident": "plague_wight",
+   "turn": 47,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:生命吸取:目標距離 1.5m，超出 生命吸取 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0064",
+   "ident": "plague_wight",
+   "turn": 50,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:生命吸取:目標距離 1.5m，超出 生命吸取 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0064",
+   "ident": "plague_wight",
+   "turn": 53,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:生命吸取:目標距離 1.5m，超出 生命吸取 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0064",
+   "ident": "plague_wight",
+   "turn": 56,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:生命吸取:目標距離 1.5m，超出 生命吸取 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0064",
+   "ident": "plague_wight",
+   "turn": 59,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:生命吸取:目標距離 1.5m，超出 生命吸取 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0064",
+   "ident": "plague_wight",
+   "turn": 62,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:生命吸取:目標距離 1.5m，超出 生命吸取 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0064",
+   "ident": "plague_wight",
+   "turn": 65,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:生命吸取:目標距離 1.5m，超出 生命吸取 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0064",
+   "ident": "plague_wight",
+   "turn": 68,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:生命吸取:目標距離 1.5m，超出 生命吸取 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0064",
+   "ident": "plague_wight",
+   "turn": 71,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:生命吸取:目標距離 1.5m，超出 生命吸取 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "dead_action",
+   "fatal": true,
+   "scen_key": "mine|3|0064",
+   "ident": "plague_wight",
+   "turn": 74,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v2",
+    "mutation:enemy_prone",
+    "dlvl:0",
+    "seat:agent"
+   ],
+   "detail": "[agent] weapon:生命吸取:目標距離 1.5m，超出 生命吸取 伸手範圍 1.5m",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "immune_hit",
+   "fatal": true,
+   "scen_key": "mine|3|0066",
+   "ident": "mage_npc",
+   "turn": 0,
+   "tags": [
+    "layout:open",
+    "opp:script",
+    "shape:1v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:火",
+    "out_reach"
+   ],
+   "detail": "fireball_ev ev=0.0 best=10.5",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": false,
+    "is_caster": false,
+    "applies_status": false,
+    "save_union": false,
+    "enemy_level": false,
+    "enemy_maxhp": false,
+    "enemy_ac": false,
+    "WHOLE_desc(sanity)": false
+   },
+   "oracle_dep": "typed_resist",
+   "lost": true
+  },
+  {
+   "detector": "no_engage",
+   "fatal": true,
+   "scen_key": "mine|3|0066",
+   "ident": "mage_npc",
+   "turn": 5,
+   "tags": [
+    "layout:open",
+    "opp:script",
+    "shape:1v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:火"
+   ],
+   "detail": "turns=5 dmg=0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": true
+  },
+  {
+   "detector": "no_engage",
+   "fatal": true,
+   "scen_key": "mine|3|0067",
+   "ident": "storm_ogre",
+   "turn": 50,
+   "tags": [
+    "layout:open",
+    "opp:passive",
+    "shape:1v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:閃電"
+   ],
+   "detail": "turns=50 dmg=0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "heal_full",
+   "fatal": true,
+   "scen_key": "mine|3|0070",
+   "ident": "war",
+   "turn": 8,
+   "tags": [
+    "layout:pillar",
+    "opp:mirror",
+    "shape:1v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:光耀",
+    "in_reach"
+   ],
+   "detail": "cure_wounds",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": false,
+    "typed_resist": true,
+    "condition_immunity": false,
+    "enemy_level": false,
+    "enemy_maxhp": false,
+    "enemy_ac": true,
+    "WHOLE_desc(sanity)": true,
+    "terrain": false
+   },
+   "oracle_dep": "",
+   "lost": true
+  },
+  {
+   "detector": "immune_hit",
+   "fatal": true,
+   "scen_key": "mine|3|0070",
+   "ident": "war",
+   "turn": 12,
+   "tags": [
+    "layout:pillar",
+    "opp:mirror",
+    "shape:1v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:光耀",
+    "in_reach"
+   ],
+   "detail": "spirit_guardians ev=0.0 best=7.5",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": false,
+    "typed_resist": false,
+    "condition_immunity": false,
+    "enemy_level": false,
+    "enemy_maxhp": false,
+    "enemy_ac": false,
+    "WHOLE_desc(sanity)": false,
+    "terrain": false
+   },
+   "oracle_dep": "",
+   "lost": true
+  },
+  {
+   "detector": "heal_full",
+   "fatal": true,
+   "scen_key": "mine|3|0070~open",
+   "ident": "war",
+   "turn": 8,
+   "tags": [
+    "opp:mirror",
+    "shape:1v1",
+    "mutation:immune",
+    "dlvl:0",
+    "layout:open",
+    "mutation:immune:光耀",
+    "in_reach"
+   ],
+   "detail": "cure_wounds",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": false,
+    "typed_resist": true,
+    "condition_immunity": false,
+    "enemy_level": false,
+    "enemy_maxhp": false,
+    "enemy_ac": true,
+    "WHOLE_desc(sanity)": true
+   },
+   "oracle_dep": "",
+   "lost": true
+  },
+  {
+   "detector": "immune_hit",
+   "fatal": true,
+   "scen_key": "mine|3|0070~open",
+   "ident": "war",
+   "turn": 12,
+   "tags": [
+    "opp:mirror",
+    "shape:1v1",
+    "mutation:immune",
+    "dlvl:0",
+    "layout:open",
+    "mutation:immune:光耀",
+    "in_reach"
+   ],
+   "detail": "spirit_guardians ev=0.0 best=7.5",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": false,
+    "typed_resist": false,
+    "condition_immunity": false,
+    "enemy_level": false,
+    "enemy_maxhp": false,
+    "enemy_ac": false,
+    "WHOLE_desc(sanity)": false
+   },
+   "oracle_dep": "",
+   "lost": true
+  },
+  {
+   "detector": "heal_full",
+   "fatal": true,
+   "scen_key": "mine|3|0072",
+   "ident": "champion",
+   "turn": 3,
+   "tags": [
+    "layout:lava",
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:none",
+    "dlvl:0",
+    "enemy:dodging",
+    "out_reach"
+   ],
+   "detail": "second_wind",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "heal_full",
+   "fatal": true,
+   "scen_key": "mine|3|0072~open",
+   "ident": "champion",
+   "turn": 3,
+   "tags": [
+    "opp:mirror",
+    "shape:2v1",
+    "mutation:none",
+    "dlvl:0",
+    "layout:open",
+    "enemy:dodging",
+    "out_reach"
+   ],
+   "detail": "second_wind",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "immune_hit",
+   "fatal": true,
+   "scen_key": "mine|3|0073",
+   "ident": "mage_npc",
+   "turn": 0,
+   "tags": [
+    "layout:open",
+    "opp:mirror",
+    "shape:1v1",
+    "mutation:immune",
+    "dlvl:3",
+    "mutation:immune:火",
+    "out_reach"
+   ],
+   "detail": "fireball_ev ev=0.0 best=10.5",
+   "chan": {
+    "cap_core(dmg/heal/rng/aoe/atk/dc)": false,
+    "is_caster": false,
+    "applies_status": false,
+    "save_union": false,
+    "enemy_level": false,
+    "enemy_maxhp": false,
+    "enemy_ac": false,
+    "WHOLE_desc(sanity)": false
+   },
+   "oracle_dep": "typed_resist",
+   "lost": true
+  },
+  {
+   "detector": "no_engage",
+   "fatal": true,
+   "scen_key": "mine|3|0073",
+   "ident": "mage_npc",
+   "turn": 4,
+   "tags": [
+    "layout:open",
+    "opp:mirror",
+    "shape:1v1",
+    "mutation:immune",
+    "dlvl:3",
+    "mutation:immune:火"
+   ],
+   "detail": "turns=4 dmg=0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": true
+  },
+  {
+   "detector": "heal_full",
+   "fatal": true,
+   "scen_key": "mine|3|0074",
+   "ident": "champion",
+   "turn": 2,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v1",
+    "mutation:immune",
+    "dlvl:-3",
+    "mutation:immune:斬擊",
+    "out_reach"
+   ],
+   "detail": "second_wind",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "no_engage",
+   "fatal": true,
+   "scen_key": "mine|3|0074",
+   "ident": "champion",
+   "turn": 50,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v1",
+    "mutation:immune",
+    "dlvl:-3",
+    "mutation:immune:斬擊"
+   ],
+   "detail": "turns=50 dmg=0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "heal_full",
+   "fatal": true,
+   "scen_key": "mine|3|0074~open",
+   "ident": "champion",
+   "turn": 2,
+   "tags": [
+    "opp:passive",
+    "shape:1v1",
+    "mutation:immune",
+    "dlvl:-3",
+    "layout:open",
+    "mutation:immune:斬擊",
+    "out_reach"
+   ],
+   "detail": "second_wind",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "no_engage",
+   "fatal": true,
+   "scen_key": "mine|3|0074~open",
+   "ident": "champion",
+   "turn": 50,
+   "tags": [
+    "opp:passive",
+    "shape:1v1",
+    "mutation:immune",
+    "dlvl:-3",
+    "layout:open",
+    "mutation:immune:斬擊"
+   ],
+   "detail": "turns=50 dmg=0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "heal_full",
+   "fatal": true,
+   "scen_key": "mine|3|0074~noimm",
+   "ident": "champion",
+   "turn": 2,
+   "tags": [
+    "layout:difficult",
+    "opp:passive",
+    "shape:1v1",
+    "dlvl:-3",
+    "mutation:none",
+    "out_reach"
+   ],
+   "detail": "second_wind",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "heal_full",
+   "fatal": true,
+   "scen_key": "mine|3|0077",
+   "ident": "champion",
+   "turn": 2,
+   "tags": [
+    "layout:walls",
+    "opp:script",
+    "shape:1v1",
+    "mutation:none",
+    "dlvl:L20",
+    "out_reach"
+   ],
+   "detail": "second_wind",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": true
+  },
+  {
+   "detector": "heal_full",
+   "fatal": true,
+   "scen_key": "mine|3|0077~open",
+   "ident": "champion",
+   "turn": 2,
+   "tags": [
+    "opp:script",
+    "shape:1v1",
+    "mutation:none",
+    "dlvl:L20",
+    "layout:open",
+    "out_reach"
+   ],
+   "detail": "second_wind",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": true
+  },
+  {
+   "detector": "heal_full",
+   "fatal": true,
+   "scen_key": "mine|3|0078",
+   "ident": "champion",
+   "turn": 1,
+   "tags": [
+    "layout:walls",
+    "opp:script",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "mutation:immune:穿刺",
+    "in_reach"
+   ],
+   "detail": "second_wind",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "heal_full",
+   "fatal": true,
+   "scen_key": "mine|3|0078~open",
+   "ident": "champion",
+   "turn": 1,
+   "tags": [
+    "opp:script",
+    "shape:2v1",
+    "mutation:immune",
+    "dlvl:0",
+    "layout:open",
+    "mutation:immune:穿刺",
+    "in_reach"
+   ],
+   "detail": "second_wind",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": false
+  },
+  {
+   "detector": "no_engage",
+   "fatal": true,
+   "scen_key": "mine|3|0079",
+   "ident": "wolf",
+   "turn": 7,
+   "tags": [
+    "layout:open",
+    "opp:script",
+    "shape:1v1",
+    "mutation:none",
+    "dlvl:-3"
+   ],
+   "detail": "turns=7 dmg=0",
+   "chan": null,
+   "oracle_dep": "",
+   "lost": true
+  }
+ ]
+}

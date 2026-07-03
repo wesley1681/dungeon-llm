@@ -32,13 +32,16 @@ import torch.nn as nn
 
 from .obs import (
     N_SKILL_SLOTS, N_ENTITY_SLOTS, ENTITY_DIM, N_GRID,
-    N_ENTITY_GRID_CHANNELS, N_DISTANCE_GRID_CHANNELS, END_FEATURES_DIM,
-    N_ARCHETYPES, N_V3_EXTRA, N_V4_DESC, N_V5_TRAIT, ENEMY_SLOT_START,
-    I_ENT_LEVEL, I_ENT_MAXHP, I_DESC_RESIST, I_ENT_ENEMY,
+    N_ENTITY_GRID_CHANNELS, N_DISTANCE_GRID_CHANNELS, N_LOS_GRID_CHANNELS,
+    N_REACH_GRID_CHANNELS, N_THREAT_GRID_CHANNELS,
+    END_FEATURES_DIM,
+    N_ARCHETYPES, N_V3_EXTRA, N_V4_DESC, N_V5_TRAIT, N_V6_CIMMUN,
+    ENEMY_SLOT_START,
+    I_ENT_LEVEL, I_ENT_MAXHP, I_DESC_RESIST, I_DESC_CIMMUN, I_ENT_ENEMY,
     LEVEL_NORM, MAXHP_NORM, V3_LEVEL_NORM, V3_MAXHP_NORM,
     N_DECISION_CTX,
 )
-from ..engine.skill import SKILL_FEATURE_DIM, SKILL_DTYPE_START
+from ..engine.skill import SKILL_FEATURE_DIM, SKILL_DTYPE_START, N_STATUS_SLOTS
 from ..engine.damage import N_DAMAGE_TYPES
 
 
@@ -52,13 +55,19 @@ _ARCH_OH_END   = 7 + N_ARCHETYPES
 # these describe dead file formats and must never track future obs growth.
 # Each is derived by peeling the LAST-appended tail off the live width, so they
 # stay correct as new tails are added (peel v5 trait → v4, then v4 desc → v3…).
-_ENTITY_DIM_V4 = ENTITY_DIM - N_V5_TRAIT    # pre-v5: v4 descriptor, no trait tail
+_ENTITY_DIM_V5 = ENTITY_DIM - N_V6_CIMMUN     # pre-v6: v5 trait tail, no cimmun
+_ENTITY_DIM_V4 = _ENTITY_DIM_V5 - N_V5_TRAIT  # pre-v5: v4 descriptor, no trait tail
 _ENTITY_DIM_V3 = _ENTITY_DIM_V4 - N_V4_DESC  # v3: base + one-hots + v3 tail
 _ENTITY_DIM_V2 = _ENTITY_DIM_V3 - N_V3_EXTRA  # pre-v3: no tail
 # Frozen pre-dtype skill-feature width (2026-06-12i schema surgery added the
 # damage-type tail + the matchup-join head input). File-format constant for
 # adapt_state_dict_for_skill_dtype — never track live SKILL_FEATURE_DIM.
 _SKILL_DIM_V1 = 53
+# applies_status multi-hot offset inside the skill feature vector (N_STATUS_SLOTS
+# bits, at [SKILL_DTYPE_START-N_STATUS_SLOTS : SKILL_DTYPE_START]) — the skill
+# side of the v6 condition-immunity matchup join, mirror of the damage-type
+# join's SKILL_DTYPE_START slice.
+SKILL_STATUS_START = SKILL_DTYPE_START - N_STATUS_SLOTS
 
 
 # CNN removed. spatial_feat is now the raw stack of pre-computed per-cell
@@ -67,7 +76,10 @@ _SKILL_DIM_V1 = 53
 # a local 3x3 kernel can't compute. With distance pre-computed as channels,
 # grid_head only needs a linear scoring (grid_query · cell_features), which
 # is what bmm in forward() does.
-_SPATIAL_C = 1 + N_ENTITY_GRID_CHANNELS + N_DISTANCE_GRID_CHANNELS  # terrain + entity + distance
+_SPATIAL_C = (1 + N_ENTITY_GRID_CHANNELS + N_DISTANCE_GRID_CHANNELS
+              + N_LOS_GRID_CHANNELS
+              + N_REACH_GRID_CHANNELS
+              + N_THREAT_GRID_CHANNELS)  # terrain+entity+distance+los+reach+threat
 
 # Pre-v3 slot layout, frozen as a file-format constant for checkpoint
 # migration: [self, 2 allies, 3 enemies]. In the v3 slot layout those six
@@ -203,8 +215,23 @@ class CombatPolicyNet(nn.Module):
         # That drift forces end_p → 1 even though end_head's own weights
         # barely change. Routing end_head through end_features means the
         # shared encoder's drift has zero pathway to end_p.
+        #
+        # +N_THREAT+N_REACH: the self-cell THREAT and REACH flags (threat_grid /
+        # reach_grid at the agent's OWN cell) are concatenated to end_features so
+        # the decoupled end_head can condition the stop-vs-continue decision on
+        # VALUE, not just resource availability. Unified root cause of two WR
+        # bugs (measured): end_head saw only resources/archetype, so it kept
+        # acting whenever a resource remained, regardless of whether acting was
+        # worth anything —
+        #   • threat flag → fixes over-kiting (stop repositioning once SAFE);
+        #   • reach flag  → fixes full-HP heal waste (when I CANNOT attack from
+        #     here (reach=0) and I'm at full HP, no action has value → end the
+        #     turn and KEEP the once-per-rest heal, instead of burning it).
+        # These are the only threat/reach pathways into end_head (the spatial
+        # grid otherwise feeds the move/skill heads, not end_head).
         self.end_head = nn.Sequential(
-            nn.Linear(END_FEATURES_DIM, 32), nn.ReLU(),
+            nn.Linear(END_FEATURES_DIM + N_THREAT_GRID_CHANNELS
+                      + N_REACH_GRID_CHANNELS, 32), nn.ReLU(),
             nn.Linear(32, 1),
         )
         # skill_head: per-skill-slot logit (existing)
@@ -238,10 +265,35 @@ class CombatPolicyNet(nn.Module):
         # one-hot weights alone cannot do that (orthogonal columns get no
         # gradient until their type appears). skill_head sees the best join
         # over present enemies; entity_head sees the per-(skill, entity) join.
+        # +64 = the "blocked → which skill" feature: blockedness × sk_emb, where
+        # blockedness = 1 − self-cell LoS proximity (0 in open layouts, where the
+        # LoS channel is all-ones). It is EXACTLY ZERO whenever the agent has line
+        # of sight, so training its weights changes ONLY blocked-state skill
+        # choice and leaves open play (and symmetric team combat) bit-exact — the
+        # one open-safe lever for "choose to MOVE when wall-blocked instead of
+        # buffing/ending" (56% of blocked turns were non-move; a shared skill
+        # head couldn't learn this without the open anchor fighting it). The head
+        # LEARNS which skill embedding to boost when blocked (it converges on
+        # move) — no hardcoded "moveness". entity_head is unchanged (target
+        # choice, not the move-vs-buff decision).
+        # skill_heads input: sk_emb(64) + h + sk_ent_ctx(32) + typed-join(1) +
+        # blocked_feat(64) + cimmun-join(1, v6). entity_heads: sk(64)+h+ent(32) +
+        # typed-join(1) + cimmun-join(1). The v6 condition-immunity join is the
+        # LAST column of each (appended after blocked_feat / after the typed
+        # join) so its checkpoint migration is a single trailing zero-pad — see
+        # adapt_state_dict_for_cimmun_heads.
         self.skill_heads = nn.ModuleList(
-            [nn.Linear(64 + hidden + 32 + 1, 1) for _ in range(n_groups)])
+            [nn.Linear(64 + hidden + 32 + 1 + 64 + 1, 1) for _ in range(n_groups)])
         self.entity_heads = nn.ModuleList(
-            [nn.Linear(64 + hidden + 32 + 1, 1) for _ in range(n_groups)])
+            [nn.Linear(64 + hidden + 32 + 1 + 1, 1) for _ in range(n_groups)])
+        # Named input-column index of the typed-matchup join in BOTH head kinds.
+        # Surgery/probe scripts MUST use this instead of positional math like
+        # ``ncol-1``: blocked_feat(+64) and the cimmun join(+1) were appended
+        # AFTER the typed join, which silently broke every ``ncol-1`` consumer
+        # (the v7 rsw surgery trained the cimmun column — feature ≡ 0 vs the
+        # lab's status-immunity-less enemies — while the real typed join stayed
+        # frozen; the pooled resist columns became the only carrier = shortcut).
+        self.tjoin_col = 64 + hidden + 32
         self.grid_query_projs = nn.ModuleList(
             [nn.Linear(64 + hidden, self._spatial_total_c) for _ in range(n_groups)])
         # Pre-v3 compatibility flag, carried INSIDE the checkpoint. 0 = native
@@ -437,18 +489,101 @@ class CombatPolicyNet(nn.Module):
         new_sd["entity_mlp.0.weight"] = torch.cat([w.clone(), pad], dim=1)
 
         cw = new_sd.get("critic.net.0.weight")
-        # v5 is last in the chain → skill pool already at the live width.
+        # v5 produces its OWN frozen entity stride (_ENTITY_DIM_V5), NOT the live
+        # ENTITY_DIM — since obs v6 the cimmun step (adapt_state_dict_for_cimmun_
+        # entity) widens the critic further afterwards. The skill-dtype step
+        # already ran, so the skill pool tail is the live 66-wide pool.
         tail = 4 + END_FEATURES_DIM + SKILL_FEATURE_DIM
         v4_in = N_ENTITY_SLOTS * _ENTITY_DIM_V4 + tail
         if cw is not None and cw.shape[1] == v4_in:
-            new_cw = torch.zeros(cw.shape[0], N_ENTITY_SLOTS * ENTITY_DIM + tail,
+            new_cw = torch.zeros(cw.shape[0], N_ENTITY_SLOTS * _ENTITY_DIM_V5 + tail,
                                  dtype=cw.dtype)
             for s in range(N_ENTITY_SLOTS):
                 blk = cw[:, s * _ENTITY_DIM_V4 : (s + 1) * _ENTITY_DIM_V4]
-                new_cw[:, s * ENTITY_DIM : s * ENTITY_DIM + _ENTITY_DIM_V4] = blk
-            new_cw[:, N_ENTITY_SLOTS * ENTITY_DIM:] = \
+                new_cw[:, s * _ENTITY_DIM_V5 : s * _ENTITY_DIM_V5 + _ENTITY_DIM_V4] = blk
+            new_cw[:, N_ENTITY_SLOTS * _ENTITY_DIM_V5:] = \
                 cw[:, N_ENTITY_SLOTS * _ENTITY_DIM_V4:]
             new_sd["critic.net.0.weight"] = new_cw
+        return new_sd
+
+    @staticmethod
+    def adapt_state_dict_for_cimmun_entity(state_dict: dict) -> dict:
+        """Widen a pre-v6 checkpoint's ENTITY-side weights for the condition-
+        immunity descriptor (2026-07-01): N_V6_CIMMUN columns appended at the END
+        of every entity row (after the v5 trait tail). Touches entity_mlp.0.weight
+        (zero-pad the trailing cols → the immunity descriptor is ignored until
+        trained ⇒ bit-exact) and critic.net.0.weight (per-slot entity blocks widen
+        _ENTITY_DIM_V5 → live ENTITY_DIM, new cols zero). The head-side cimmun join
+        column is added separately by adapt_state_dict_for_cimmun_heads (which must
+        run after blocked_skill). Runs RIGHT AFTER obs_v5 and BEFORE decision_ctx,
+        so a pre-dctx checkpoint's critic is already at the live entity stride when
+        decision_ctx (which keys on N_ENTITY_SLOTS*ENTITY_DIM) runs. Already-v6 /
+        unrecognised checkpoints pass through (entity_mlp width detection)."""
+        new_sd = dict(state_dict)
+        w = new_sd.get("entity_mlp.0.weight")
+        if w is None or w.shape[1] != _ENTITY_DIM_V5:
+            return new_sd   # already v6 / unrecognised era
+        pad = torch.zeros(w.shape[0], N_V6_CIMMUN, dtype=w.dtype)
+        new_sd["entity_mlp.0.weight"] = torch.cat([w.clone(), pad], dim=1)
+
+        # critic: per-slot entity blocks widen _ENTITY_DIM_V5 → ENTITY_DIM. The
+        # trailing tail (resources+end+skill-pool, optionally +dctx depending on
+        # era) is preserved verbatim — try both tail widths so pre- and post-dctx
+        # checkpoints both re-block cleanly.
+        cw = new_sd.get("critic.net.0.weight")
+        if cw is not None:
+            base_tail = 4 + END_FEATURES_DIM + SKILL_FEATURE_DIM
+            for tail in (base_tail, base_tail + N_DECISION_CTX):
+                if cw.shape[1] == N_ENTITY_SLOTS * _ENTITY_DIM_V5 + tail:
+                    new_cw = torch.zeros(cw.shape[0],
+                                         N_ENTITY_SLOTS * ENTITY_DIM + tail,
+                                         dtype=cw.dtype)
+                    for s in range(N_ENTITY_SLOTS):
+                        blk = cw[:, s * _ENTITY_DIM_V5 : (s + 1) * _ENTITY_DIM_V5]
+                        new_cw[:, s * ENTITY_DIM : s * ENTITY_DIM + _ENTITY_DIM_V5] = blk
+                    new_cw[:, N_ENTITY_SLOTS * ENTITY_DIM:] = \
+                        cw[:, N_ENTITY_SLOTS * _ENTITY_DIM_V5:]
+                    new_sd["critic.net.0.weight"] = new_cw
+                    break
+        return new_sd
+
+    @staticmethod
+    def adapt_state_dict_for_cimmun_heads(state_dict: dict) -> dict:
+        """Add the v6 condition-immunity JOIN column to the skill/entity heads
+        (2026-07-01). One trailing input column each:
+          - skill_heads.*.weight: appended AFTER blocked_feat → detect width
+            (64+hidden)+32+1+64 and pad +1.
+          - entity_heads.*.weight: appended AFTER the typed join → detect width
+            (64+hidden)+32+1 and pad +1.
+        Zero-pad ⇒ bit-exact (the cimmun join meets a zero weight until trained).
+        The pre-feature widths are inferred from grid_query_projs' input (=64+
+        hidden), so already-migrated / unrecognised checkpoints pass through. Runs
+        AFTER blocked_skill (so skill_head already carries its +64 blocked block)."""
+        new_sd = dict(state_dict)
+        gq = None
+        for k, v in new_sd.items():
+            if k.startswith("grid_query_projs.") and k.endswith(".weight") and v.dim() == 2:
+                gq = v.shape[1]                       # = 64 + hidden
+                break
+        if gq is None:
+            return new_sd
+        old_skill_in = gq + 32 + 1 + 64   # sk_emb in gq; +ctx +typed-join +blocked
+        old_entity_in = gq + 32 + 1       # sk_emb in gq; +ctx +typed-join
+        for key in list(new_sd.keys()):
+            base = key.rsplit(".", 1)[0]
+            if not key.endswith(".weight"):
+                continue
+            w = new_sd[key]
+            if w.dim() != 2:
+                continue
+            is_skill = base == "skill_head" or base.startswith("skill_heads.")
+            is_entity = base == "entity_head" or base.startswith("entity_heads.")
+            if is_skill and w.shape[1] == old_skill_in:
+                new_sd[key] = torch.cat(
+                    [w, torch.zeros(w.shape[0], 1, dtype=w.dtype)], dim=1)
+            elif is_entity and w.shape[1] == old_entity_in:
+                new_sd[key] = torch.cat(
+                    [w, torch.zeros(w.shape[0], 1, dtype=w.dtype)], dim=1)
         return new_sd
 
     @staticmethod
@@ -467,7 +602,14 @@ class CombatPolicyNet(nn.Module):
         new_sd = dict(state_dict)
         tw = new_sd.get("trunk.0.weight")
         # Pre-dctx trunk input width = sk_mean(64)+self_emb(32)+spatial+res(16).
-        old_trunk_in = 64 + 32 + _SPATIAL_C + 16
+        # The los-grid AND reach-grid channels are appended to spatial LATER in
+        # the chain, so at the dctx step the spatial block is still the pre-los/
+        # pre-reach width — subtract both (else a bumped _SPATIAL_C makes this
+        # width test miss pre-dctx ckpts).
+        old_trunk_in = (64 + 32
+                        + (_SPATIAL_C - N_LOS_GRID_CHANNELS - N_REACH_GRID_CHANNELS
+                           - N_THREAT_GRID_CHANNELS)
+                        + 16)
         if tw is not None and tw.shape[1] == old_trunk_in:
             pad = torch.zeros(tw.shape[0], N_DECISION_CTX, dtype=tw.dtype)
             new_sd["trunk.0.weight"] = torch.cat([tw, pad], dim=1)
@@ -483,15 +625,197 @@ class CombatPolicyNet(nn.Module):
         return new_sd
 
     @staticmethod
+    def adapt_state_dict_for_los_grid(state_dict: dict) -> dict:
+        """Migrate a pre-LoS-channel checkpoint (2026-06-13d). One spatial
+        channel (per-cell line-of-sight to nearest enemy) was appended to the
+        END of spatial_feat. That widens TWO things by 1:
+          - every grid_query projection's OUTPUT (it projects to _SPATIAL_C):
+            append a zero row → the new channel gets a zero query → ignored.
+          - the trunk's first-layer INPUT, where self_cell_feat (_SPATIAL_C
+            wide) sits at columns [96 : 96+_SPATIAL_C] inside
+            [sk_mean(64), self_emb(32), self_cell_feat, res(16), dctx]: insert
+            a zero column at the END of that slice (index 96+_SPATIAL_C-1).
+        Zero-pad ⇒ bit-exact (an unused channel contributes nothing). Per-weight
+        width detection ⇒ already-migrated / unrecognised checkpoints pass
+        through. Runs LAST in the chain (after all earlier widens reach live).
+        """
+        new_sd = dict(state_dict)
+        # Width BEFORE los was added = _SPATIAL_C minus the channels appended
+        # AFTER it too (los, then reach). Subtracting reach as well keeps this
+        # migration matching ONLY genuinely pre-los checkpoints (a post-los/
+        # pre-reach ckpt like uni_v7 has output = _SPATIAL_C - N_REACH, which is
+        # N_LOS wider than this old_spatial, so it correctly passes through here
+        # and is handled by the reach migration instead).
+        old_spatial = (_SPATIAL_C - N_LOS_GRID_CHANNELS - N_REACH_GRID_CHANNELS
+                       - N_THREAT_GRID_CHANNELS)
+
+        # grid_query projections: both the pre-tiling single `grid_query_proj.*`
+        # and the per-group/per-arch `grid_query_projs.N.*`. Pad any whose first
+        # (output) dim == old spatial width.
+        for key in list(new_sd.keys()):
+            base = key.rsplit(".", 1)[0]
+            if not (base == "grid_query_proj" or base.startswith("grid_query_projs.")):
+                continue
+            w = new_sd[key]
+            if key.endswith(".weight") and w.dim() == 2 and w.shape[0] == old_spatial:
+                pad = torch.zeros(N_LOS_GRID_CHANNELS, w.shape[1], dtype=w.dtype)
+                new_sd[key] = torch.cat([w, pad], dim=0)
+            elif key.endswith(".bias") and w.shape[0] == old_spatial:
+                pad = torch.zeros(N_LOS_GRID_CHANNELS, dtype=w.dtype)
+                new_sd[key] = torch.cat([w, pad], dim=0)
+
+        # trunk first layer: insert zero column(s) at the end of self_cell_feat.
+        tw = new_sd.get("trunk.0.weight")
+        old_trunk_in = 64 + 32 + old_spatial + 16 + N_DECISION_CTX
+        if tw is not None and tw.shape[1] == old_trunk_in:
+            ins = 64 + 32 + old_spatial               # end of self_cell_feat slice
+            pad = torch.zeros(tw.shape[0], N_LOS_GRID_CHANNELS, dtype=tw.dtype)
+            new_sd["trunk.0.weight"] = torch.cat(
+                [tw[:, :ins], pad, tw[:, ins:]], dim=1)
+        return new_sd
+
+    @staticmethod
+    def adapt_state_dict_for_reach_grid(state_dict: dict) -> dict:
+        """Migrate a pre-REACH-channel checkpoint (2026-06-19). One spatial
+        channel (per-cell weapon-reach proximity to nearest enemy) was appended
+        to the END of spatial_feat, AFTER los. Same zero-pad surgery as
+        adapt_state_dict_for_los_grid, one column later:
+          - grid_query projection OUTPUT: append N_REACH zero rows.
+          - trunk first-layer INPUT: insert N_REACH zero cols at the end of the
+            self_cell_feat slice (now _SPATIAL_C wide, reach is its last col).
+        Zero-pad ⇒ bit-exact. Width detection keys on the post-los/pre-reach
+        width so already-migrated checkpoints pass through. Runs after los."""
+        new_sd = dict(state_dict)
+        # post-los width = _SPATIAL_C minus the channels appended AFTER reach
+        # (reach itself + threat), so this matches ONLY post-los/pre-reach ckpts.
+        old_spatial = (_SPATIAL_C - N_REACH_GRID_CHANNELS
+                       - N_THREAT_GRID_CHANNELS)
+        for key in list(new_sd.keys()):
+            base = key.rsplit(".", 1)[0]
+            if not (base == "grid_query_proj" or base.startswith("grid_query_projs.")):
+                continue
+            w = new_sd[key]
+            if key.endswith(".weight") and w.dim() == 2 and w.shape[0] == old_spatial:
+                pad = torch.zeros(N_REACH_GRID_CHANNELS, w.shape[1], dtype=w.dtype)
+                new_sd[key] = torch.cat([w, pad], dim=0)
+            elif key.endswith(".bias") and w.shape[0] == old_spatial:
+                pad = torch.zeros(N_REACH_GRID_CHANNELS, dtype=w.dtype)
+                new_sd[key] = torch.cat([w, pad], dim=0)
+        tw = new_sd.get("trunk.0.weight")
+        old_trunk_in = 64 + 32 + old_spatial + 16 + N_DECISION_CTX
+        if tw is not None and tw.shape[1] == old_trunk_in:
+            ins = 64 + 32 + old_spatial
+            pad = torch.zeros(tw.shape[0], N_REACH_GRID_CHANNELS, dtype=tw.dtype)
+            new_sd["trunk.0.weight"] = torch.cat(
+                [tw[:, :ins], pad, tw[:, ins:]], dim=1)
+        return new_sd
+
+    @staticmethod
+    def adapt_state_dict_for_threat_grid(state_dict: dict) -> dict:
+        """Migrate a pre-THREAT-channel checkpoint (2026-06-19). One spatial
+        channel (per-cell melee-threat flag) was appended to the END of
+        spatial_feat, AFTER reach. Same zero-pad surgery as the los/reach
+        migrations, one column later:
+          - grid_query projection OUTPUT: append N_THREAT zero rows.
+          - trunk first-layer INPUT: insert N_THREAT zero cols at the end of the
+            self_cell_feat slice (now _SPATIAL_C wide, threat is its last col).
+        Zero-pad ⇒ bit-exact. Width detection keys on the post-reach/pre-threat
+        width so already-migrated checkpoints pass through. Runs after reach."""
+        new_sd = dict(state_dict)
+        old_spatial = _SPATIAL_C - N_THREAT_GRID_CHANNELS   # = post-reach width
+        for key in list(new_sd.keys()):
+            base = key.rsplit(".", 1)[0]
+            if not (base == "grid_query_proj" or base.startswith("grid_query_projs.")):
+                continue
+            w = new_sd[key]
+            if key.endswith(".weight") and w.dim() == 2 and w.shape[0] == old_spatial:
+                pad = torch.zeros(N_THREAT_GRID_CHANNELS, w.shape[1], dtype=w.dtype)
+                new_sd[key] = torch.cat([w, pad], dim=0)
+            elif key.endswith(".bias") and w.shape[0] == old_spatial:
+                pad = torch.zeros(N_THREAT_GRID_CHANNELS, dtype=w.dtype)
+                new_sd[key] = torch.cat([w, pad], dim=0)
+        tw = new_sd.get("trunk.0.weight")
+        old_trunk_in = 64 + 32 + old_spatial + 16 + N_DECISION_CTX
+        if tw is not None and tw.shape[1] == old_trunk_in:
+            ins = 64 + 32 + old_spatial
+            pad = torch.zeros(tw.shape[0], N_THREAT_GRID_CHANNELS, dtype=tw.dtype)
+            new_sd["trunk.0.weight"] = torch.cat(
+                [tw[:, :ins], pad, tw[:, ins:]], dim=1)
+        return new_sd
+
+    @staticmethod
+    def adapt_state_dict_for_threat_end(state_dict: dict) -> dict:
+        """Migrate a checkpoint whose end_head input is narrower than the live
+        [end_features, self_threat, self_reach] width (2026-06-19). The self-cell
+        threat then reach flags were appended to end_head's input, so
+        end_head.0.weight gains trailing INPUT columns. Zero-pad ⇒ bit-exact
+        (new columns null their product until trained). Handles BOTH a pre-threat
+        ckpt (width END_FEATURES_DIM → +N_THREAT+N_REACH) and a threat-era ckpt
+        (width END_FEATURES_DIM+N_THREAT → +N_REACH): pad whatever is short up to
+        the live width, appending zeros at the END (matching the concat order).
+        critic is untouched — these scalars feed end_head only."""
+        new_sd = dict(state_dict)
+        target = (END_FEATURES_DIM + N_THREAT_GRID_CHANNELS
+                  + N_REACH_GRID_CHANNELS)
+        w = new_sd.get("end_head.0.weight")
+        if (w is not None and w.dim() == 2
+                and END_FEATURES_DIM <= w.shape[1] < target):
+            pad = torch.zeros(w.shape[0], target - w.shape[1], dtype=w.dtype)
+            new_sd["end_head.0.weight"] = torch.cat([w, pad], dim=1)
+        return new_sd
+
+    @staticmethod
+    def adapt_state_dict_for_blocked_skill(state_dict: dict) -> dict:
+        """Migrate a pre-blocked-skill-feature checkpoint (2026-06-14). The
+        skill_head input gained a trailing 64-wide block (blockedness × sk_emb)
+        so the policy can learn to choose MOVE when wall-blocked. Append 64 zero
+        columns to the END of every skill_heads.*.weight (and the legacy single
+        skill_head.weight) → the new feature gets zero weight → bit-exact (it is
+        also exactly 0 in open layouts by construction, so a trained head stays
+        bit-exact there too). The pre-feature input width is inferred from
+        grid_query_projs (its input = 64+hidden) + sk_ent_ctx(32) + join(1), so
+        already-migrated / unrecognised checkpoints pass through untouched.
+        Runs LAST in the chain. entity_heads are NOT touched (unchanged width)."""
+        new_sd = dict(state_dict)
+        gq = None
+        for k, v in new_sd.items():
+            if k.startswith("grid_query_projs.") and k.endswith(".weight") and v.dim() == 2:
+                gq = v.shape[1]                       # = 64 + hidden
+                break
+        if gq is None:
+            return new_sd
+        old_skill_in = gq + 32 + 1                     # sk_emb in gq; +ctx +join
+        for key in list(new_sd.keys()):
+            base = key.rsplit(".", 1)[0]
+            if not (base == "skill_head" or base.startswith("skill_heads.")):
+                continue
+            if not key.endswith(".weight"):
+                continue
+            w = new_sd[key]
+            if w.dim() == 2 and w.shape[1] == old_skill_in:
+                pad = torch.zeros(w.shape[0], 64, dtype=w.dtype)
+                new_sd[key] = torch.cat([w, pad], dim=1)
+        return new_sd
+
+    @staticmethod
     def adapt_state_dict_for_obs(state_dict: dict) -> dict:
         """Full obs-era chain: pre-v3 → v3 → v4 → skill-dtype → v5 →
-        decision-ctx. Loaders that don't need the per-arch head tiling (e.g.
-        1-head-group distilled students) call this."""
-        return CombatPolicyNet.adapt_state_dict_for_decision_ctx(
-            CombatPolicyNet.adapt_state_dict_for_obs_v5(
-                CombatPolicyNet.adapt_state_dict_for_skill_dtype(
-                    CombatPolicyNet.adapt_state_dict_for_obs_v4(
-                        CombatPolicyNet.adapt_state_dict_for_obs_v3(state_dict)))))
+        cimmun-entity → decision-ctx → los → reach → threat → blocked-skill →
+        threat-end → cimmun-heads. Loaders that don't need the per-arch head
+        tiling (e.g. 1-head-group distilled students) call this."""
+        return CombatPolicyNet.adapt_state_dict_for_cimmun_heads(
+          CombatPolicyNet.adapt_state_dict_for_threat_end(
+           CombatPolicyNet.adapt_state_dict_for_blocked_skill(
+            CombatPolicyNet.adapt_state_dict_for_threat_grid(
+             CombatPolicyNet.adapt_state_dict_for_reach_grid(
+              CombatPolicyNet.adapt_state_dict_for_los_grid(
+                CombatPolicyNet.adapt_state_dict_for_decision_ctx(
+                  CombatPolicyNet.adapt_state_dict_for_cimmun_entity(
+                    CombatPolicyNet.adapt_state_dict_for_obs_v5(
+                        CombatPolicyNet.adapt_state_dict_for_skill_dtype(
+                            CombatPolicyNet.adapt_state_dict_for_obs_v4(
+                                CombatPolicyNet.adapt_state_dict_for_obs_v3(
+                                    state_dict))))))))))))
 
     @staticmethod
     def adapt_state_dict_for_perarch(state_dict: dict) -> dict:
@@ -557,8 +881,15 @@ class CombatPolicyNet(nn.Module):
         # reasoning needed.
         terrain_ch    = terrain.unsqueeze(1)              # [B, 1, N_GRID, N_GRID]
         distance_grid = obs["distance_grid"]              # [B, 2, N_GRID, N_GRID]
+        los_grid      = obs["los_grid"]                   # [B, 1, N_GRID, N_GRID]
+        reach_grid    = obs["reach_grid"]                  # [B, 1, N_GRID, N_GRID]
+        threat_grid   = obs["threat_grid"]                 # [B, 1, N_GRID, N_GRID]
+        # los, reach, threat appended LAST (in that order) so each migration zero-
+        # pads the matching final spatial column / grid_query row, bit-exact for
+        # old checkpoints. threat is the newest → outermost (last) column.
         spatial_feat  = torch.cat(                        # [B, _SPATIAL_C, N_GRID, N_GRID]
-            [terrain_ch, entity_grid, distance_grid], dim=1)
+            [terrain_ch, entity_grid, distance_grid, los_grid, reach_grid,
+             threat_grid], dim=1)
 
         # Self-indexed read instead of global mean pool. Entities obs row 0
         # stores self.position normalised to [0, 1] in columns 1 (x) and 2 (y);
@@ -589,7 +920,7 @@ class CombatPolicyNet(nn.Module):
         beta    = self.film_beta(arch_oh)                     # [B, hidden]
         h = gamma * h + beta
 
-        return sk_emb, ent_emb, h, key_padding, spatial_feat
+        return sk_emb, ent_emb, h, key_padding, spatial_feat, self_cell_feat
 
     def forward(self, obs: dict) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """Returns (end_logit, skill_logits, entity_logits, grid_logits).
@@ -599,7 +930,7 @@ class CombatPolicyNet(nn.Module):
         entity_logits:[B, N_SKILL_SLOTS, N_ENTITY_SLOTS] — per-skill
         grid_logits:  [B, N_SKILL_SLOTS, N_GRID*N_GRID]  — per-skill
         """
-        sk_emb, ent_emb, h, key_padding, spatial_feat = self._encode(obs)
+        sk_emb, ent_emb, h, key_padding, spatial_feat, self_cell_feat = self._encode(obs)
         B = h.shape[0]
 
         # Per-sample archetype id (used to gather the right per-arch head).
@@ -611,9 +942,20 @@ class CombatPolicyNet(nn.Module):
         arch_ids = entities[:, 0, _ARCH_OH_START:_ARCH_OH_END].argmax(dim=1)  # [B]
         arch_ids = arch_ids.clamp(max=len(self.skill_heads) - 1)
 
-        # end_head reads from end_features (NOT from the shared trunk h) —
-        # see __init__ docstring for the encoder-drift rationale.
-        end_logit = self.end_head(obs["end_features"]).squeeze(-1)
+        # end_head reads from end_features (NOT from the shared trunk h) — see
+        # __init__ docstring. The self-cell THREAT and REACH flags are appended
+        # so the stop decision sees "am I in danger" (threat → kite-stop) and
+        # "can I attack from here" (reach → end+keep-heal when I can't). Spatial
+        # channel order is [...los, reach, threat], threat last:
+        #   threat = self_cell_feat[:, C-N_THREAT : C]
+        #   reach  = self_cell_feat[:, C-N_THREAT-N_REACH : C-N_THREAT]
+        # Concat order [end_features, threat, reach] → reach is the newest (last)
+        # column; zero-padded weight columns for old checkpoints ⇒ bit-exact.
+        _thr0 = _SPATIAL_C - N_THREAT_GRID_CHANNELS
+        self_threat = self_cell_feat[:, _thr0:_SPATIAL_C]
+        self_reach  = self_cell_feat[:, _thr0 - N_REACH_GRID_CHANNELS:_thr0]
+        end_in = torch.cat([obs["end_features"], self_threat, self_reach], dim=-1)
+        end_logit = self.end_head(end_in).squeeze(-1)
 
         # Skill-to-entity attention: each skill queries entity embeddings so
         # skill_head can condition on per-entity status (e.g. vow_target).
@@ -676,14 +1018,43 @@ class CombatPolicyNet(nn.Module):
         join_skill  = torch.where(valid_enemy.any(-1), join_skill,
                                   torch.zeros_like(join_skill))                # [B, S]
 
+        # v6 condition-immunity join (mirror of the typed-matchup join): each
+        # skill row's applies_status bits ⋅ each entity's condition-immunity
+        # slice = how many of the conditions this skill inflicts simply BOUNCE
+        # off that target. NEGATED so the sign matches the typed join (≤0 = bad):
+        # 0 = lands / no condition / no info, −k = k inflicted conditions wasted
+        # on an immune target. Zeroed cimmun descriptors (pre-v6 episodes) → 0,
+        # and a migrated pre-v6 head has a zero cimmun weight column ⇒ bit-exact.
+        sk_st   = obs["skills"][:, :, SKILL_STATUS_START:
+                                SKILL_STATUS_START + N_STATUS_SLOTS]           # [B, S, 16]
+        ent_ci  = entities[:, :, I_DESC_CIMMUN:I_DESC_CIMMUN + N_V6_CIMMUN]    # [B, E, 16]
+        cimmun_se = -(sk_st.unsqueeze(2) * ent_ci.unsqueeze(1)).sum(-1)        # [B, S, E]
+        # skill_head summary: LEAST-wasted target over present enemy rows (amax
+        # of the ≤0 values = the target fewest of this skill's conditions bounce
+        # off). Same enemy-row masking / no-enemy→0 convention as the typed join.
+        cimmun_skill = cimmun_se.masked_fill(~valid_enemy, float("-inf")).amax(-1)
+        cimmun_skill = torch.where(valid_enemy.any(-1), cimmun_skill,
+                                   torch.zeros_like(cimmun_skill))            # [B, S]
+
         # skill_head: per skill slot. Stack all N_ARCH copies' outputs, then
         # gather the one matching each sample's archetype.
         h_skill      = h.unsqueeze(1).expand(-1, N_SKILL_SLOTS, -1)
+        # blocked → which-skill feature: blockedness × sk_emb. blockedness =
+        # 1 − self-cell LoS proximity. The LoS channel is the second-to-last
+        # spatial channel now that the reach channel is appended AFTER it, so
+        # index explicitly past reach (NOT _SPATIAL_C-1, which is reach). 0
+        # whenever the agent can see an enemy (open layouts: LoS all-ones → 0),
+        # so this term vanishes in open → bit-exact there.
+        _LOS_IDX = _SPATIAL_C - 1 - N_REACH_GRID_CHANNELS - N_THREAT_GRID_CHANNELS
+        blockedness = (1.0 - self_cell_feat[:, _LOS_IDX]).clamp(min=0.0)        # [B]
+        blocked_feat = blockedness.view(-1, 1, 1) * sk_emb                     # [B, S, 64]
         if dtype_v1:   # pre-dtype heads have no join column
             skill_in = torch.cat([sk_emb, h_skill, sk_ent_ctx], dim=-1)
         else:
             skill_in = torch.cat([sk_emb, h_skill, sk_ent_ctx,
-                                  join_skill.unsqueeze(-1)], dim=-1)           # [B, S, 64+h+32+1]
+                                  join_skill.unsqueeze(-1), blocked_feat,
+                                  cimmun_skill.unsqueeze(-1)],
+                                 dim=-1)                     # [B, S, 64+h+32+1+64+1]
         skill_all    = torch.stack(
             [hd(skill_in).squeeze(-1) for hd in self.skill_heads], dim=1)     # [B, N_ARCH, S]
         sk_gather_idx = arch_ids.view(B, 1, 1).expand(-1, 1, N_SKILL_SLOTS)
@@ -700,7 +1071,8 @@ class CombatPolicyNet(nn.Module):
             ent_in = torch.cat([sk_for_ent, h_for_ent, ent_for_ent], dim=-1)
         else:
             ent_in = torch.cat([sk_for_ent, h_for_ent, ent_for_ent,
-                                join_se.unsqueeze(-1)], dim=-1)   # [B, S, E, 64+h+32+1]
+                                join_se.unsqueeze(-1),
+                                cimmun_se.unsqueeze(-1)], dim=-1)  # [B,S,E,64+h+32+1+1]
         ent_all     = torch.stack(
             [hd(ent_in).squeeze(-1) for hd in self.entity_heads], dim=1)      # [B, N_ARCH, S, E]
         ent_gather_idx = arch_ids.view(B, 1, 1, 1).expand(-1, 1, N_SKILL_SLOTS, N_ENTITY_SLOTS)
@@ -801,6 +1173,88 @@ def pick_action(end_logit: "torch.Tensor",
             row = row.clone().masked_fill(
                 torch.from_numpy(inv).to(row.device), -1e9)
         grid = int(row.argmax().item())
+        # Move own-cell DEADLOCK-BREAKER (null-effect family, NARROW scope;
+        # miner mine|666|0136: two teammates stacked on one cell spamming
+        # "move to my own cell" for 50+ turns, enemies 2.6m away). The first
+        # version masked the own cell unconditionally — measured regression:
+        # standing ground is a legitimate stance (let melee walk into your
+        # reach), and forcing a reselect turned it into aimless wandering
+        # (seed0 no_engage 0→60, affected-game loss rate 58%, single-variable
+        # A/B on mine|0|0000: 0dmg→34dmg with the guard off). v2 mirrors the
+        # pure-turtle guard's activation exactly: fire ONLY when the agent has
+        # attempted zero attacks all episode AND a living enemy sits within
+        # weapon reach + one move budget, and reselect ONLY among cells
+        # strictly closer to the nearest living enemy — one attack attempt
+        # unlocks stand-still forever; kiting-with-output never triggers.
+        if skills[skill_idx].skill_id == "move":
+            from .obs import (N_GRID as _NGm, GRID_CELL_SIZE_M as _CSm,
+                              partition_entities as _pe)
+            _gx = max(0, min(_NGm - 1, int(agent.position.x / _CSm)))
+            _gy = max(0, min(_NGm - 1, int(agent.position.y / _CSm)))
+            _own = _gx * _NGm + _gy
+            if grid == _own and getattr(agent, "_outgoing_attempts", 0) == 0:
+                from ..engine.combat import MOVE_BUDGET_M as _MVm
+                try:
+                    _reach = float(agent.get_weapon().range_normal) or 1.5
+                except Exception:
+                    _reach = 1.5
+                _, _foes = _pe(ws, agent_id)
+                _live = [ws.characters[x].position for x in _foes
+                         if ws.characters[x].is_alive()]
+                _nd = min((agent.position.distance_to(p) for p in _live),
+                          default=None)
+                if _nd is not None and _nd <= _reach + _MVm + 0.05:
+                    import numpy as _np2
+                    _tgt = min(_live,
+                               key=lambda p: agent.position.distance_to(p))
+                    _cs = (_np2.arange(_NGm, dtype=_np2.float32) + 0.5) * _CSm
+                    _cx = _np2.repeat(_cs, _NGm); _cy = _np2.tile(_cs, _NGm)
+                    _dist = _np2.sqrt((_cx - _tgt.x) ** 2 + (_cy - _tgt.y) ** 2)
+                    _closer = torch.from_numpy(_dist < _nd - 1e-3).to(row.device)
+                    _ok = (row > -1e8) & _closer
+                    _ok[_own] = False        # 自格中心可能比站位更近敵——顯式排除
+                    if bool(_ok.any()):
+                        grid = int(row.clone().masked_fill(~_ok, -1e9)
+                                   .argmax().item())
+        # AoE dominated-cell reselect (geometric, archetype-agnostic): if the
+        # chosen damaging-AoE cell catches allies (incl. self) while some
+        # clean cell covers AT LEAST as many living enemies, the choice is
+        # strictly dominated — reselect by the model's own logits WITHIN the
+        # safe set {zero allies, enemy coverage ≥ original}. Coverage can
+        # never drop and no behaviour is invented (model preference decides
+        # among safe cells); a melee scrum (empty safe set) is untouched, so
+        # nuking an engaged cluster stays legal. Pure masking was rejected:
+        # argmax over the unstructured remainder can whiff the cast entirely
+        # (worse than friendly fire). Same guard family as disengage-null /
+        # heal-at-full / entity-range masks.
+        f = skills[skill_idx].features
+        rad = float(getattr(f, "aoe_radius_m", 0.0) or 0.0)
+        if rad > 0 and getattr(f, "expected_damage", 0) > 0:
+            import numpy as _np
+            from .obs import (partition_entities, N_GRID as _NG,
+                              GRID_CELL_SIZE_M as _CS)
+            allies, enemies = partition_entities(ws, agent_id)
+            apos = [ws.characters[a].position for a in allies
+                    if a in ws.characters and ws.characters[a].is_alive()]
+            apos.append(agent.position)
+            epos = [ws.characters[e].position for e in enemies
+                    if ws.characters[e].is_alive()]
+            if apos and epos:
+                cs = (_np.arange(_NG, dtype=_np.float32) + 0.5) * _CS
+                cx = _np.repeat(cs, _NG); cy = _np.tile(cs, _NG)
+                ne = _np.zeros(_NG * _NG, dtype=_np.int32)
+                na = _np.zeros(_NG * _NG, dtype=_np.int32)
+                for p in epos:
+                    ne += (((cx - p.x) ** 2 + (cy - p.y) ** 2) <= rad * rad)
+                for p in apos:
+                    na += (((cx - p.x) ** 2 + (cy - p.y) ** 2) <= rad * rad)
+                if na[grid] > 0:
+                    legal = (row > -1e8).cpu().numpy()
+                    safe = (na == 0) & (ne >= max(1, int(ne[grid]))) & legal
+                    if safe.any():
+                        r2 = row.clone().masked_fill(
+                            torch.from_numpy(~safe), -1e9)
+                        grid = int(r2.argmax().item())
         return (skill_idx, 0, grid)
     # SELF or unrecognised: both irrelevant
     return (skill_idx, 0, 0)
@@ -871,33 +1325,101 @@ def apply_entity_mask(entity_logits: "torch.Tensor", obs: dict,
                 if not in_range:
                     entity_logits[0, i, slot] = -1e9
 
-        # Enemy-target skills: mask enemies WITHOUT line of sight — exactly
-        # the condition under which decode_action silently converts the
-        # action into an end-turn no-op. Applied only when at least one enemy
-        # remains visible, so a fully-blocked board keeps today's semantics
-        # (row stays unmasked; decode no-ops; turn ends).
+        # Enemy-target skills — per-(skill, slot) ENGINE-legality gate:
+        #   • LoS：decode_action 會把無視線目標靜默轉 end-turn no-op（原有條件）
+        #   • range／目標狀態（bug_miner 2026-07-02 挖出）：技能層遮罩只保證
+        #     「最近敵在射程內」，實體層原本不看距離 → 模型可鎖 reach 外的較遠敵
+        #     → 引擎 ERROR 白費回合（v5 一場 75 回合 0 傷平手）。鏡射引擎原語：
+        #     ATTACK 用 attack_range_check（近戰 reach／遠程 range_long＋LoS）＋
+        #     requires/blocked_by_target_status；帶 range_m 的單體法術比距離。
+        # 每列守門：某技能列全被遮就還原該列＝遮罩永遠不製造「無合法目標」新狀態
+        # （維持舊語義：decode no-op／引擎 ERROR 仍是後盾）。
+        from ..engine.combat import attack_range_check
+        from .obs import ENEMY_SLOT_START
+        ENEMY_TT = (TargetType.SINGLE_ENEMY, TargetType.MULTI_ENEMY)
         bf = ws.combat.battlefield if ws.combat else None
-        if bf is not None:
-            from .obs import ENEMY_SLOT_START
-            ENEMY_TT = (TargetType.SINGLE_ENEMY, TargetType.MULTI_ENEMY)
-            _, enemies = partition_entities(ws, agent_id)
-            vis = {}
-            for j, cid in enumerate(enemies):
-                slot = ENEMY_SLOT_START + j
-                if slot >= entity_logits.shape[2]:
-                    break
-                vis[slot] = bf.has_line_of_sight(
-                    agent.position, ws.characters[cid].position)
-            if vis and any(vis.values()) and not all(vis.values()):
-                for i, sk in enumerate(skills):
-                    if i >= entity_logits.shape[1]:
-                        break
-                    if sk.features.target_type not in ENEMY_TT:
-                        continue
-                    for slot, ok in vis.items():
-                        if not ok:
-                            entity_logits[0, i, slot] = -1e9
+        _, enemies = partition_entities(ws, agent_id)
+        slot_cid = {}
+        for j, cid in enumerate(enemies):
+            slot = ENEMY_SLOT_START + j
+            if slot >= entity_logits.shape[2]:
+                break
+            slot_cid[slot] = cid
+        for i, sk in enumerate(skills):
+            if i >= entity_logits.shape[1]:
+                break
+            if sk.features.target_type not in ENEMY_TT or not slot_cid:
+                continue
+            legal = {}
+            for slot, cid in slot_cid.items():
+                tch = ws.characters[cid]
+                ok = bf is None or bf.has_line_of_sight(
+                    agent.position, tch.position)
+                if ok and sk.features.target_type == TargetType.SINGLE_ENEMY:
+                    # ATTACK range/目標狀態/魅惑門＋單體法術 range_m＝共用真源
+                    ok = _enemy_target_legal(agent, agent_id, sk, cid, ws, bf)
+                    # 實體層免疫空砸（skill 層 null_dmg_idx 的目標層 sibling；
+                    # miner mine|666|0065：shadow 反覆摸黯蝕免疫的敵 shadow、
+                    # 旁邊站著能打的 orc）：純傷害技（無狀態 rider、無治療）
+                    # 對佔比加權倍率≈0 的目標＝引擎可證 null——遮掉該目標。
+                    # 「全遮則還原」後盾（下方既有）保證單免疫敵時不剝奪揮擊。
+                    f_ = sk.features
+                    if (ok and f_.expected_damage > 0
+                            and not any(f_.applies_status)
+                            and f_.expected_healing <= 0):
+                        pairs_ = list(f_.iter_damage_types())
+                        if pairs_:
+                            mult_ = sum(
+                                sh * float((tch.damage_multipliers or {})
+                                           .get(tok, 1.0))
+                                for tok, sh in pairs_)
+                            if mult_ <= 0.05:
+                                ok = False
+                legal[slot] = ok
+            if any(legal.values()) and not all(legal.values()):
+                for slot, ok in legal.items():
+                    if not ok:
+                        entity_logits[0, i, slot] = -1e9
     return entity_logits
+
+
+def _enemy_target_legal(agent, agent_id, sk, cid, ws, bf):
+    """引擎同源的 per-(skill, enemy) 當下合法性：LoS＋ATTACK（range/目標狀態
+    前置/魅惑門）＋單體法術 range_m。apply_entity_mask 逐槽門與
+    apply_resource_mask 的 legal-now 支配預掃共用的唯一真源。
+    語義保守：builder 回 None/丟例外＝不判非法（維持 decode/引擎後盾）。"""
+    from ..engine.combat import attack_range_check
+    tch = ws.characters[cid]
+    if bf is not None and not bf.has_line_of_sight(agent.position, tch.position):
+        return False
+    try:
+        act = sk.build_action(agent_id, cid, (tch.position.x, tch.position.y))
+    except Exception:
+        return True
+    if not isinstance(act, dict):
+        return True
+    if act.get("type") == "ATTACK":
+        w = agent.get_weapon(act.get("weapon", ""))
+        ok, _, _ = attack_range_check(agent, tch, w, bf)
+        if not ok:
+            return False
+        rts = act.get("requires_target_status")
+        if rts and not tch.has_status(rts):
+            return False
+        bts = act.get("blocked_by_target_status")
+        if bts and tch.has_status(bts):
+            return False
+        # 魅惑鏡射（0230 家族的受害席）：引擎 ATTACK 門拒絕受魅者攻擊施魅者
+        if any(getattr(fx, "name", "") == "charmed"
+               and getattr(fx, "source_id", "") == cid
+               for fx in agent.status_effects):
+            return False
+    elif "range_m" in act:
+        # 與引擎逐位元同條件（同一 Vec2 距離、同容差）
+        if (agent.position.distance_to(tch.position)
+                > float(act["range_m"]) + 1e-6):
+            return False
+    return True
 
 
 def apply_resource_mask(skill_logits: "torch.Tensor",
@@ -919,6 +1441,7 @@ def apply_resource_mask(skill_logits: "torch.Tensor",
 
     from .obs import partition_entities
     from ..engine.skill import available_skills, TargetType
+    from ..engine.abilities import ABILITY_REGISTRY
     agent = ws.characters[agent_id]
     allies, enemies = partition_entities(ws, agent_id)
     enemy_dist: float | None = None
@@ -951,12 +1474,60 @@ def apply_resource_mask(skill_logits: "torch.Tensor",
     # this turn, mask out all other leveled-spell skills (cantrips still OK).
     leveled_locked = getattr(agent, "leveled_spell_cast_this_turn", False)
     skills = available_skills(agent, ws)
+    # Immune-null attack pre-pass: a PURE-damage skill (no status rider, no
+    # heal) whose damage-share-weighted multiplier is ~0 against EVERY living
+    # enemy deals literally nothing — engine-provable null. Mask it ONLY when
+    # some other damaging skill in the current kit has a non-null multiplier
+    # (strict dominance; a monotype kit facing full immunity keeps its swing —
+    # never create a no-legal-offense state). Shares come from
+    # features.iter_damage_types(), the same engine data damaging_options /
+    # the obs dtype tail use, so a divine_smite row keeps its 光耀 viability
+    # when the weapon type is immune. Same guard family as disengage-when-far
+    # / heal-at-full / repeat-dodge / AoE dominated-cell reselect.
+    null_dmg_idx: set[int] = set()
+    live_pairs = [(e, ws.characters[e]) for e in enemies
+                  if ws.characters[e].is_alive()]
+    live_enemies = [oc for _, oc in live_pairs]
+    if live_enemies:
+        _mults = {}
+        _mults_now = {}
+        for i, sk in enumerate(skills):
+            f = sk.features
+            if (i == 0 or f.expected_damage <= 0 or any(f.applies_status)
+                    or f.expected_healing > 0):
+                continue
+            pairs = list(f.iter_damage_types())
+            if not pairs:
+                continue
+            def _m(oc, _pairs=pairs):
+                return sum(sh * float((oc.damage_multipliers or {})
+                                      .get(tok, 1.0)) for tok, sh in _pairs)
+            _mults[i] = max(_m(oc) for oc in live_enemies)
+            # legal-now 視角（0150 家族）：只對「當下引擎合法可執行」的目標
+            # 取最佳倍率——遠處的高 EV 目標不是本回合的替代選項
+            if f.target_type in (TargetType.SINGLE_ENEMY,
+                                 TargetType.MULTI_ENEMY):
+                now = [_m(oc) for eid, oc in live_pairs
+                       if _enemy_target_legal(agent, agent_id, sk, eid, ws, bf)]
+                if now:
+                    _mults_now[i] = max(now)
+        if _mults and max(_mults.values()) > 0.05:
+            null_dmg_idx = {i for i, m in _mults.items() if m <= 0.05}
+        # legal-now 嚴格支配（miner mine|666|0150：雙武器身體、唯一搆得到的
+        # 敵免疫黯蝕——「生命吸取打免疫者=0」被「鬼爪打同一人=正傷」支配）：
+        # 存在當下合法且非 null 的純傷害選項時，遮掉當下全 null 的純傷害技。
+        # 單型 kit／敵全免疫時 _mults_now 全 ≤0.05＝門不開＝揮擊保留。
+        if _mults_now and max(_mults_now.values()) > 0.05:
+            null_dmg_idx |= {i for i, m in _mults_now.items() if m <= 0.05}
     for i, sk in enumerate(skills):
         if i >= skill_logits.shape[-1]:
             break
         if sk.skill_id == "move":
             if not has_move:
                 skill_logits[..., i] = -1e9
+            continue
+        if i in null_dmg_idx:
+            skill_logits[..., i] = -1e9
             continue
         # Resource cost gates — engine accepts these without complaint when
         # consumes is empty, but the skill genuinely needs the slot to do
@@ -973,7 +1544,102 @@ def apply_resource_mask(skill_logits: "torch.Tensor",
             skill_logits[..., i] = -1e9
             continue
         tt = sk.features.target_type
+        # Pure heals (heal > 0, no damage, no status) are NULL-EFFECT when every
+        # legal target is effectively full — same masking contract as the
+        # disengage-when-far gate below. Threshold mirrors the degen-audit
+        # heal_full detector (hp ≥ 95% max); dying targets (hp 0) always count
+        # as hurt, so revive-capable heals stay available.
+        _f = sk.features
+        if (_f.expected_healing > 0 and _f.expected_damage <= 0
+                and not any(_f.applies_status)):
+            if tt == TargetType.SELF:
+                pool = [agent]
+            elif tt in (TargetType.SINGLE_ALLY, TargetType.MULTI_ALLY):
+                pool = [agent] + [ws.characters[x] for x in allies]
+            else:
+                pool = []
+            if pool and all(c.hp >= c.max_hp * 0.95 for c in pool):
+                skill_logits[..., i] = -1e9
+                continue
         if tt == TargetType.SELF:
+            # APPLY_MOD-already-active recast guard (null-effect family:
+            # heal-at-full / disengage-when-far / repeat-dodge / pure-turtle).
+            # add_status is idempotent on the modifier name (character.py), so
+            # re-casting a self-buff whose modifier is already on the agent
+            # does NOTHING to the target — engine-identical null (and the
+            # re-concentrate path can even DROP an active concentration buff).
+            # Worse, a zero-cost permanent buff (a passive trait modelled as a
+            # free active: consumes=[], max_uses=0) is an infinite argmax
+            # sink — miner 0012: grafted evasion recast 3-4×/turn, adjacent
+            # kill legal, 22 rounds, 0 attack attempts, death. First cast
+            # stays legal (1 action for a permanent buff = real value); the
+            # mask only fires while the modifier is already active, so no
+            # engine-honoured behaviour is ever removed.
+            _bd = sk.build_action(agent_id, agent_id,
+                                  (agent.position.x, agent.position.y))
+            if (isinstance(_bd, dict) and _bd.get("type") == "APPLY_MOD"
+                    and agent.has_status(_bd.get("modifier", ""))):
+                skill_logits[..., i] = -1e9
+                continue
+            # Disengage only avoids opportunity attacks when you LEAVE an
+            # enemy's reach. With no enemy adjacent it is a NULL-EFFECT action —
+            # offering it lets an OOD / near-tie policy sink the turn into it
+            # (measured: a caster whose primary damage is immune vs a melee
+            # enemy at range disengage-loops, 0 dmg — combat_log 2026-07-01).
+            # Mask when the nearest enemy is beyond any plausible melee reach
+            # (3m > 5-ft normal AND 10-ft reach weapons); within that keep it
+            # (a real disengage-then-reposition). Only disengage among the SELF
+            # actions is null-when-far — dodge helps vs ranged, hide/buffs act.
+            # Also null with NO remaining movement: disengage's only effect is
+            # that the movement you make AFTERWARDS provokes no opportunity
+            # attacks — with the budget already spent there is nothing for it
+            # to protect (miner 0456: circle-move burns 9m, then disengage at
+            # mv=0 + END, 50 rounds, 0 attacks, weapon legal at 1.4m).
+            if sk.skill_id == "disengage" and (enemy_dist is None
+                                               or enemy_dist > 3.0
+                                               or resources.get("movement",
+                                                                0.0) <= 0.05):
+                skill_logits[..., i] = -1e9
+            # Repeat-dodge with ZERO incoming pressure = empirically-null
+            # repeat (dodge only matters if someone attacks before my next
+            # turn; last round nobody even TRIED). First dodge is always
+            # legal; any attack attempt (hit or miss — resolve_attack bumps
+            # _incoming_attempts) unlocks it again. Kills the documented
+            # defensive-inertia pocket (berserker dodge-brace loops vs
+            # passive enemies, adjacent, 75-turn 0-damage draws) without
+            # touching legit tanking-under-fire. Same null-effect family as
+            # disengage-when-far / heal-at-full.
+            if sk.skill_id == "dodge":
+                ldr = getattr(agent, "_last_dodge_round", None)
+                rnd = ws.combat.round_number if ws.combat else None
+                if (ldr is not None and rnd is not None
+                        and rnd <= ldr + 1
+                        and getattr(agent, "_incoming_attempts", 0)
+                        == getattr(agent, "_dodge_snapshot", -1)):
+                    skill_logits[..., i] = -1e9
+            # Pure-turtle guard (engage-commitment family): SOLO (no living
+            # ally to carry the fight), enemy reachable THIS TURN (within
+            # reach + remaining movement), action in hand, and ZERO offensive
+            # attempts ALL GAME (execute_action bumps _outgoing_attempts,
+            # save-spells included) — a 1v1 zero-output turtle can never win
+            # (draw at best), so dodge/hide there is strictly non-winning;
+            # ONE attack attempt unlocks them forever (tanking-with-output
+            # stays legal). Trace-proven shapes: berserker adjacent (0.9m)
+            # chip-dodging 50 rounds, and the doorstep stand (2.0m, movement
+            # unspent, first dodge then death). Berserker is the documented
+            # retrain-fragile class (BC surgery rejected repeatedly) — this
+            # is the decision-layer fix. Disengage is the same defensive-turn
+            # sink (miner 0456: disengage+END loop, zero attacks, weapon
+            # legal); a zero-output kite can't win 1v1 either, and one attack
+            # attempt likewise unlocks it (real kiting keeps output).
+            if sk.skill_id in ("dodge", "hide", "disengage"):
+                if (getattr(agent, "_outgoing_attempts", 0) == 0
+                        and enemy_dist is not None
+                        and enemy_dist <= fallback_reach
+                        + resources.get("movement", 0.0) + 0.05
+                        and not any(ws.characters[x].is_alive()
+                                    for x in allies if x in ws.characters)):
+                    skill_logits[..., i] = -1e9
             continue
         if tt in (TargetType.SINGLE_ALLY, TargetType.MULTI_ALLY):
             # Ally-target skills always have a legal in-range target: SELF
@@ -983,6 +1649,26 @@ def apply_resource_mask(skill_logits: "torch.Tensor",
             # arbitrary (unsorted) ally — per-ally range gating lives in
             # apply_entity_mask instead.
             continue
+        # Target-state precondition gate (engine-identical legality, NOT
+        # strategy): execute_action's ATTACK path returns ERROR when
+        # requires_target_status is absent / blocked_by_target_status is present
+        # (combat.py rts/bts gate), and the scripted expert skips the same
+        # (combat_policy). available_skills LISTS these abilities (the actor can
+        # use them in principle) but is target-agnostic, so a swallow (needs a
+        # `restrained` target) stays selectable against a lone non-restrained
+        # enemy → engine ERROR → wasted/looped turn (play_gui seed audit). This
+        # is the ONE absolutely-illegal enemy-target source available_skills
+        # can't filter. Mask ONLY when NO living enemy satisfies the gate; in
+        # 1vN a qualifying enemy keeps the skill and apply_entity_mask picks it.
+        ab = ABILITY_REGISTRY.get(sk.skill_id)
+        if ab is not None and (ab.requires_target_status
+                               or ab.blocked_by_target_status):
+            _rts, _bts = ab.requires_target_status, ab.blocked_by_target_status
+            if not any((not _rts or e.has_status(_rts))
+                       and (not _bts or not e.has_status(_bts))
+                       for e in live_enemies):
+                skill_logits[..., i] = -1e9
+                continue
         target_dist = enemy_dist
         if target_dist is None:
             skill_logits[..., i] = -1e9
@@ -994,10 +1680,15 @@ def apply_resource_mask(skill_logits: "torch.Tensor",
         rng = float(getattr(sk.features, "range_m", 0.0) or 0.0)
         if rng <= 0.0:
             rng = fallback_reach
-        # Engine uses strict inequality (distance > range = out of range), so
-        # distance == range gets rejected. Mask conservatively: anything at or
-        # within 1 cm of the range boundary is treated as out-of-range.
-        if target_dist >= rng - 0.01:
+        # Engine-identical range gate (attack_range_check: `d > reach` rejects,
+        # so d == reach is LEGAL; spell executors use `> range_m + 1e-6`).
+        # The old conservative form (>= rng - 0.01) wrongly masked the legal
+        # boundary window [reach-0.01, reach]: a champion standing at exactly
+        # 1.5m from a permanently-restrained enemy had its attack masked
+        # forever while move no-ops zeroed and dodge/hide hit the turtle guard
+        # → 50-round zero-attempt stall (miner 0477, opp seat). Same distance
+        # math (Vec2) on both sides ⇒ bit-safe to mirror the engine exactly.
+        if target_dist > rng + 1e-6:
             skill_logits[..., i] = -1e9
 
     return skill_logits

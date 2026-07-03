@@ -58,25 +58,43 @@ def point_validity_mask(ws: WorldState, agent_id: str, skill) -> "object":
     identity- and tactic-agnostic. Without it the policy can aim an AoE at a
     wall forever and never receive a learning signal that the action was
     impossible (measured: 28-round fireball-at-wall standoffs).
+
+    MOVE targets get the SAME wall-blocked-path check as aimed skills: the
+    engine's MOVE (_walk_path) walks a STRAIGHT line and STOPS at walls — it
+    does not pathfind — so a cell whose straight path is wall-blocked is not
+    reachable this turn (the agent just walks into the wall and stops short).
+    Masking those leaves only cells the agent can actually arrive at, so the
+    graded LoS-proximity field steps it AROUND a corner over turns instead of
+    repeatedly targeting an unreachable sightline cell behind the wall and
+    stalling against it. Open maps early-return (no walls → every cell legal →
+    bit-exact); the check only ever fires when a wall blocks the path.
     """
     import numpy as np
     from ..engine.vec2 import TerrainType
     invalid = np.zeros(N_GRID * N_GRID, dtype=bool)
+    agent = ws.characters[agent_id]
+    # LINE 技（吐息/閃電束）瞄自己格：施法者若正好站在格心（生成常態），decode 後
+    # coord == caster.position → 零向量 → 引擎拒「需要一個方向」（combat.py SPELL
+    # is_line aim<1e-6）＝白費整回合。只有自己那格可能 clamp 成零向量（其他格的
+    # clamp 至少留 range−1e-3），精確鏡射引擎條件：格心與站位重合才標非法。
+    # 此檢查與牆無關，必須在無牆 early-return 之前。
+    if skill.features.target_type == TargetType.LINE:
+        own = _xy_to_grid_cell(agent.position.x, agent.position.y)
+        ox, oy = _grid_cell_to_xy(own)
+        if abs(ox - agent.position.x) < 1e-6 and abs(oy - agent.position.y) < 1e-6:
+            invalid[own] = True
     bf = ws.combat.battlefield if ws.combat else None
     if bf is None:
         return invalid
     blocked_val = int(TerrainType.BLOCKED)
     if not any(c == blocked_val for row in bf.cells for c in row):
         return invalid          # no walls on this map — every aim is legal
-    agent = ws.characters[agent_id]
-    is_move = skill.skill_id == "move"
     rng_m = skill.features.range_m
     for cell in range(N_GRID * N_GRID):
         x, y = _grid_cell_to_xy(cell)
         coord = _clamp_to_range(Vec2(x, y), agent.position, rng_m)
-        if bf.is_blocked(coord) or (
-                not is_move
-                and not bf.has_line_of_sight(agent.position, coord)):
+        if bf.is_blocked(coord) or not bf.has_line_of_sight(
+                agent.position, coord):
             invalid[cell] = True
     return invalid
 

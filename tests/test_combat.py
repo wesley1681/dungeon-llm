@@ -52,9 +52,12 @@ from trpg.engine.world_state import WorldState
 
 
 def test_attack_hits_when_roll_exceeds_ac():
+    # resolve_attack 的 d20 走 roll_d20（advantage/disadvantage 語義），不走
+    # 泛用 roll()——patch 錯接縫等於沒 patch＝live 骰＝flaky（抓到時骰出
+    # 天生 20 → total 22）。必須 patch roll_d20。
     attacker = _make_char("A", level=1)   # prof +2, STR mod 0 → total = roll+2
     target = _make_char("B", ac=5)
-    with patch("trpg.engine.combat.roll", return_value=10):
+    with patch("trpg.engine.combat.roll_d20", return_value=10):
         hit, total = resolve_attack(attacker, target)
     assert hit is True
     assert total == 12  # 10 + 0 (STR mod) + 2 (prof bonus)
@@ -63,7 +66,7 @@ def test_attack_hits_when_roll_exceeds_ac():
 def test_attack_misses_when_roll_below_ac():
     attacker = _make_char("A")
     target = _make_char("B", ac=20)
-    with patch("trpg.engine.combat.roll", return_value=1):
+    with patch("trpg.engine.combat.roll_d20", return_value=1):
         hit, total = resolve_attack(attacker, target)
     assert hit is False
 

@@ -88,6 +88,22 @@ SKILL_DTYPE_START = (
 # = 23 + 6 + 8 + 16 = 53
 SKILL_FEATURE_DIM = SKILL_DTYPE_START + N_DAMAGE_TYPES   # + damage-type soft one-hot = 66
 
+# Obs-side magnitude bound on the expected_damage feature (as_vector column 0).
+# skill_proj is an UNNORMALISED nn.Linear, so a skill whose expected_damage is
+# far outside the range the policy trained on (all trained kits ≤ 66 = a dragon's
+# breath) corrupts the pooled skill embedding's direction → the trunk hidden
+# state collapses ~3× → the policy falls back to passive turtling. This is the
+# 2026-07-02 "OOD-graft → dodge-collapse" root cause (bug_miner, data-proven:
+# clipping ONLY this column to ≤100 fully restored play; ‖h‖ 349→103→269).
+# CAP sits in the empty (66, 85.5) gap: every ability a trained identity carries
+# is ≤ 66, so clamping is a NO-OP on all real/trained scenarios (bit-exact, no
+# retrain) and ONLY reins in OOD-grafted boss ultras (swallow 85.5 / breath 91 /
+# kraken 149.5 / tarrasque 204) back onto the training manifold. Generic
+# magnitude bound — NOT keyed on any skill name. Column index is pinned here
+# next to as_vector() so it can't drift from the encoding order.
+I_SKILL_EXPECTED_DAMAGE = 0
+SKILL_EV_OBS_CAP = 80.0
+
 # Sentinel damage-type token: "this skill deals damage of the wielder's weapon
 # type" (maneuvers, frenzy …). Resolved to the actual weapon type by
 # SkillFeatures.materialize — an unmaterialized template contributes no bits.
@@ -527,6 +543,34 @@ def _from_ability(ab, char) -> Skill:
 
 # ── Enumeration ──────────────────────────────────────────────────────────────
 
+def _requires_spellcasting(ab) -> bool:
+    """True if ``ab`` is a class spell that execute_action would REJECT for a
+    non-spellcaster: it routes through the SPELL handler (its builder emits a
+    ``spell_name`` in the SPELLS registry) and carries no innate save DC
+    (``save_dc_ability`` unset). Natural abilities that ride the SPELL pipeline
+    (dragon breath: save_dc_ability set) and non-spell abilities (weapons/
+    maneuvers, not in SPELLS) return False. Cached on the ability — the
+    classification is static. Mirrors combat.execute_action's SPELL gate
+    (``not caster.spellcasting_ability and not spell.save_dc_ability``)."""
+    cached = getattr(ab, "_req_spellcasting", None)
+    if cached is not None:
+        return cached
+    from .spells import SPELLS
+    sn = None
+    if ab.builder is not None:
+        try:
+            sn = ab.builder("_", "_", (0.0, 0.0)).get("spell_name")
+        except Exception:
+            sn = None
+    sp = SPELLS.get(sn) if sn else None
+    req = sp is not None and not getattr(sp, "save_dc_ability", None)
+    try:
+        ab._req_spellcasting = req
+    except Exception:
+        pass
+    return req
+
+
 def available_skills(char, world_state=None) -> list[Skill]:
     """List everything `char` can invoke this turn. Order is stable across
     calls so the policy's skill_idx stays consistent within an episode.
@@ -584,6 +628,16 @@ def available_skills(char, world_state=None) -> list[Skill]:
         # Same concentration filter as spells — re-casting a concentration
         # buff while already concentrating just burns the slot.
         if getattr(ab.features, "requires_concentration", False) and char.concentrating_on:
+            continue
+        # A class spell can't be cast by a non-spellcaster — mirror execute_
+        # action's SPELL gate so the policy is never OFFERED an action that would
+        # ERROR. Without this, the sandbox handing a fighter a wizard cantrip
+        # (chill_touch) makes the policy pick it, execute_action returns ERROR,
+        # and _run_opponent_turn spends NO resource on the error and re-picks the
+        # same greedy action up to the sub-action cap (0 damage + a wasted turn
+        # spamming it — the exact GUI bug). No-op for real casters
+        # (spellcasting_ability set) and for innate breath weapons.
+        if not char.spellcasting_ability and _requires_spellcasting(ab):
             continue
         out.append(_from_ability(ab, char))
 
