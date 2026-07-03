@@ -320,7 +320,7 @@ def test_neural_reaction_decider_real_checkpoint_runs():
     errors and return a legal result (option skill_id or decline)."""
     import os
     from trpg.sandbox.policy_loader import load_policy
-    ckpt = "models/pop_mon/pop_u0005.pt"
+    ckpt = "models/unified/uni_v10.pt"
     if not os.path.exists(ckpt):
         pytest.skip("champion checkpoint not present")
     net = load_policy(ckpt).net
