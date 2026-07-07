@@ -29,22 +29,14 @@ def load_policy(spec: str) -> CombatPolicy:
     if spec.endswith(".pt"):
         if not os.path.exists(spec):
             raise ValueError(f"model file not found: {spec!r}")
-        net = CombatPolicyNet()
-        # adapt + strict=False so older shared-head checkpoints still load:
-        # adapt_state_dict_for_perarch tiles a single skill_head/entity_head/
-        # grid_query_proj into the 12 per-arch copies, and strict=False lets a
-        # checkpoint that predates the MLP value head keep that head's fresh
-        # init (the value head is unused at inference anyway).
-        sd = torch.load(spec, map_location="cpu", weights_only=True)
-        sd = CombatPolicyNet.adapt_state_dict_for_perarch(sd)
-        # Drop shape-mismatched keys (e.g. critic input dim changed across model
-        # versions) — inference never uses the critic, so this is safe and lets
-        # any checkpoint, old or new, load.
-        msd = net.state_dict()
-        sd = {k: v for k, v in sd.items()
-              if not (k in msd and v.shape != msd[k].shape)}
-        net.load_state_dict(sd, strict=False)
-        net.eval()
+        # Route through the architecture registry's defensive loader: it rebuilds
+        # the RIGHT architecture from the checkpoint's sidecar codename and STRICT-
+        # loads, raising a clear diff if the weights don't match (instead of the
+        # old strict=False that silently dropped mismatched keys → random weights).
+        # migrate=True keeps the legacy shared-head→per-arch tiling bridge for old
+        # checkpoints; a checkpoint with no sidecar is assumed 'uni' (with a warn).
+        from ..rl.architectures import load_net
+        net = load_net(spec, migrate=True)
         return NeuralCombatPolicy(net, device="cpu")
     raise ValueError(
         f"cannot interpret model spec {spec!r} — "
