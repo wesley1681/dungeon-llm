@@ -224,6 +224,48 @@ def _report_matrix(tag, wr, n):
           + f"  總{np.mean([wr[a][o] for a in ARCHS for o in ARCHS]):5.0%}", flush=True)
 
 
+# ── 自我對弈退化探針(model-vs-model;抓 vs-專家矩陣看不到的「共塌」) ───────────────
+# vs-專家矩陣量「能力侵蝕」;但純自我對弈還有第二種崩壞=雙方一起收斂到爛的互穩態
+# (都龜/都風箏/都站樁互毆),在 vs-專家看起來可能還行。這裡讓兩席都是同一個 net 對打,
+# 量對局本身健不健康:打得完(有人死) vs 逾時(撞 env max_steps 雙方沒死=共塌嫌疑)。
+def _play_selfplay(net, seed, a_arch, o_arch, level, max_steps=200):
+    """一局 model-vs-model(兩席同一 net:agent greedy、對手席神經)。回傳退化指標。"""
+    random.seed(seed)
+    env = make_env(seed, a_arch, o_arch, level, opp_net=net)     # 對手 = 同一個 net
+    aid = env.agent_ids[0]; oid = env.opp_ids[0]
+    A = env.ws.characters[aid]; W = env.ws.characters[oid]
+    done = False; steps = 0; term = trunc = False
+    while not done and steps < max_steps:
+        steps += 1
+        act = _greedy_action(net, env, env.current_agent_id)
+        _, _, term, trunc, _ = env.step(act); done = term or trunc
+    return {
+        "steps": steps,
+        "timeout": bool(trunc and not term),             # 撞 env max_steps 雙方沒死
+        "decisive": bool(not A.is_alive() or not W.is_alive()),   # 有人死 = 打得完
+        "mutual_hp": (max(0., A.hp) / max(1, A.max_hp)
+                      + max(0., W.hp) / max(1, W.max_hp)) / 2,
+    }
+
+
+def probe_selfplay_degen(net, n, level, seed0=60_000):
+    """n 局 model-vs-model(隨機職對)。回傳 {decisive, timeout, steps, mutual_hp}。"""
+    net.eval()
+    rng = random.Random(seed0)
+    rs = [_play_selfplay(net, seed0 + gi * 137, rng.choice(ARCHS), rng.choice(ARCHS), level)
+          for gi in range(n)]
+    net.train()
+    return {k: float(np.mean([r[k] for r in rs]))
+            for k in ("decisive", "timeout", "steps", "mutual_hp")}
+
+
+def _report_degen(tag, d):
+    # 共塌嫌疑旗標:逾時率高(打不完)或雙方末血都高(被動互穩)。方向性,非硬規則。
+    flag = "⚠共塌嫌疑" if (d["timeout"] > 0.40 or d["mutual_hp"] > 0.60) else ""
+    print(f"[{tag:<5}] 自對局:打完率={d['decisive']:3.0%} 逾時率={d['timeout']:3.0%} "
+          f"均步數={d['steps']:4.1f} 雙方均末血={d['mutual_hp']:3.0%} {flag}", flush=True)
+
+
 # ── 快照池(Phase 1) ───────────────────────────────────────────────────────────
 def _snapshot(net):
     """凍結當前權重成一份 cpu state_dict(與 net 解耦,之後訓練不會動到它)。"""
@@ -320,6 +362,8 @@ def main():
     p.add_argument("--eval_every", type=int, default=5)
     p.add_argument("--eval_games", type=int, default=48)
     p.add_argument("--matrix_games", type=int, default=48, help="最終 5×5 每格局數")
+    p.add_argument("--degen_games", type=int, default=24,
+                   help="每次 eval 跑幾局 model-vs-model 退化探針(抓共塌)")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--workers", type=int, default=16)
     p.add_argument("--threads", type=int, default=8)
@@ -391,6 +435,7 @@ def main():
                      net_kwargs=net_kwargs)
 
     _report_per_class("u0", probe_per_class(net, args.eval_games, args.level))
+    _report_degen("u0", probe_selfplay_degen(net, args.degen_games, args.level))
     try:
         for update in range(1, args.updates + 1):
             batch, neps = pc.run(net, args.steps, args.seed * 7919 + update,
@@ -412,11 +457,14 @@ def main():
                 A.save_net(net, str(ckpt), CODENAME)      # 帶 v05 sidecar
                 _report_per_class(f"u{update}",
                                   probe_per_class(net, args.eval_games, args.level))
+                _report_degen(f"u{update}",
+                              probe_selfplay_degen(net, args.degen_games, args.level))
     finally:
         pc.close()
 
     wr = probe_matrix(net, args.matrix_games, args.level)
     _report_matrix(f"final [{args.phase}]", wr, args.matrix_games)
+    _report_degen("final", probe_selfplay_degen(net, args.degen_games * 2, args.level))
     print("done.", flush=True)
 
 
