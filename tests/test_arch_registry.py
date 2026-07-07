@@ -115,9 +115,9 @@ def test_obs_layout_drift_fails_loud(tmp_path):
 
 def test_no_auto_migration_by_default(tmp_path):
     """預設不自動遷移:形狀對不上就報錯,不會偷偷 pad/丟鍵把它硬載進去。"""
-    net = A.build("codeword-noarch").eval()                     # 有 entity_kit_proj? 沒有
+    net = A.build("codeword-noarch").eval()                     # ent_emb 32 寬
     p = str(tmp_path / "m.pt")
     A.save_net(net, p, "codeword-noarch")
-    # 用 enemyskill 版(多了 entity_kit_proj)去載 → 缺鍵,預設該 raise(而非靜默補零)
+    # 用 enemyskill 版(拼接 kit → ent_emb 96,各層更寬)去載 → 形狀不合,預設該 raise
     with pytest.raises(ValueError, match="架構不符"):
         A.load_net(p, "codeword-noarch-enemyskill")

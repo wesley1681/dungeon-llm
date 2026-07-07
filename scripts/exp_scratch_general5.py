@@ -275,10 +275,12 @@ def main():
                         "0=保留職業(baseline)。非遮罩,是欄位/模組不存在")
     p.add_argument("--enemy_skills", type=int, default=0,
                    help="1=encode_entity_skills:讀每個實體的靜態 kit(obs v8),用共享 skill "
-                        "encoder 總結進 ent_emb → 分得出聚合相同的敵人(=架構 v05);0=關(v04)")
+                        "encoder 總結成 64-d 後**拼接**進 ent_emb(32→96)→ 分得出聚合相同的"
+                        "敵人(=架構 v05);0=關(v04)")
     p.add_argument("--init_from", default="",
-                   help="續訓/warm-start:訓練前載入此 checkpoint 權重(fresh optimizer);"
-                        "架構須相符或為超集(v05 從 v04 warm-start 時 entity_kit_proj 留 zero-init)")
+                   help="續訓/warm-start:訓練前載入此 checkpoint 權重(fresh optimizer,"
+                        "strict=False 只載形狀相符的層)。注意:v05 拼接使 ent_emb 加寬,與 v04 "
+                        "的 entity 相關層形狀不同 → 那些層不會被載入(非 bit-exact 續訓)")
     args = p.parse_args()
 
     if args.smoke:

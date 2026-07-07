@@ -206,8 +206,8 @@ class CombatPolicyNet(nn.Module):
 
         # Entities: shared MLP per row. First layer is widened past ENTITY_DIM
         # so the per-entity status multi-hot (sparse, ~27 bits) isn't crushed
-        # against the small projection. Output stays at 32 — downstream sizing
-        # unchanged.
+        # against the small projection. Base output is 32; when encode_entity_skills
+        # the per-entity kit summary is CONCATENATED on top (see _ent_emb_dim).
         # ablate_archetype: the arch one-hot columns are sliced out of every
         # entity row before this MLP, so its first layer is that much narrower —
         # the weights that would read the class simply do not exist.
@@ -215,15 +215,17 @@ class CombatPolicyNet(nn.Module):
         self.entity_mlp = nn.Sequential(
             nn.Linear(_ent_in, 64), nn.ReLU(), nn.Linear(64, 32),
         )
-        # encode_entity_skills: projects each entity's kit summary (64-d, from the
-        # SHARED skill encoder) into entity-embedding space (32-d) and ADDS it to
-        # ent_emb. Zero-init ⇒ inert at start (bit-exact warm-start from pre-v8).
-        if encode_entity_skills:
-            self.entity_kit_proj = nn.Linear(64, 32)
-            nn.init.zeros_(self.entity_kit_proj.weight)
-            nn.init.zeros_(self.entity_kit_proj.bias)
-        else:
-            self.entity_kit_proj = None
+        # encode_entity_skills (obs v8): each entity's static kit is summarised
+        # (64-d, mean-pooled through the SHARED skill encoder) and CONCATENATED
+        # onto its 32-d entity embedding, so distinct kits with identical
+        # capability_descriptors stop reading identical. Concat — NOT add — keeps
+        # the base entity features and the kit summary in SEPARATE dims (no
+        # superposition, no 64→32 compression); the cost is a wider ent_emb that
+        # EVERY downstream consumer sizes off self._ent_emb_dim (attention scale,
+        # sk_ent_ctx, ent_for_ent, self_emb→trunk, the head input widths). This
+        # arch trains fresh, so there is no warm-start / bit-exact constraint to
+        # preserve — the kit dims contribute from step 0.
+        self._ent_emb_dim = 32 + (64 if encode_entity_skills else 0)
 
         # No CNN. spatial_feat is the raw stack of pre-computed per-cell
         # channels (terrain + entity overlay + distance grids). Local pattern
@@ -236,7 +238,7 @@ class CombatPolicyNet(nn.Module):
 
         # Shared trunk — NO global mean pools. Position info reaches `h`
         # through self-indexed reads instead of dilution-by-averaging:
-        #   - self_emb     = ent_emb[:, 0]                  (32)  ← self row, not entity mean
+        #   - self_emb     = ent_emb[:, 0]     (_ent_emb_dim)  ← self row, not entity mean
         #   - self_cell_feat = spatial_feat at self's cell  (_spatial_total_c)
         #                                                          ← single cell, not 30x30 pool
         # Old design pooled both (`ent_emb.mean(1)` and `spatial_feat.mean((2,3))`),
@@ -248,7 +250,8 @@ class CombatPolicyNet(nn.Module):
         # migrated checkpoints) contribute exactly 0, so normal-turn behaviour is
         # bit-exact forever, however these columns later train (a zero INPUT kills
         # the product regardless of the weight — that is the invariance).
-        _trunk_in = 64 + 32 + self._spatial_total_c + 16 + N_DECISION_CTX
+        _trunk_in = (64 + self._ent_emb_dim + self._spatial_total_c
+                     + 16 + N_DECISION_CTX)
         self.trunk = nn.Sequential(
             nn.Linear(_trunk_in, hidden), nn.ReLU(),
             nn.Linear(hidden, hidden), nn.ReLU(),
@@ -314,10 +317,12 @@ class CombatPolicyNet(nn.Module):
             nn.Linear(32, 1),
         )
         # skill_head: per-skill-slot logit (existing)
-        # Projects skill embeddings (64-d) to entity space (32-d) so each
-        # skill can attend over entity embeddings in forward(), giving
-        # skill_head per-entity resolution without mean-pooling dilution.
-        self.skill_ent_attn_proj = nn.Linear(64, 32)
+        # Projects skill embeddings (64-d) to entity space (self._ent_emb_dim)
+        # so each skill can attend over entity embeddings in forward(), giving
+        # skill_head per-entity resolution without mean-pooling dilution. Tracks
+        # ent_emb's width so the bmm query/key dims stay aligned when
+        # encode_entity_skills concatenates the kit summary.
+        self.skill_ent_attn_proj = nn.Linear(64, self._ent_emb_dim)
         # Per-archetype heads. Each of skill / entity / grid has 12 sibling
         # copies — at forward time we look up the agent's archetype id (from
         # the self entity's one-hot) and read THAT copy's output. Reason:
@@ -369,10 +374,14 @@ class CombatPolicyNet(nn.Module):
         # _h = hidden unless drop_noop_h drops the constant-across-slots h from
         # skill_head / entity_head (grid_head always keeps h — see grid section).
         _h = 0 if self.drop_noop_h else hidden
+        # The sk_ent_ctx (skill_head) and ent_emb (entity_head) blocks are
+        # self._ent_emb_dim wide — 32 by default, +64 when encode_entity_skills
+        # concatenates the per-entity kit summary.
+        _d = self._ent_emb_dim
         self.skill_heads = nn.ModuleList(
-            [nn.Linear(64 + _h + 32 + _j + 64 + _j, 1) for _ in range(n_groups)])
+            [nn.Linear(64 + _h + _d + _j + 64 + _j, 1) for _ in range(n_groups)])
         self.entity_heads = nn.ModuleList(
-            [nn.Linear(64 + _h + 32 + _j + _j, 1) for _ in range(n_groups)])
+            [nn.Linear(64 + _h + _d + _j + _j, 1) for _ in range(n_groups)])
         # Named input-column index of the typed-matchup join in BOTH head kinds.
         # Surgery/probe scripts MUST use this instead of positional math like
         # ``ncol-1``: blocked_feat(+64) and the cimmun join(+1) were appended
@@ -380,7 +389,9 @@ class CombatPolicyNet(nn.Module):
         # (the v7 rsw surgery trained the cimmun column — feature ≡ 0 vs the
         # lab's status-immunity-less enemies — while the real typed join stayed
         # frozen; the pooled resist columns became the only carrier = shortcut).
-        self.tjoin_col = 64 + hidden + 32
+        # Accounts for BOTH knobs that shift the join's position: _h (h dropped
+        # under drop_noop_h) and _d (sk_ent_ctx widened under encode_entity_skills).
+        self.tjoin_col = 64 + _h + _d
         self.grid_query_projs = nn.ModuleList(
             [nn.Linear(64 + hidden, self._spatial_total_c) for _ in range(n_groups)])
         # Skill-combination identity codeword (Deep-Sets over the held skills).
@@ -1024,9 +1035,12 @@ class CombatPolicyNet(nn.Module):
         ent_emb  = self.entity_mlp(ent_in)
 
         # encode_entity_skills (obs v8): summarise EACH entity's static kit through
-        # the SAME skill encoder the self uses, and add it into that entity's
-        # embedding — so distinct kits with identical capability_descriptors stop
-        # reading identical. Zero-init entity_kit_proj ⇒ inert until trained.
+        # the SAME skill encoder the self uses, and CONCATENATE it onto that
+        # entity's embedding — so distinct kits with identical
+        # capability_descriptors stop reading identical. Concat (not add) keeps the
+        # base 32-d features and the 64-d kit summary in separate dims; ent_emb
+        # widens to self._ent_emb_dim (96), which every downstream consumer sizes
+        # off. Trained fresh, so the kit dims contribute from step 0.
         if self.encode_entity_skills:
             es  = obs["entity_skills"]          # [B, E, S, F]
             esm = obs["entity_skill_mask"]      # [B, E, S]
@@ -1041,12 +1055,12 @@ class CombatPolicyNet(nn.Module):
                 src_key_padding_mask=kpm & ~all_pad)            # [B*E, S, 64]
             w = esm.reshape(B_ * E_, S_, 1)
             kit = (enc * w).sum(1) / w.sum(1).clamp(min=1.0)    # [B*E, 64]; empty→0
-            ent_emb = ent_emb + self.entity_kit_proj(kit.reshape(B_, E_, 64))
+            ent_emb = torch.cat([ent_emb, kit.reshape(B_, E_, 64)], dim=-1)  # [B, E, 96]
 
         # Self-indexed read instead of mean: entities[:, 0] is the agent itself.
         # Averaging across 6 slots dilutes self's features to 1/6 strength;
         # taking slot 0 directly preserves them.
-        self_emb = ent_emb[:, 0]                          # [B, 32]
+        self_emb = ent_emb[:, 0]                          # [B, _ent_emb_dim]
 
         # spatial_feat = stack of pre-computed per-cell features. No CNN —
         # all "global structure" features (distances) are precomputed in
@@ -1152,8 +1166,9 @@ class CombatPolicyNet(nn.Module):
         # berserker's move/reckless_attack decision, diag_obsv3_shift.py).
         # Masking makes the policy invariant to padding-slot count. Slot 0
         # (self) is always present, so the row can never be fully masked.
-        sk_query    = self.skill_ent_attn_proj(sk_emb)                              # [B, S, 32]
-        attn_scores = torch.bmm(sk_query, ent_emb.transpose(1, 2)) * (32 ** -0.5)  # [B, S, E]
+        sk_query    = self.skill_ent_attn_proj(sk_emb)                  # [B, S, _ent_emb_dim]
+        attn_scores = (torch.bmm(sk_query, ent_emb.transpose(1, 2))
+                       * (self._ent_emb_dim ** -0.5))                   # [B, S, E]
         # ``legacy_unmasked_attn`` reproduces the pre-mask softmax (padding
         # rows included, whatever rows the obs carries) — diagnosis-only
         # escape hatch, see diag_obsv3_shift.py.
@@ -1175,7 +1190,7 @@ class CombatPolicyNet(nn.Module):
             # count. Slot 0 (self) is always present.
             ent_present = entities.abs().sum(dim=-1) > 1e-6                         # [B, E]
             attn_scores = attn_scores.masked_fill(~ent_present.unsqueeze(1), -1e9)
-        sk_ent_ctx  = torch.bmm(torch.softmax(attn_scores, dim=-1), ent_emb)        # [B, S, 32]
+        sk_ent_ctx  = torch.bmm(torch.softmax(attn_scores, dim=-1), ent_emb)  # [B, S, _ent_emb_dim]
 
         # Typed-matchup join (raw obs, no learned per-type weights): each
         # skill row's damage-type soft one-hot ⋅ each entity's typed-resist
@@ -1269,7 +1284,7 @@ class CombatPolicyNet(nn.Module):
         # AWAY from the resistant enemy and onto the vulnerable one.
         sk_for_ent  = sk_emb.unsqueeze(2).expand(-1, -1, N_ENTITY_SLOTS, -1)   # [B, S, E, 64]
         h_for_ent   = h.unsqueeze(1).unsqueeze(2).expand(-1, N_SKILL_SLOTS, N_ENTITY_SLOTS, -1)  # [B, S, E, h]
-        ent_for_ent = ent_emb.unsqueeze(1).expand(-1, N_SKILL_SLOTS, -1, -1)   # [B, S, E, 32]
+        ent_for_ent = ent_emb.unsqueeze(1).expand(-1, N_SKILL_SLOTS, -1, -1)  # [B, S, E, _ent_emb_dim]
         if dtype_v1:
             ent_in = torch.cat([sk_for_ent, h_for_ent, ent_for_ent], dim=-1)
         else:

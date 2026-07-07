@@ -2,16 +2,16 @@
 
 動機(數據):capability_descriptor 把 raging berserker 和 champion(L2 1.29,暴怒抗性隱形)、
 兩個 L6 法師(evocation vs divination,L2 **0.00**)糊成一團。obs v8 新增 per-entity 技能
-矩陣;encode_entity_skills 用**共享的** skill encoder 把它總結進 ent_emb。
+矩陣;encode_entity_skills 用**共享的** skill encoder 把它總結成 64-d,再**拼接**進 ent_emb
+(不是相加、不壓縮)——ent_emb 從 32 → 96 維,下游一律以 self._ent_emb_dim 取寬。
 
 驗收:
-  (1) zero-init entity_kit_proj ⇒ **惰性**:擾動 entity_skills 不改輸出(warm-start bit-exact)。
-  (2) 投影訓練後 ⇒ **真的讀** entity_skills(擾動→輸出變)。
+  (1) 拼接使 ent_emb 變寬(_ent_emb_dim==96)、沒有投影層(entity_kit_proj 已移除)。
+  (2) 從零初始就**真的讀** entity_skills(擾動→輸出變;無 warm-start/惰性設計)。
   (3) 全空實體列不 NaN(全 padding 序列的守門)。
-  (4) 預設網(flag off)忽略新 key(有無 entity_skills 輸出一致)。
+  (4) 預設網(flag off)ent_emb 維持 32、忽略新 key(有無 entity_skills 輸出一致)。
 """
 import torch
-import pytest
 
 import trpg.rl.obs as O
 from trpg.engine.skill import SKILL_FEATURE_DIM
@@ -49,34 +49,30 @@ def _net(**kw):
                            encode_entity_skills=True, **kw).eval()
 
 
-def test_zero_init_projection_is_inert():
+def test_concat_widens_entity_embedding():
+    """拼接(非相加):ent_emb 32→96,無 64→32 投影層。"""
     net = _net()
-    assert net.entity_kit_proj is not None
-    assert torch.all(net.entity_kit_proj.weight == 0) and torch.all(net.entity_kit_proj.bias == 0)
-    obs = _obs(seed=1)
-    obs2 = dict(obs); obs2["entity_skills"] = torch.rand_like(obs["entity_skills"])
-    with torch.no_grad():
-        a, b = net(obs), net(obs2)
-    for x, y in zip(a, b):
-        assert torch.equal(x, y), "zero-init ⇒ entity_skills 該惰性(warm-start bit-exact)"
+    assert net.encode_entity_skills is True
+    assert net._ent_emb_dim == 96                     # 32 base + 64 kit(不壓縮)
+    assert not hasattr(net, "entity_kit_proj") or net.entity_kit_proj is None
+    # 下游各層真的照 96 建:skill→entity 注意力的 query 投影對齊 ent_emb 寬度。
+    assert net.skill_ent_attn_proj.out_features == 96
 
 
-def test_trained_projection_reads_entity_skills():
+def test_reads_entity_skills_at_fresh_init():
+    """從零初始就讀 entity_skills(共享 encoder 非零)——沒有惰性/warm-start 設計。"""
     net = _net()
-    with torch.no_grad():                        # 「訓練」投影
-        net.entity_kit_proj.weight.normal_(0.0, 0.5)
-        net.entity_kit_proj.bias.normal_(0.0, 0.5)
     obs = _obs(seed=2)
     obs2 = dict(obs); obs2["entity_skills"] = torch.rand_like(obs["entity_skills"])
     with torch.no_grad():
         a, b = net(obs), net(obs2)
-    assert any(not torch.equal(x, y) for x, y in zip(a, b)), "訓練後該真的讀 entity_skills"
+    assert any(not torch.equal(x, y) for x, y in zip(a, b)), \
+        "拼接下 entity_skills 從第 0 步就進 ent_emb,擾動它該改變輸出"
 
 
 def test_all_empty_entities_no_nan():
+    """全實體全 padding(空 kit 序列)不該 NaN——all_pad 守門。"""
     net = _net()
-    with torch.no_grad():
-        net.entity_kit_proj.weight.normal_(0.0, 0.5)   # 非零,確保真的走了 encoder
     obs = _obs(seed=3)
     obs["entity_skill_mask"] = torch.zeros_like(obs["entity_skill_mask"])  # 全實體全空
     with torch.no_grad():
@@ -86,8 +82,9 @@ def test_all_empty_entities_no_nan():
 
 
 def test_default_net_ignores_entity_skills():
+    """flag off ⇒ ent_emb 維持 32、忽略新 key。"""
     net = CombatPolicyNet(n_head_groups=1, skill_combo_dim=8).eval()  # flag off
-    assert net.entity_kit_proj is None
+    assert net.encode_entity_skills is False and net._ent_emb_dim == 32
     obs_with = _obs(seed=4, with_es=True)
     obs_without = {k: v for k, v in obs_with.items() if not k.startswith("entity_skill")}
     with torch.no_grad():
