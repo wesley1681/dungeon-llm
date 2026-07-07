@@ -246,6 +246,18 @@ SPELLS: dict[str, Spell] = {
         description="戲法：36m 內單體 DEX 豁免，失敗 1d8 黯蝕（隨等級縮放；"
                     "巫妖 L21 ×4）。攻擊骰型戲法的豁免近似（神聖光輝同例）。",
     ),
+    "火焰箭": Spell(
+        name="火焰箭",
+        level=0,                     # 真戲法：傷害隨施法者等級縮放
+        range_m=36.0,
+        save_ability="DEX",
+        damage_dice="1d10",
+        damage_type="火",
+        save_for_no_damage=True,
+        description="戲法：36m 內單體 DEX 豁免，失敗 1d10 火焰（隨等級縮放，"
+                    "L5 ×2 / L11 ×3 / L17 ×4）。攻擊骰型戲法的豁免近似"
+                    "（神聖光輝、寒冰之觸同例）。",
+    ),
     "燃燒之手": Spell(
         name="燃燒之手",
         level=1,

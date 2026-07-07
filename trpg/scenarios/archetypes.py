@@ -400,6 +400,7 @@ _CLASS_DEF_LIST = [
         proficiencies=("INT", "WIS", "奧秘", "歷史"),
         spell_ability="INT", spell_slots_table=_WIZARD_SLOTS,
         skills=(
+            SkillGrant("firebolt"),        # at-will 攻擊戲法（不耗法術位）
             SkillGrant("magic_missile"),
             SkillGrant("shield_spell", reaction=True),
             SkillGrant("burning_hands_ev"),
@@ -421,6 +422,7 @@ _CLASS_DEF_LIST = [
         proficiencies=("INT", "WIS", "奧秘"),
         spell_ability="INT", spell_slots_table=_WIZARD_SLOTS,
         skills=(
+            SkillGrant("firebolt"),        # at-will 攻擊戲法（不耗法術位）
             SkillGrant("magic_missile"),
             SkillGrant("shield_spell", reaction=True),
             SkillGrant("burning_hands_div"),

@@ -1847,6 +1847,28 @@ _register(Ability(
 ))
 
 _register(Ability(
+    skill_id="firebolt",
+    display_name="火焰箭",
+    description="戲法：36m 內單體 DEX 豁免，失敗 1d10 火焰（隨等級縮放）。",
+    features=SkillFeatures(
+        expected_damage=5.5,         # 1d10；materialize 按施法者等級戲法縮放
+        save_dc=15.0,                # 模板值；materialize 依施法者實算
+        save_stat=SaveStat.DEX,
+        range_m=36.0,
+        cost_action=1.0,
+        target_type=TargetType.SINGLE_ENEMY,
+        damage_types=("火",),
+    ),
+    engine_ready=True,
+    min_level=1,
+    builder=lambda actor, target, coord, char=None: {
+        "type": "SPELL", "caster": actor, "spell_name": "火焰箭",
+        "target": target,
+        "consumes": ["action"],
+    },
+))
+
+_register(Ability(
     skill_id="disrupt_life",
     display_name="生命擾亂",
     description="傳奇行動（3 點）：以巫妖為中心 6m 內 CON 豁免，"
