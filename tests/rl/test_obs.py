@@ -33,22 +33,26 @@ def test_schema_constants():
     assert N_ENTITY_SLOTS == 1 + N_ALLY_SLOTS + N_ENEMY_SLOTS
     assert ENEMY_SLOT_START == 1 + N_ALLY_SLOTS
     from trpg.rl.obs import (N_RL_STATUS, N_V4_DESC, N_V5_TRAIT, N_V6_CIMMUN,
-                             ENT_V3_TAIL_START, ENT_DESC_START, ENT_TRAIT_START,
-                             ENT_CIMMUN_START)
+                             N_V7_ABILITY, ENT_V3_TAIL_START, ENT_DESC_START,
+                             ENT_TRAIT_START, ENT_CIMMUN_START, ENT_ABILITY_START)
     # 7 base + 12 archetype multi-hot + N_RL_STATUS status multi-hot
     # + 1 concentrating + v3 tail (level, max_hp, ac, dying, death saves)
     # + v4 capability descriptor + v5 passive-trait descriptor
-    # + v6 condition-immunity descriptor
+    # + v6 condition-immunity descriptor + v7 ability-modifier descriptor
     assert ENTITY_DIM == (7 + 12 + N_RL_STATUS + 1 + N_V3_EXTRA + N_V4_DESC
-                          + N_V5_TRAIT + N_V6_CIMMUN)
+                          + N_V5_TRAIT + N_V6_CIMMUN + N_V7_ABILITY)
+    assert N_V7_ABILITY == 6
     assert ENT_CIMMUN_START == ENT_TRAIT_START + N_V5_TRAIT
+    assert ENT_ABILITY_START == ENT_CIMMUN_START + N_V6_CIMMUN
     assert ENT_V3_TAIL_START == 7 + 12 + N_RL_STATUS + 1
     assert ENT_DESC_START == ENT_V3_TAIL_START + N_V3_EXTRA
     assert ENT_TRAIT_START == ENT_DESC_START + N_V4_DESC
     assert N_GRID == 30
     assert GRID_CELL_SIZE_M == 1.0
     assert BATTLEFIELD_SIZE_M == 30.0
-    assert set(OBS_KEYS) == {"skills", "skill_mask", "entities", "resources",
+    assert set(OBS_KEYS) == {"skills", "skill_mask",
+                             "entity_skills", "entity_skill_mask",  # obs v8
+                             "entities", "resources",
                              "terrain", "entity_grid", "distance_grid",
                              "los_grid", "reach_grid", "threat_grid",
                              "end_features", "decision_context"}

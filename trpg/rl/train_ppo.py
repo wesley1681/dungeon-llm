@@ -22,7 +22,8 @@ from .model import CombatPolicyNet, apply_resource_mask, apply_entity_mask
 
 def _sample_action(net: CombatPolicyNet, obs_t: dict,
                    resources: dict | None = None,
-                   ws=None, agent_id: str = ""
+                   ws=None, agent_id: str = "",
+                   mask_immune_null: bool = True
                    ) -> tuple[torch.Tensor, torch.Tensor, float,
                               "torch.Tensor", "torch.Tensor"]:
     """Sample action with the same factored policy that pick_action uses.
@@ -46,8 +47,10 @@ def _sample_action(net: CombatPolicyNet, obs_t: dict,
     end_l, skill_l, entity_l, grid_l = net(obs_t)
     # entity_l: [B, N_SKILL, N_ENTITY]; grid_l: [B, N_SKILL, N_GRID*N_GRID]
     if resources is not None:
-        skill_l = apply_resource_mask(skill_l, resources, ws, agent_id)
-    entity_l = apply_entity_mask(entity_l, obs_t, ws, agent_id)
+        skill_l = apply_resource_mask(skill_l, resources, ws, agent_id,
+                                      mask_immune_null=mask_immune_null)
+    entity_l = apply_entity_mask(entity_l, obs_t, ws, agent_id,
+                                 mask_immune_null=mask_immune_null)
     val = net.value(obs_t).item()
 
     skill_mask_bool = (skill_l[0] <= -1e8)            # [N_SKILL]

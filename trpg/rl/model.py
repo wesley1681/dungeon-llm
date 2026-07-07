@@ -35,7 +35,7 @@ from .obs import (
     N_ENTITY_GRID_CHANNELS, N_DISTANCE_GRID_CHANNELS, N_LOS_GRID_CHANNELS,
     N_REACH_GRID_CHANNELS, N_THREAT_GRID_CHANNELS,
     END_FEATURES_DIM,
-    N_ARCHETYPES, N_V3_EXTRA, N_V4_DESC, N_V5_TRAIT, N_V6_CIMMUN,
+    N_ARCHETYPES, N_V3_EXTRA, N_V4_DESC, N_V5_TRAIT, N_V6_CIMMUN, N_V7_ABILITY,
     ENEMY_SLOT_START,
     I_ENT_LEVEL, I_ENT_MAXHP, I_DESC_RESIST, I_DESC_CIMMUN, I_ENT_ENEMY,
     LEVEL_NORM, MAXHP_NORM, V3_LEVEL_NORM, V3_MAXHP_NORM,
@@ -55,7 +55,8 @@ _ARCH_OH_END   = 7 + N_ARCHETYPES
 # these describe dead file formats and must never track future obs growth.
 # Each is derived by peeling the LAST-appended tail off the live width, so they
 # stay correct as new tails are added (peel v5 trait → v4, then v4 desc → v3…).
-_ENTITY_DIM_V5 = ENTITY_DIM - N_V6_CIMMUN     # pre-v6: v5 trait tail, no cimmun
+_ENTITY_DIM_V6 = ENTITY_DIM - N_V7_ABILITY    # pre-v7: v6 cimmun tail, no ability
+_ENTITY_DIM_V5 = _ENTITY_DIM_V6 - N_V6_CIMMUN  # pre-v6: v5 trait tail, no cimmun
 _ENTITY_DIM_V4 = _ENTITY_DIM_V5 - N_V5_TRAIT  # pre-v5: v4 descriptor, no trait tail
 _ENTITY_DIM_V3 = _ENTITY_DIM_V4 - N_V4_DESC  # v3: base + one-hots + v3 tail
 _ENTITY_DIM_V2 = _ENTITY_DIM_V3 - N_V3_EXTRA  # pre-v3: no tail
@@ -133,7 +134,10 @@ class _CriticNet(nn.Module):
 
 
 class CombatPolicyNet(nn.Module):
-    def __init__(self, hidden: int = 128, n_head_groups: int | None = None):
+    def __init__(self, hidden: int = 128, n_head_groups: int | None = None,
+                 skill_combo_dim: int = 0, ablate_immunity_joins: bool = False,
+                 drop_noop_h: bool = False, ablate_archetype: bool = False,
+                 encode_entity_skills: bool = False):
         """``n_head_groups``: how many sibling copies of the skill/entity/grid
         heads to build. Default N_ARCHETYPES = the per-archetype-head design
         (identity-routed). 1 = a single shared head group — used by the
@@ -142,6 +146,57 @@ class CombatPolicyNet(nn.Module):
         exist. Checkpoints are only shape-compatible with the same group
         count they were saved with."""
         super().__init__()
+        # EXPERIMENT-ONLY structural ablation. Default False ⇒ production /
+        # uni_v10 nets are BIT-EXACT and load unchanged (the historical
+        # architecture is preserved). When True, the two hand-wired immunity
+        # joins (typed-resist + condition-immunity) are STRUCTURALLY ABSENT:
+        # the skill/entity heads are built narrower and the joins are never
+        # concatenated in forward(), so immunity can reach the policy ONLY via
+        # the learned sk_ent_ctx attention. Set on fresh experiment nets only;
+        # a net built with this flag is NOT checkpoint-compatible with a net
+        # built without it (different head input width — by design).
+        self.ablate_immunity_joins = ablate_immunity_joins
+        # EXPERIMENT-ONLY. When True, the trunk vector h is NOT fed to skill_head
+        # or entity_head. Rationale: h is broadcast identically to every skill
+        # slot (and every entity slot per skill), so W_h·h is a per-softmax
+        # CONSTANT that cancels in the skill / entity choice — dead weights that
+        # also receive ~zero gradient (softmax is shift-invariant). Verified:
+        # zeroing h's head columns moves the skill/entity softmax by <1e-7.
+        # grid_head KEEPS h (its query is dotted with per-cell features, so h's
+        # contribution varies per cell — not a constant). Default False ⇒ v10 /
+        # production keep h in all heads and load bit-exact.
+        self.drop_noop_h = drop_noop_h
+        # EXPERIMENT-ONLY structural removal of the ARCHETYPE (class) identity.
+        # NOT masking (NoArch zeroes the arch one-hot but keeps the weights that
+        # consume it) — here the arch pathway does not EXIST: the arch columns are
+        # sliced out of every entity row before entity_mlp (narrower first layer),
+        # FiLM (film_gamma/beta, the class-conditioner on h) is never built nor
+        # applied, end_head drops the end_features arch tail, and per-arch routing
+        # is fixed to head 0. So the net can infer identity ONLY from the skill
+        # pool (codeword) / non-class features. A net built with this flag has
+        # different entity_mlp/end_head widths and NO film params ⇒ NOT checkpoint-
+        # compatible with a normal net (by design). Default False ⇒ uni_v10 bit-exact.
+        self.ablate_archetype = ablate_archetype
+        # EXPERIMENT (obs v8): read every entity's STATIC kit (obs "entity_skills")
+        # through the SAME skill encoder the self uses, summarising each creature's
+        # skill set into a vector added to its entity embedding. Closes the gap
+        # where distinct kits with an identical capability_descriptor (raging
+        # berserker vs champion; two different L6 wizards) read identical. The
+        # add is via a ZERO-INIT projection ⇒ a net warm-started from a pre-v8
+        # checkpoint is bit-exact until entity_kit_proj trains. Default False ⇒
+        # the "entity_skills" obs key is simply ignored (older archs bit-exact).
+        self.encode_entity_skills = encode_entity_skills
+        # Source-of-truth record of the exact constructor args that define THIS
+        # architecture. A checkpoint's .pt stores only weights (no arch); pairing
+        # it with these kwargs is what lets a loader rebuild the right net instead
+        # of guessing the default and silently dropping mismatched weights. See
+        # trpg/rl/arch.py (ARCH_PRESETS / save_net / load_net).
+        self.arch_kwargs = dict(
+            hidden=hidden, n_head_groups=n_head_groups,
+            skill_combo_dim=skill_combo_dim,
+            ablate_immunity_joins=ablate_immunity_joins,
+            drop_noop_h=drop_noop_h, ablate_archetype=ablate_archetype,
+            encode_entity_skills=encode_entity_skills)
         # Skills: TransformerEncoder over the 20 slots
         self.skill_proj = nn.Linear(SKILL_FEATURE_DIM, 64)
         enc_layer = nn.TransformerEncoderLayer(
@@ -153,9 +208,22 @@ class CombatPolicyNet(nn.Module):
         # so the per-entity status multi-hot (sparse, ~27 bits) isn't crushed
         # against the small projection. Output stays at 32 — downstream sizing
         # unchanged.
+        # ablate_archetype: the arch one-hot columns are sliced out of every
+        # entity row before this MLP, so its first layer is that much narrower —
+        # the weights that would read the class simply do not exist.
+        _ent_in = ENTITY_DIM - (N_ARCHETYPES if ablate_archetype else 0)
         self.entity_mlp = nn.Sequential(
-            nn.Linear(ENTITY_DIM, 64), nn.ReLU(), nn.Linear(64, 32),
+            nn.Linear(_ent_in, 64), nn.ReLU(), nn.Linear(64, 32),
         )
+        # encode_entity_skills: projects each entity's kit summary (64-d, from the
+        # SHARED skill encoder) into entity-embedding space (32-d) and ADDS it to
+        # ent_emb. Zero-init ⇒ inert at start (bit-exact warm-start from pre-v8).
+        if encode_entity_skills:
+            self.entity_kit_proj = nn.Linear(64, 32)
+            nn.init.zeros_(self.entity_kit_proj.weight)
+            nn.init.zeros_(self.entity_kit_proj.bias)
+        else:
+            self.entity_kit_proj = None
 
         # No CNN. spatial_feat is the raw stack of pre-computed per-cell
         # channels (terrain + entity overlay + distance grids). Local pattern
@@ -197,12 +265,19 @@ class CombatPolicyNet(nn.Module):
         # can't sideswipe the others. Initialised so gamma=1, beta=0 — the
         # module is identity at start, so a BC checkpoint loaded with
         # strict=False is unchanged until FiLM weights actually train.
-        self.film_gamma = nn.Linear(N_ARCHETYPES, hidden)
-        self.film_beta  = nn.Linear(N_ARCHETYPES, hidden)
-        nn.init.zeros_(self.film_gamma.weight)
-        nn.init.ones_(self.film_gamma.bias)
-        nn.init.zeros_(self.film_beta.weight)
-        nn.init.zeros_(self.film_beta.bias)
+        # ablate_archetype: FiLM is the sole class-conditioning module (its input
+        # IS the arch one-hot). Structurally absent in ablate mode — not built,
+        # not applied. None so attribute access stays valid.
+        if ablate_archetype:
+            self.film_gamma = None
+            self.film_beta = None
+        else:
+            self.film_gamma = nn.Linear(N_ARCHETYPES, hidden)
+            self.film_beta  = nn.Linear(N_ARCHETYPES, hidden)
+            nn.init.zeros_(self.film_gamma.weight)
+            nn.init.ones_(self.film_gamma.bias)
+            nn.init.zeros_(self.film_beta.weight)
+            nn.init.zeros_(self.film_beta.bias)
 
         # Heads — policy
         # end_head: scalar binary "end vs act". DECOUPLED from the shared
@@ -229,8 +304,12 @@ class CombatPolicyNet(nn.Module):
         #     turn and KEEP the once-per-rest heal, instead of burning it).
         # These are the only threat/reach pathways into end_head (the spatial
         # grid otherwise feeds the move/skill heads, not end_head).
+        # ablate_archetype: end_features carries the agent's arch one-hot as its
+        # trailing N_ARCHETYPES block — sliced off before end_head, so its input
+        # is that much narrower (no weights consume the class).
+        _end_feat = END_FEATURES_DIM - (N_ARCHETYPES if ablate_archetype else 0)
         self.end_head = nn.Sequential(
-            nn.Linear(END_FEATURES_DIM + N_THREAT_GRID_CHANNELS
+            nn.Linear(_end_feat + N_THREAT_GRID_CHANNELS
                       + N_REACH_GRID_CHANNELS, 32), nn.ReLU(),
             nn.Linear(32, 1),
         )
@@ -282,10 +361,18 @@ class CombatPolicyNet(nn.Module):
         # LAST column of each (appended after blocked_feat / after the typed
         # join) so its checkpoint migration is a single trailing zero-pad — see
         # adapt_state_dict_for_cimmun_heads.
+        # _j = per-head immunity-join column count: 0 when ablated (structurally
+        # absent), else 1 typed + 1 cimmun. Default preserves production width
+        # (skill 290 / entity 226) ⇒ uni_v10 bit-exact; ablated = skill 288 /
+        # entity 224 (no immunity wiring at all).
+        _j = 0 if self.ablate_immunity_joins else 1
+        # _h = hidden unless drop_noop_h drops the constant-across-slots h from
+        # skill_head / entity_head (grid_head always keeps h — see grid section).
+        _h = 0 if self.drop_noop_h else hidden
         self.skill_heads = nn.ModuleList(
-            [nn.Linear(64 + hidden + 32 + 1 + 64 + 1, 1) for _ in range(n_groups)])
+            [nn.Linear(64 + _h + 32 + _j + 64 + _j, 1) for _ in range(n_groups)])
         self.entity_heads = nn.ModuleList(
-            [nn.Linear(64 + hidden + 32 + 1 + 1, 1) for _ in range(n_groups)])
+            [nn.Linear(64 + _h + 32 + _j + _j, 1) for _ in range(n_groups)])
         # Named input-column index of the typed-matchup join in BOTH head kinds.
         # Surgery/probe scripts MUST use this instead of positional math like
         # ``ncol-1``: blocked_feat(+64) and the cimmun join(+1) were appended
@@ -296,6 +383,23 @@ class CombatPolicyNet(nn.Module):
         self.tjoin_col = 64 + hidden + 32
         self.grid_query_projs = nn.ModuleList(
             [nn.Linear(64 + hidden, self._spatial_total_c) for _ in range(n_groups)])
+        # Skill-combination identity codeword (Deep-Sets over the held skills).
+        # A per-skill projection is masked-MEAN-pooled into a k-d codeword that
+        # summarises WHICH skills the actor holds — order-invariant (mean is
+        # symmetric) and fixed-length (pool collapses the variable-size set).
+        # The codeword → a 64-d preference direction, dotted with EACH skill's
+        # embedding: a BILINEAR term that varies per skill. (Contrast the h
+        # branch, which is broadcast identically to every slot = a per-state
+        # constant that cancels in the skill softmax/argmax and cannot move the
+        # choice — measured: masking it flips 0/183 argmaxes.) This lets an
+        # archetype-blind net infer identity from its kit and let that identity
+        # shift skill selection. 0 = disabled: no modules built, forward path
+        # skipped ⇒ bit-exact with the base net (old checkpoints load clean).
+        self.skill_combo_dim = skill_combo_dim
+        if skill_combo_dim > 0:
+            self.skill_combo_proj = nn.Sequential(
+                nn.Linear(64, 64), nn.ReLU(), nn.Linear(64, skill_combo_dim))
+            self.skill_combo_pref = nn.Linear(skill_combo_dim, 64)
         # Pre-v3 compatibility flag, carried INSIDE the checkpoint. 0 = native
         # v3 net (presence-masked attention). 1 = migrated pre-v3 checkpoint:
         # restrict the skill→entity attention softmax to the LEGACY slot rows,
@@ -513,7 +617,8 @@ class CombatPolicyNet(nn.Module):
         of every entity row (after the v5 trait tail). Touches entity_mlp.0.weight
         (zero-pad the trailing cols → the immunity descriptor is ignored until
         trained ⇒ bit-exact) and critic.net.0.weight (per-slot entity blocks widen
-        _ENTITY_DIM_V5 → live ENTITY_DIM, new cols zero). The head-side cimmun join
+        _ENTITY_DIM_V5 → _ENTITY_DIM_V6, the frozen pre-v7 stride; the ability step
+        finishes to live ENTITY_DIM, new cols zero). The head-side cimmun join
         column is added separately by adapt_state_dict_for_cimmun_heads (which must
         run after blocked_skill). Runs RIGHT AFTER obs_v5 and BEFORE decision_ctx,
         so a pre-dctx checkpoint's critic is already at the live entity stride when
@@ -526,23 +631,63 @@ class CombatPolicyNet(nn.Module):
         pad = torch.zeros(w.shape[0], N_V6_CIMMUN, dtype=w.dtype)
         new_sd["entity_mlp.0.weight"] = torch.cat([w.clone(), pad], dim=1)
 
-        # critic: per-slot entity blocks widen _ENTITY_DIM_V5 → ENTITY_DIM. The
-        # trailing tail (resources+end+skill-pool, optionally +dctx depending on
-        # era) is preserved verbatim — try both tail widths so pre- and post-dctx
-        # checkpoints both re-block cleanly.
+        # critic: per-slot entity blocks widen _ENTITY_DIM_V5 → _ENTITY_DIM_V6
+        # (the FROZEN v6 stride, NOT live ENTITY_DIM — since obs v7 the ability
+        # step, adapt_state_dict_for_ability_entity, widens it the rest of the way
+        # to live). The trailing tail (resources+end+skill-pool, optionally +dctx
+        # depending on era) is preserved verbatim — try both tail widths so pre-
+        # and post-dctx checkpoints both re-block cleanly.
         cw = new_sd.get("critic.net.0.weight")
         if cw is not None:
             base_tail = 4 + END_FEATURES_DIM + SKILL_FEATURE_DIM
             for tail in (base_tail, base_tail + N_DECISION_CTX):
                 if cw.shape[1] == N_ENTITY_SLOTS * _ENTITY_DIM_V5 + tail:
                     new_cw = torch.zeros(cw.shape[0],
-                                         N_ENTITY_SLOTS * ENTITY_DIM + tail,
+                                         N_ENTITY_SLOTS * _ENTITY_DIM_V6 + tail,
                                          dtype=cw.dtype)
                     for s in range(N_ENTITY_SLOTS):
                         blk = cw[:, s * _ENTITY_DIM_V5 : (s + 1) * _ENTITY_DIM_V5]
-                        new_cw[:, s * ENTITY_DIM : s * ENTITY_DIM + _ENTITY_DIM_V5] = blk
-                    new_cw[:, N_ENTITY_SLOTS * ENTITY_DIM:] = \
+                        new_cw[:, s * _ENTITY_DIM_V6 : s * _ENTITY_DIM_V6 + _ENTITY_DIM_V5] = blk
+                    new_cw[:, N_ENTITY_SLOTS * _ENTITY_DIM_V6:] = \
                         cw[:, N_ENTITY_SLOTS * _ENTITY_DIM_V5:]
+                    new_sd["critic.net.0.weight"] = new_cw
+                    break
+        return new_sd
+
+    @staticmethod
+    def adapt_state_dict_for_ability_entity(state_dict: dict) -> dict:
+        """Widen a pre-v7 checkpoint's ENTITY-side weights for the six ability-
+        modifier columns (obs v7, 2026-07-06): N_V7_ABILITY columns appended at the
+        END of every entity row (after the v6 cimmun tail). Touches
+        entity_mlp.0.weight (zero-pad the trailing cols → the ability descriptor is
+        ignored until trained ⇒ bit-exact) and critic.net.0.weight (per-slot entity
+        blocks widen the FROZEN _ENTITY_DIM_V6 → live ENTITY_DIM, new cols zero).
+        There is NO head-side join for this tail (unlike cimmun) — the ability mods
+        reach the policy through the entity embedding only. Runs RIGHT AFTER
+        cimmun_entity and BEFORE decision_ctx so the critic is already at the live
+        entity stride when decision_ctx (which keys on N_ENTITY_SLOTS*ENTITY_DIM)
+        runs. Already-v7 / unrecognised checkpoints pass through (entity_mlp width
+        detection)."""
+        new_sd = dict(state_dict)
+        w = new_sd.get("entity_mlp.0.weight")
+        if w is None or w.shape[1] != _ENTITY_DIM_V6:
+            return new_sd   # already v7 / unrecognised era
+        pad = torch.zeros(w.shape[0], N_V7_ABILITY, dtype=w.dtype)
+        new_sd["entity_mlp.0.weight"] = torch.cat([w.clone(), pad], dim=1)
+
+        cw = new_sd.get("critic.net.0.weight")
+        if cw is not None:
+            base_tail = 4 + END_FEATURES_DIM + SKILL_FEATURE_DIM
+            for tail in (base_tail, base_tail + N_DECISION_CTX):
+                if cw.shape[1] == N_ENTITY_SLOTS * _ENTITY_DIM_V6 + tail:
+                    new_cw = torch.zeros(cw.shape[0],
+                                         N_ENTITY_SLOTS * ENTITY_DIM + tail,
+                                         dtype=cw.dtype)
+                    for s in range(N_ENTITY_SLOTS):
+                        blk = cw[:, s * _ENTITY_DIM_V6 : (s + 1) * _ENTITY_DIM_V6]
+                        new_cw[:, s * ENTITY_DIM : s * ENTITY_DIM + _ENTITY_DIM_V6] = blk
+                    new_cw[:, N_ENTITY_SLOTS * ENTITY_DIM:] = \
+                        cw[:, N_ENTITY_SLOTS * _ENTITY_DIM_V6:]
                     new_sd["critic.net.0.weight"] = new_cw
                     break
         return new_sd
@@ -810,12 +955,13 @@ class CombatPolicyNet(nn.Module):
              CombatPolicyNet.adapt_state_dict_for_reach_grid(
               CombatPolicyNet.adapt_state_dict_for_los_grid(
                 CombatPolicyNet.adapt_state_dict_for_decision_ctx(
+                 CombatPolicyNet.adapt_state_dict_for_ability_entity(
                   CombatPolicyNet.adapt_state_dict_for_cimmun_entity(
                     CombatPolicyNet.adapt_state_dict_for_obs_v5(
                         CombatPolicyNet.adapt_state_dict_for_skill_dtype(
                             CombatPolicyNet.adapt_state_dict_for_obs_v4(
                                 CombatPolicyNet.adapt_state_dict_for_obs_v3(
-                                    state_dict))))))))))))
+                                    state_dict)))))))))))))
 
     @staticmethod
     def adapt_state_dict_for_perarch(state_dict: dict) -> dict:
@@ -867,7 +1013,36 @@ class CombatPolicyNet(nn.Module):
         sk_emb      = self.skill_encoder(sk_proj, src_key_padding_mask=key_padding)
         sk_mean     = (sk_emb * skill_mask.unsqueeze(-1)).sum(1) / skill_mask.sum(1, keepdim=True).clamp(min=1.0)
 
-        ent_emb  = self.entity_mlp(entities)
+        # ablate_archetype: drop the arch one-hot columns [_ARCH_OH_START:_END]
+        # from EVERY entity row before the MLP — the class never reaches a weight.
+        # (entities is kept intact for the position reads / joins / presence below.)
+        if self.ablate_archetype:
+            ent_in = torch.cat([entities[..., :_ARCH_OH_START],
+                                entities[..., _ARCH_OH_END:]], dim=-1)
+        else:
+            ent_in = entities
+        ent_emb  = self.entity_mlp(ent_in)
+
+        # encode_entity_skills (obs v8): summarise EACH entity's static kit through
+        # the SAME skill encoder the self uses, and add it into that entity's
+        # embedding — so distinct kits with identical capability_descriptors stop
+        # reading identical. Zero-init entity_kit_proj ⇒ inert until trained.
+        if self.encode_entity_skills:
+            es  = obs["entity_skills"]          # [B, E, S, F]
+            esm = obs["entity_skill_mask"]      # [B, E, S]
+            B_, E_, S_, F_ = es.shape
+            kpm = esm.reshape(B_ * E_, S_) < 0.5                 # True = padding slot
+            # A fully-empty entity row (every slot padded) would make the encoder
+            # softmax over an all-masked sequence → NaN; un-mask those rows for the
+            # forward, then the masked mean below zeros them out anyway.
+            all_pad = kpm.all(dim=1, keepdim=True)
+            enc = self.skill_encoder(
+                self.skill_proj(es.reshape(B_ * E_, S_, F_)),
+                src_key_padding_mask=kpm & ~all_pad)            # [B*E, S, 64]
+            w = esm.reshape(B_ * E_, S_, 1)
+            kit = (enc * w).sum(1) / w.sum(1).clamp(min=1.0)    # [B*E, 64]; empty→0
+            ent_emb = ent_emb + self.entity_kit_proj(kit.reshape(B_, E_, 64))
+
         # Self-indexed read instead of mean: entities[:, 0] is the agent itself.
         # Averaging across 6 slots dilutes self's features to 1/6 strength;
         # taking slot 0 directly preserves them.
@@ -915,10 +1090,12 @@ class CombatPolicyNet(nn.Module):
 
         # FiLM: per-archetype gain & bias on h. arch_oh is taken from the
         # self entity row (slot 0) — see _ARCH_OH_* and obs._entity_row.
-        arch_oh = entities[:, 0, _ARCH_OH_START:_ARCH_OH_END]  # [B, N_ARCHETYPES]
-        gamma   = self.film_gamma(arch_oh)                    # [B, hidden]
-        beta    = self.film_beta(arch_oh)                     # [B, hidden]
-        h = gamma * h + beta
+        # ablate_archetype: the class-conditioner is absent entirely.
+        if not self.ablate_archetype:
+            arch_oh = entities[:, 0, _ARCH_OH_START:_ARCH_OH_END]  # [B, N_ARCHETYPES]
+            gamma   = self.film_gamma(arch_oh)                    # [B, hidden]
+            beta    = self.film_beta(arch_oh)                     # [B, hidden]
+            h = gamma * h + beta
 
         return sk_emb, ent_emb, h, key_padding, spatial_feat, self_cell_feat
 
@@ -939,8 +1116,13 @@ class CombatPolicyNet(nn.Module):
         # chimeras) — to its one shared head. On 12-group nets the clamp is
         # a no-op (argmax of 12 bits is already < 12).
         entities = obs["entities"]
-        arch_ids = entities[:, 0, _ARCH_OH_START:_ARCH_OH_END].argmax(dim=1)  # [B]
-        arch_ids = arch_ids.clamp(max=len(self.skill_heads) - 1)
+        # ablate_archetype: don't read the arch columns at all — every sample
+        # routes to the single shared head (this flag implies n_head_groups=1).
+        if self.ablate_archetype:
+            arch_ids = torch.zeros(B, dtype=torch.long, device=h.device)
+        else:
+            arch_ids = entities[:, 0, _ARCH_OH_START:_ARCH_OH_END].argmax(dim=1)  # [B]
+            arch_ids = arch_ids.clamp(max=len(self.skill_heads) - 1)
 
         # end_head reads from end_features (NOT from the shared trunk h) — see
         # __init__ docstring. The self-cell THREAT and REACH flags are appended
@@ -954,7 +1136,11 @@ class CombatPolicyNet(nn.Module):
         _thr0 = _SPATIAL_C - N_THREAT_GRID_CHANNELS
         self_threat = self_cell_feat[:, _thr0:_SPATIAL_C]
         self_reach  = self_cell_feat[:, _thr0 - N_REACH_GRID_CHANNELS:_thr0]
-        end_in = torch.cat([obs["end_features"], self_threat, self_reach], dim=-1)
+        # ablate_archetype: drop end_features' trailing arch one-hot block.
+        ef = obs["end_features"]
+        if self.ablate_archetype:
+            ef = ef[..., :END_FEATURES_DIM - N_ARCHETYPES]
+        end_in = torch.cat([ef, self_threat, self_reach], dim=-1)
         end_logit = self.end_head(end_in).squeeze(-1)
 
         # Skill-to-entity attention: each skill queries entity embeddings so
@@ -1051,14 +1237,31 @@ class CombatPolicyNet(nn.Module):
         if dtype_v1:   # pre-dtype heads have no join column
             skill_in = torch.cat([sk_emb, h_skill, sk_ent_ctx], dim=-1)
         else:
-            skill_in = torch.cat([sk_emb, h_skill, sk_ent_ctx,
-                                  join_skill.unsqueeze(-1), blocked_feat,
-                                  cimmun_skill.unsqueeze(-1)],
-                                 dim=-1)                     # [B, S, 64+h+32+1+64+1]
+            # order must match the skill_head input width built in __init__:
+            # sk_emb | (h) | sk_ent_ctx | (typed-join) | blocked | (cimmun-join).
+            # h dropped when drop_noop_h (constant across slots ⇒ cancels);
+            # joins dropped when ablate_immunity_joins.
+            parts = [sk_emb]
+            if not self.drop_noop_h:
+                parts.append(h_skill)
+            parts.append(sk_ent_ctx)
+            if not self.ablate_immunity_joins:
+                parts.append(join_skill.unsqueeze(-1))
+            parts.append(blocked_feat)
+            if not self.ablate_immunity_joins:
+                parts.append(cimmun_skill.unsqueeze(-1))
+            skill_in = torch.cat(parts, dim=-1)
         skill_all    = torch.stack(
             [hd(skill_in).squeeze(-1) for hd in self.skill_heads], dim=1)     # [B, N_ARCH, S]
         sk_gather_idx = arch_ids.view(B, 1, 1).expand(-1, 1, N_SKILL_SLOTS)
         skill_logits = skill_all.gather(1, sk_gather_idx).squeeze(1)          # [B, S]
+        if self.skill_combo_dim > 0:
+            # Skill-combination identity → per-skill preference (bilinear term).
+            proj = self.skill_combo_proj(sk_emb)                     # [B, S, k]
+            m    = (~key_padding).to(proj.dtype).unsqueeze(-1)       # [B, S, 1] held skills
+            c    = (proj * m).sum(1) / m.sum(1).clamp(min=1.0)       # [B, k] order-invariant
+            pref = self.skill_combo_pref(c)                          # [B, 64]
+            skill_logits = skill_logits + torch.einsum("bsd,bd->bs", sk_emb, pref)
         skill_logits = skill_logits.masked_fill(key_padding, -1e9)
 
         # entity_head per (skill, entity) — same per-arch gather pattern.
@@ -1070,9 +1273,17 @@ class CombatPolicyNet(nn.Module):
         if dtype_v1:
             ent_in = torch.cat([sk_for_ent, h_for_ent, ent_for_ent], dim=-1)
         else:
-            ent_in = torch.cat([sk_for_ent, h_for_ent, ent_for_ent,
-                                join_se.unsqueeze(-1),
-                                cimmun_se.unsqueeze(-1)], dim=-1)  # [B,S,E,64+h+32+1+1]
+            # order matches entity_head width: sk_emb | (h) | ent_emb | (joins).
+            # h dropped when drop_noop_h (constant across the per-skill entity
+            # softmax ⇒ cancels); joins dropped when ablate_immunity_joins.
+            parts = [sk_for_ent]
+            if not self.drop_noop_h:
+                parts.append(h_for_ent)
+            parts.append(ent_for_ent)
+            if not self.ablate_immunity_joins:
+                parts.append(join_se.unsqueeze(-1))
+                parts.append(cimmun_se.unsqueeze(-1))
+            ent_in = torch.cat(parts, dim=-1)
         ent_all     = torch.stack(
             [hd(ent_in).squeeze(-1) for hd in self.entity_heads], dim=1)      # [B, N_ARCH, S, E]
         ent_gather_idx = arch_ids.view(B, 1, 1, 1).expand(-1, 1, N_SKILL_SLOTS, N_ENTITY_SLOTS)
@@ -1261,8 +1472,14 @@ def pick_action(end_logit: "torch.Tensor",
 
 
 def apply_entity_mask(entity_logits: "torch.Tensor", obs: dict,
-                      ws=None, agent_id: str = "") -> "torch.Tensor":
+                      ws=None, agent_id: str = "",
+                      mask_immune_null: bool = True) -> "torch.Tensor":
     """Mask empty (padding) entity slots and self.
+
+    ``mask_immune_null`` (default True) governs ONLY the entity-layer immune
+    whiff gate (masking an immune target for a pure-damage skill). Set False
+    for the 2026-07-06 sk_ent_ctx ablation. All production callers keep the
+    default ⇒ bit-exact.
 
     Handles both shapes:
       [B, N_ENTITY]              — legacy shared head
@@ -1364,7 +1581,7 @@ def apply_entity_mask(entity_logits: "torch.Tensor", obs: dict,
                     # 對佔比加權倍率≈0 的目標＝引擎可證 null——遮掉該目標。
                     # 「全遮則還原」後盾（下方既有）保證單免疫敵時不剝奪揮擊。
                     f_ = sk.features
-                    if (ok and f_.expected_damage > 0
+                    if (ok and mask_immune_null and f_.expected_damage > 0
                             and not any(f_.applies_status)
                             and f_.expected_healing <= 0):
                         pairs_ = list(f_.iter_damage_types())
@@ -1424,8 +1641,17 @@ def _enemy_target_legal(agent, agent_id, sk, cid, ws, bf):
 
 def apply_resource_mask(skill_logits: "torch.Tensor",
                         resources: dict,
-                        ws=None, agent_id: str = "") -> "torch.Tensor":
+                        ws=None, agent_id: str = "",
+                        mask_immune_null: bool = True) -> "torch.Tensor":
     """Mask skill slots that the engine would reject.
+
+    ``mask_immune_null`` (default True) governs ONLY the immune-null attack
+    pre-pass (masking a pure-damage skill whose type every enemy resists to 0).
+    Set False to let the policy freely pick an immune attack — used by the
+    2026-07-06 sk_ent_ctx ablation experiment, where this engine-truth gate
+    would otherwise solve immunity for free (a fresh net already scores 100%).
+    Every other legality gate (resource cost, range, LoS, heal-at-full, …) is
+    unaffected. All production callers keep the default ⇒ bit-exact.
 
     Iterates the current `available_skills()` list and masks any skill that:
       - is MOVE while the agent has no remaining movement budget
@@ -1488,7 +1714,7 @@ def apply_resource_mask(skill_logits: "torch.Tensor",
     live_pairs = [(e, ws.characters[e]) for e in enemies
                   if ws.characters[e].is_alive()]
     live_enemies = [oc for _, oc in live_pairs]
-    if live_enemies:
+    if live_enemies and mask_immune_null:
         _mults = {}
         _mults_now = {}
         for i, sk in enumerate(skills):
@@ -1692,3 +1918,67 @@ def apply_resource_mask(skill_logits: "torch.Tensor",
             skill_logits[..., i] = -1e9
 
     return skill_logits
+
+
+class CombatPolicyNetNoArch(CombatPolicyNet):
+    """CombatPolicyNet with the archetype (class) encoding fully removed.
+
+    Structurally the SAME network as the parent (skill transformer, entity MLP,
+    spatial grid, resource MLP, trunk, four hierarchical heads, standalone
+    critic — plus every zero-weight carrier: typed-join, cimmun-join,
+    blocked_feat, threat/reach/los channels). The only difference is that the
+    net is given NO class label anywhere and so must infer class-appropriate
+    behaviour from the skill pool, HP / AC / level, resources and positions:
+
+      1. the per-entity archetype one-hot (self, allies AND enemies) is zeroed
+         before it reaches the entity MLP / end_head / critic;
+      2. the self archetype one-hot in end_features is zeroed;
+      3. FiLM — the per-archetype gain/bias on the trunk — is pinned to identity
+         (gamma=1, beta=0) and frozen, so there is no per-class OR global affine.
+
+    Single shared head group (n_head_groups=1): the per-arch head machinery is
+    inert because an all-zero one-hot argmaxes to head 0 and is clamped there.
+    Fresh-init only (an experiment net); no checkpoint migration is involved.
+    """
+
+    def __init__(self, hidden: int = 128, skill_combo_dim: int = 0,
+                 ablate_immunity_joins: bool = False, drop_noop_h: bool = False):
+        # ablate_immunity_joins / drop_noop_h are handled structurally by the
+        # base __init__ (narrower heads + omitted inputs in forward). Passed
+        # through here.
+        super().__init__(hidden=hidden, n_head_groups=1,
+                         skill_combo_dim=skill_combo_dim,
+                         ablate_immunity_joins=ablate_immunity_joins,
+                         drop_noop_h=drop_noop_h)
+        # FiLM → identity and frozen. arch is zeroed anyway (so gamma/beta would
+        # otherwise read only their learnable bias = a global affine); pinning
+        # to identity makes "no archetype modulation" exact and gradient-free.
+        with torch.no_grad():
+            self.film_gamma.weight.zero_(); self.film_gamma.bias.fill_(1.0)
+            self.film_beta.weight.zero_();  self.film_beta.bias.zero_()
+        for _p in (*self.film_gamma.parameters(), *self.film_beta.parameters()):
+            _p.requires_grad_(False)
+
+    @staticmethod
+    def _strip_arch(obs: dict) -> dict:
+        """Return a shallow copy of obs with every archetype one-hot zeroed.
+
+        Feature-based slicing (no hardcoded class list): entity arch lives at
+        [_ARCH_OH_START:_ARCH_OH_END] on every slot; the self-arch one-hot is
+        the trailing N_ARCHETYPES block of end_features. Only the two tensors
+        that carry archetype are cloned; all other obs keys pass through.
+        """
+        obs = dict(obs)
+        ent = obs["entities"].clone()
+        ent[..., _ARCH_OH_START:_ARCH_OH_END] = 0.0
+        obs["entities"] = ent
+        ef = obs["end_features"].clone()
+        ef[..., -N_ARCHETYPES:] = 0.0
+        obs["end_features"] = ef
+        return obs
+
+    def forward(self, obs: dict, *args, **kwargs):
+        return super().forward(self._strip_arch(obs), *args, **kwargs)
+
+    def value(self, obs: dict, *args, **kwargs):
+        return super().value(self._strip_arch(obs), *args, **kwargs)

@@ -95,18 +95,24 @@ N_V3_EXTRA = 6
 #   [3] max_aoe_radius / DESC_AOE_NORM   AoE threat
 #   [4] best_attack_bonus / DESC_ATK_NORM
 #   [5] max_save_dc / DESC_DC_NORM
-#   [6] is_caster        any kit entry costs a spell slot
-#   [7] has_teleport     can reposition through walls
-#   [8] grants_actions   action-economy burst (surge-likes)
-#   [9..9+N_STATUS_SLOTS)   applies_status union — which conditions its kit
-#                            can inflict/grant (paralyze, frighten, ...)
-#   [..+N_SAVE_STATS)       save-stat union — which saves it attacks
-#   [..+N_DAMAGE_TYPES)     typed resist summary: (multiplier − 1) per damage
+#   [6..6+N_DAMAGE_TYPES)   typed resist summary: (multiplier − 1) per damage
 #                            type — 0 = neutral (and absent rows stay zero),
 #                            −0.5 resist, −1 immune, +1 vulnerable, < −1
 #                            absorb. Source: char.damage_multipliers (the
 #                            damage_table trait) — appearance-inferable lore
 #                            (a troll's fire fear, a skeleton's brittleness).
+# REMOVED (2026-07-06, obs v8+): the offensive OR-fields is_caster / has_teleport /
+# grants_actions / applies_status-union / save-stat-union used to live between the
+# 6 max scalars and the resist tail. They are PROVABLY recoverable from the per-
+# entity `entity_skills` matrix (mean-pool over the kit's per-skill features:
+# cost_slot_level / is_teleport / grants_actions / applies_status / save_stat) —
+# measured identical — so they were pure duplication once encode_entity_skills
+# exists. Removed to keep the entity row lean. The 6 max scalars stay (a MAX is
+# NOT recoverable from the mean-pool encoder); resist_u stays (defensive, NOT in
+# any skill feature, and it feeds the typed-resist join). NOTE: this SHRINKS a
+# mid-row block, so it deliberately breaks the strict-append checkpoint-migration
+# contract — pre-v8 checkpoints no longer load bit-exact (arch-priority decision;
+# migration/versioning fix deferred).
 DESC_DMG_NORM   = 50.0
 DESC_HEAL_NORM  = 30.0
 DESC_RANGE_NORM = 30.0   # battlefield size
@@ -114,7 +120,7 @@ DESC_AOE_NORM   = 10.0
 DESC_ATK_NORM   = 20.0
 DESC_DC_NORM    = 30.0
 from ..engine.damage import DAMAGE_TYPES, N_DAMAGE_TYPES
-N_V4_DESC = 9 + N_STATUS_SLOTS + N_SAVE_STATS + N_DAMAGE_TYPES
+N_V4_DESC = 6 + N_DAMAGE_TYPES   # 6 max scalars + typed-resist (OR-fields removed, see above)
 
 # obs v5 (2026-06-13): per-entity PASSIVE-TRAIT descriptor — the behaviour-
 # relevant passive traits invisible to BOTH the kit (capability_descriptor) and
@@ -155,8 +161,31 @@ N_V5_TRAIT = 4
 # orthogonality argument that made the damage-type join necessary in 12j).
 N_V6_CIMMUN = N_STATUS_SLOTS   # 16 — one bit per STATUS_SLOTS condition
 
+# obs v7 (2026-07-06): per-entity ABILITY-MODIFIER descriptor — the six D&D
+# ability modifiers (STR/DEX/CON/INT/WIS/CHA). Saving throws roll d20 + the
+# TARGET's ability modifier (+prof if proficient) — combat.make_saving_throw:
+# `stat_mod = character.stats.modifier(stat)` — so a save-or-lose spell's success
+# depends on the target's stat, yet it was INVISIBLE to the policy: perturbing an
+# enemy's WIS left the entire entity row unchanged (diag). Without it the policy
+# cannot prefer the save its target is WEAK at (hold_person WIS vs web DEX) —
+# exactly the axis the spell-selection wave wants to test. MODIFIER, not raw
+# score: the score's ONLY combat effect is via its modifier, and WIS 10 vs 11
+# (both +0, identical save) must read identical — a raw score would add a dead
+# low-order bit that is pure noise to the policy. Appended AFTER the v6 cimmun
+# tail (same strict-prefix trick) so every pre-v7 column index stays valid. Per-
+# entity on ALL rows: a creature's brawn/agility/wits are appearance-inferable
+# (public-info basis, same as typed_resist / traits), and it also lets the policy
+# read an ally's stats. NOTE: this exposes ABILITY modifiers, not save
+# PROFICIENCY — two same-stat creatures that differ only in save proficiency
+# still read identical (a separate axis, not added here). Adding a field = append
+# one column + bump N_V7_ABILITY + the v6→v7 entity adapter (NEVER insert in the
+# middle — that shifts every later checkpoint column).
+ABILITY_STATS: tuple[str, ...] = ("STR", "DEX", "CON", "INT", "WIS", "CHA")
+N_V7_ABILITY = len(ABILITY_STATS)   # 6
+ABILITY_MOD_NORM = 10.0   # 5e mods run ~ -5..+10 (CR30 STR +10); /10 → [-0.5, 1]
+
 ENTITY_DIM = (7 + N_ARCHETYPES + N_RL_STATUS + 1 + N_V3_EXTRA
-              + N_V4_DESC + N_V5_TRAIT + N_V6_CIMMUN)
+              + N_V4_DESC + N_V5_TRAIT + N_V6_CIMMUN + N_V7_ABILITY)
 # layout: 7 base + archetype multi-hot + status multi-hot + is_concentrating
 #         + v3 tail (level, max_hp, ac, is_dying, death_succ, death_fail)
 #         + v4 capability descriptor (N_V4_DESC)
@@ -175,7 +204,7 @@ ENT_DESC_START = ENT_V3_TAIL_START + N_V3_EXTRA
 # DAMAGE_TYPES column. The model's skill↔entity matchup join dots the skill
 # row's damage-type bits against this slice — keep both aligned to
 # engine.damage.DAMAGE_TYPES (append-only).
-I_DESC_RESIST = ENT_DESC_START + 9 + N_STATUS_SLOTS + N_SAVE_STATS
+I_DESC_RESIST = ENT_DESC_START + 6   # after the 6 max scalars (OR-fields removed, obs v8+)
 # v5 passive-trait tail — named indices; consumers use these, never row-end math.
 ENT_TRAIT_START = ENT_DESC_START + N_V4_DESC
 I_TRAIT_PACK   = ENT_TRAIT_START + 0
@@ -186,24 +215,47 @@ I_TRAIT_LEGRES = ENT_TRAIT_START + 3
 # row's applies_status); named start, consumers use this, never row-end math.
 ENT_CIMMUN_START = ENT_TRAIT_START + N_V5_TRAIT
 I_DESC_CIMMUN = ENT_CIMMUN_START
+# v7 ability-modifier tail — named start, consumers use this, never row-end math.
+# Order = ABILITY_STATS (STR/DEX/CON/INT/WIS/CHA).
+ENT_ABILITY_START = ENT_CIMMUN_START + N_V6_CIMMUN
 _ENTITY_DIM_V3 = 7 + N_ARCHETYPES + N_RL_STATUS + 1 + N_V3_EXTRA   # pre-v4 width
 _ENTITY_DIM_V4 = (7 + N_ARCHETYPES + N_RL_STATUS + 1 + N_V3_EXTRA
                   + N_V4_DESC)   # pre-v5 width (v4 descriptor, no trait tail)
 _ENTITY_DIM_V5 = _ENTITY_DIM_V4 + N_V5_TRAIT   # pre-v6 width (v5 trait, no cimmun)
+_ENTITY_DIM_V6 = _ENTITY_DIM_V5 + N_V6_CIMMUN  # pre-v7 width (v6 cimmun, no ability)
+
+
+def migrate_entities_v6_to_v7(entities):
+    """Append the N_V7_ABILITY zero ability-modifier columns to a v6-width entity
+    array (strict append, no rescale — v7 added no NORM changes to existing cols).
+    Idempotent: returns unchanged if already v7-width."""
+    import numpy as _np
+    if entities.shape[-1] == ENTITY_DIM:
+        return entities
+    assert entities.shape[-1] == _ENTITY_DIM_V6, (
+        f"expected v6 width {_ENTITY_DIM_V6}, got {entities.shape[-1]}")
+    pad = _np.zeros(entities.shape[:-1] + (N_V7_ABILITY,), dtype=_np.float32)
+    return _np.concatenate([entities.astype(_np.float32, copy=True), pad],
+                           axis=-1)
 
 
 def migrate_entities_v5_to_v6(entities):
     """Append the N_V6_CIMMUN zero condition-immunity columns to a v5-width
-    entity array (strict append, no rescale — v6 added no NORM changes).
-    Idempotent: returns unchanged if already v6-width."""
+    entity array (strict append, no rescale — v6 added no NORM changes), then
+    chain the v6→v7 ability-modifier append so callers land at the live width no
+    matter how many tails have since been added. Idempotent: returns unchanged if
+    already current-width; passes a v6-width array straight to the v7 step."""
     import numpy as _np
     if entities.shape[-1] == ENTITY_DIM:
         return entities
+    if entities.shape[-1] == _ENTITY_DIM_V6:
+        return migrate_entities_v6_to_v7(entities)
     assert entities.shape[-1] == _ENTITY_DIM_V5, (
         f"expected v5 width {_ENTITY_DIM_V5}, got {entities.shape[-1]}")
     pad = _np.zeros(entities.shape[:-1] + (N_V6_CIMMUN,), dtype=_np.float32)
-    return _np.concatenate([entities.astype(_np.float32, copy=True), pad],
-                           axis=-1)
+    out = _np.concatenate([entities.astype(_np.float32, copy=True), pad],
+                          axis=-1)   # now v6 width
+    return migrate_entities_v6_to_v7(out)         # → current (v7) width
 
 
 def migrate_entities_v4_to_v5(entities):
@@ -215,6 +267,8 @@ def migrate_entities_v4_to_v5(entities):
     import numpy as _np
     if entities.shape[-1] == ENTITY_DIM:
         return entities
+    if entities.shape[-1] == _ENTITY_DIM_V6:
+        return migrate_entities_v6_to_v7(entities)
     if entities.shape[-1] == _ENTITY_DIM_V5:
         return migrate_entities_v5_to_v6(entities)
     assert entities.shape[-1] == _ENTITY_DIM_V4, (
@@ -222,7 +276,7 @@ def migrate_entities_v4_to_v5(entities):
     pad = _np.zeros(entities.shape[:-1] + (N_V5_TRAIT,), dtype=_np.float32)
     out = _np.concatenate([entities.astype(_np.float32, copy=True), pad],
                           axis=-1)   # now v5 width
-    return migrate_entities_v5_to_v6(out)         # → current (v6) width
+    return migrate_entities_v5_to_v6(out)         # → current (v7) width
 
 
 def migrate_entities_v3_to_v4(entities):
@@ -238,6 +292,8 @@ def migrate_entities_v3_to_v4(entities):
     import numpy as _np
     if entities.shape[-1] == ENTITY_DIM:
         return entities
+    if entities.shape[-1] == _ENTITY_DIM_V6:
+        return migrate_entities_v6_to_v7(entities)
     if entities.shape[-1] == _ENTITY_DIM_V5:
         return migrate_entities_v5_to_v6(entities)
     if entities.shape[-1] == _ENTITY_DIM_V4:
@@ -249,7 +305,7 @@ def migrate_entities_v3_to_v4(entities):
     out[..., I_ENT_MAXHP] *= (V3_MAXHP_NORM / MAXHP_NORM)
     pad = _np.zeros(out.shape[:-1] + (N_V4_DESC,), dtype=_np.float32)
     out = _np.concatenate([out, pad], axis=-1)   # now v4 width
-    return migrate_entities_v4_to_v5(out)         # → current (v6) width
+    return migrate_entities_v4_to_v5(out)         # → current (v7) width
 
 
 # obs decision-context (2026-06-13, reaction/legendary wave): a small per-step
@@ -383,7 +439,8 @@ N_THREAT_GRID_CHANNELS = 1       # [melee_threat_at_cell]
 # paint the whole field threatened — kiting is about escaping MELEE pin.
 ENEMY_THREAT_RADIUS_M = 1.5 + 1.5
 
-OBS_KEYS = ("skills", "skill_mask", "entities", "resources", "terrain",
+OBS_KEYS = ("skills", "skill_mask", "entity_skills", "entity_skill_mask",
+            "entities", "resources", "terrain",
             "entity_grid", "distance_grid", "los_grid", "reach_grid",
             "threat_grid", "end_features", "decision_context")
 
@@ -524,12 +581,12 @@ def capability_descriptor(char: Character) -> np.ndarray:
     if cached is not None and cached[0] == cache_key:
         return cached[1]
 
+    # Only the 6 MAX scalars survive here; the OR-fields (is_caster/has_tp/grants/
+    # applies_status-union/save-stat-union) were removed as provably recoverable
+    # from entity_skills (obs v8). A MAX is NOT recoverable from the mean-pool
+    # entity-skill encoder, so these stay.
     n_atk = float(getattr(char, "attacks_per_action", 1) or 1)
     max_dmg = max_heal = max_rng = max_aoe = max_atk = max_dc = 0.0
-    is_caster = has_tp = grants = 0.0
-    status_u = np.zeros(N_STATUS_SLOTS, dtype=np.float32)
-    save_u = np.zeros(N_SAVE_STATS, dtype=np.float32)
-
     for sid, f in kit_features(char):
         dmg = f.expected_damage * (n_atk if sid.startswith("weapon:") else 1.0)
         max_dmg = max(max_dmg, dmg)
@@ -539,17 +596,6 @@ def capability_descriptor(char: Character) -> np.ndarray:
         max_aoe = max(max_aoe, f.aoe_radius_m)
         max_atk = max(max_atk, f.attack_vs_ac)
         max_dc = max(max_dc, f.save_dc)
-        if f.cost_slot_level > 0:
-            is_caster = 1.0
-        if f.is_teleport:
-            has_tp = 1.0
-        if f.grants_actions > 0:
-            grants = 1.0
-        for i, bit in enumerate(f.applies_status):
-            if bit:
-                status_u[i] = 1.0
-        if 0 <= f.save_stat < N_SAVE_STATS:
-            save_u[f.save_stat] = 1.0
 
     resist_u = np.zeros(N_DAMAGE_TYPES, dtype=np.float32)
     for dtype, mult in (char.damage_multipliers or {}).items():
@@ -565,9 +611,8 @@ def capability_descriptor(char: Character) -> np.ndarray:
             max_aoe / DESC_AOE_NORM,
             max_atk / DESC_ATK_NORM,
             max_dc / DESC_DC_NORM,
-            is_caster, has_tp, grants,
         ], dtype=np.float32),
-        status_u, save_u, resist_u,
+        resist_u,
     ])
     char._cap_desc_cache = (cache_key, desc)
     return desc
@@ -604,6 +649,19 @@ def condition_immunity_descriptor(char: Character) -> np.ndarray:
         if name in STATUS_SLOTS:
             out[STATUS_SLOTS.index(name)] = 1.0
     return out
+
+
+def ability_descriptor(char: Character) -> np.ndarray:
+    """Build the N_V7_ABILITY ability-modifier tail for one creature (see the v7
+    constant block). The six D&D ability MODIFIERS in ABILITY_STATS order,
+    normalised by ABILITY_MOD_NORM. Modifier (not raw score) because the score's
+    only combat effect is via its modifier and it is what the saving-throw roll
+    adds (combat.make_saving_throw). Cheap (6 scalars), recomputed per row, no
+    cache. Adding an axis here = append one column + bump N_V7_ABILITY + the v6→v7
+    adapter (NEVER insert in the middle — that shifts every later checkpoint
+    column)."""
+    return np.array([char.stats.modifier(s) / ABILITY_MOD_NORM
+                     for s in ABILITY_STATS], dtype=np.float32)
 
 
 def _entity_row(char: Character, self_char: Character,
@@ -669,7 +727,8 @@ def _entity_row(char: Character, self_char: Character,
     ], dtype=np.float32)
     return np.concatenate([base, arch_oh, status_mh, is_concentrating, v3_tail,
                            capability_descriptor(char), trait_descriptor(char),
-                           condition_immunity_descriptor(char)])
+                           condition_immunity_descriptor(char),
+                           ability_descriptor(char)])
 
 
 def entities_obs(ws: WorldState, agent_id: str) -> np.ndarray:
@@ -734,6 +793,57 @@ def skills_obs(ws: WorldState, agent_id: str,
         skill_mat[i] = vec
         mask[i] = 1.0
     return skill_mat, mask
+
+
+def _entity_kit_matrix(char) -> tuple[np.ndarray, np.ndarray]:
+    """[N_SKILL_SLOTS, SKILL_FEATURE_DIM] + mask for ONE creature's STATIC kit.
+
+    Uses kit_features (full, level-gated, resource-INdependent) — the creature's
+    IDENTITY of "what it CAN do", the same 66-d mechanic vectors skills_obs feeds
+    for the self, so the model can reuse ONE skill encoder for self and others.
+    (available_skills, by contrast, is resource-gated and leaks transient state.)
+    move/end pseudo-skills are absent from kit_features = correct (universal, not
+    identity). Cached per char (kit static within an episode; key invalidates on a
+    mid-episode graft, mirroring capability_descriptor)."""
+    key = (char.level, len(char.known_abilities or ()), len(char.weapons))
+    cached = getattr(char, "_kit_mat_cache", None)
+    if cached is not None and cached[0] == key:
+        return cached[1]
+    mat = np.zeros((N_SKILL_SLOTS, SKILL_FEATURE_DIM), dtype=np.float32)
+    mask = np.zeros(N_SKILL_SLOTS, dtype=np.float32)
+    for i, (_sid, f) in enumerate(kit_features(char)):
+        if i >= N_SKILL_SLOTS:
+            break
+        vec = np.asarray(f.as_vector(), dtype=np.float32)
+        if vec[I_SKILL_EXPECTED_DAMAGE] > SKILL_EV_OBS_CAP:   # same OOD clamp as skills_obs
+            vec[I_SKILL_EXPECTED_DAMAGE] = SKILL_EV_OBS_CAP
+        mat[i] = vec
+        mask[i] = 1.0
+    char._kit_mat_cache = (key, (mat, mask))
+    return mat, mask
+
+
+def entity_skills_obs(ws: WorldState, agent_id: str) -> tuple[np.ndarray, np.ndarray]:
+    """Per-entity STATIC kit matrices, SAME slot order as entities_obs.
+
+    Returns (mats[N_ENTITY_SLOTS, N_SKILL_SLOTS, SKILL_FEATURE_DIM],
+             mask[N_ENTITY_SLOTS, N_SKILL_SLOTS]). Missing slots are all-zero.
+    Slot layout MIRRORS entities_obs exactly (self=0, allies=1.., enemies=
+    ENEMY_SLOT_START..) via the same partition_entities, so entity_skills[i]
+    always describes the SAME creature as entities[i]. This closes the gap where
+    two distinct kits with an identical capability_descriptor (e.g. a raging
+    berserker vs a champion, or two different L6 wizards) read identical."""
+    mats = np.zeros((N_ENTITY_SLOTS, N_SKILL_SLOTS, SKILL_FEATURE_DIM), dtype=np.float32)
+    mask = np.zeros((N_ENTITY_SLOTS, N_SKILL_SLOTS), dtype=np.float32)
+    self_char = ws.characters[agent_id]
+    mats[0], mask[0] = _entity_kit_matrix(self_char)
+    ally_ids, enemy_ids = partition_entities(ws, agent_id)
+    for i, cid in enumerate(ally_ids[:N_ALLY_SLOTS]):
+        mats[1 + i], mask[1 + i] = _entity_kit_matrix(ws.characters[cid])
+    for i, cid in enumerate(enemy_ids[:N_ENEMY_SLOTS]):
+        mats[ENEMY_SLOT_START + i], mask[ENEMY_SLOT_START + i] = \
+            _entity_kit_matrix(ws.characters[cid])
+    return mats, mask
 
 
 def resources_obs(resources: dict, round_number: int) -> np.ndarray:
@@ -1012,10 +1122,13 @@ def build_obs(ws: WorldState, agent_id: str, resources: dict,
     tell the decision apart and read the trigger details. ``skills`` overrides
     the skill-slot list for those off-turn points (reaction/legendary candidates)."""
     skills_mat, skill_mask = skills_obs(ws, agent_id, skills=skills)
+    ent_skills, ent_skill_mask = entity_skills_obs(ws, agent_id)
     round_num = ws.combat.round_number if ws.combat else 0
     return {
         "skills":           skills_mat,
         "skill_mask":       skill_mask,
+        "entity_skills":      ent_skills,        # obs v8: per-entity STATIC kit matrices
+        "entity_skill_mask":  ent_skill_mask,    # (only read by encode_entity_skills nets)
         "entities":         entities_obs(ws, agent_id),
         "resources":        resources_obs(resources, round_num),
         "terrain":          terrain_obs(ws.combat.battlefield),
