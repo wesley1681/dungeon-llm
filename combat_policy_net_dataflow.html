@@ -1,0 +1,539 @@
+<title>CombatPolicyNet 資料流</title>
+<style>
+  :root {
+    --bg: #e9edf3; --panel: #ffffff; --panel-2: #f3f6fa; --sunk: #eaeef4;
+    --ink: #14202f; --ink-soft: #55617384; --ink-mid: #566073;
+    --line: #cfd8e3; --line-soft: #dfe5ee;
+    --learned: #4257c9; --learned-bg: #4257c918; --learned-line: #4257c955;
+    --carrier: #b06e12; --carrier-bg: #b06e1218; --carrier-line: #b06e1255;
+    --head: #12817a; --head-bg: #12817a18; --head-line: #12817a55;
+    --critic: #6b7688; --critic-bg: #6b768814;
+    --shadow: 0 1px 2px #1420200a, 0 6px 20px #1420200f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0c111a; --panel: #151d2a; --panel-2: #1a2432; --sunk: #101823;
+      --ink: #dce4f0; --ink-soft: #93a0b47a; --ink-mid: #94a1b5;
+      --line: #29344630; --line-soft: #24303f;
+      --learned: #8296f7; --learned-bg: #8296f71e; --learned-line: #8296f755;
+      --carrier: #e0a44e; --carrier-bg: #e0a44e1c; --carrier-line: #e0a44e55;
+      --head: #43bcb0; --head-bg: #43bcb01c; --head-line: #43bcb055;
+      --critic: #8a95a8; --critic-bg: #8a95a814;
+      --shadow: 0 1px 2px #0006, 0 8px 26px #0004;
+    }
+  }
+  :root[data-theme="light"] {
+    --bg: #e9edf3; --panel: #ffffff; --panel-2: #f3f6fa; --sunk: #eaeef4;
+    --ink: #14202f; --ink-soft: #55617384; --ink-mid: #566073;
+    --line: #cfd8e3; --line-soft: #dfe5ee;
+    --learned: #4257c9; --learned-bg: #4257c918; --learned-line: #4257c955;
+    --carrier: #b06e12; --carrier-bg: #b06e1218; --carrier-line: #b06e1255;
+    --head: #12817a; --head-bg: #12817a18; --head-line: #12817a55;
+    --critic: #6b7688; --critic-bg: #6b768814;
+    --shadow: 0 1px 2px #1420200a, 0 6px 20px #1420200f;
+  }
+  :root[data-theme="dark"] {
+    --bg: #0c111a; --panel: #151d2a; --panel-2: #1a2432; --sunk: #101823;
+    --ink: #dce4f0; --ink-soft: #93a0b47a; --ink-mid: #94a1b5;
+    --line: #29344630; --line-soft: #24303f;
+    --learned: #8296f7; --learned-bg: #8296f71e; --learned-line: #8296f755;
+    --carrier: #e0a44e; --carrier-bg: #e0a44e1c; --carrier-line: #e0a44e55;
+    --head: #43bcb0; --head-bg: #43bcb01c; --head-line: #43bcb055;
+    --critic: #8a95a8; --critic-bg: #8a95a814;
+    --shadow: 0 1px 2px #0006, 0 8px 26px #0004;
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+    line-height: 1.5; letter-spacing: -0.003em;
+    -webkit-font-smoothing: antialiased;
+  }
+  .mono {
+    font-family: ui-monospace, "Cascadia Code", "Cascadia Mono", "SF Mono",
+      Consolas, monospace;
+    font-variant-numeric: tabular-nums; letter-spacing: 0;
+  }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 56px 24px 100px; }
+
+  /* ── header ── */
+  header { margin-bottom: 40px; }
+  .kicker {
+    font-size: 12px; font-weight: 600; letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--learned); margin: 0 0 14px;
+  }
+  h1 {
+    font-size: clamp(28px, 4.5vw, 44px); font-weight: 800; margin: 0;
+    letter-spacing: -0.02em; text-wrap: balance; line-height: 1.06;
+  }
+  h1 .mono { font-weight: 700; }
+  .lede {
+    margin: 16px 0 0; max-width: 70ch; color: var(--ink-mid);
+    font-size: 16.5px;
+  }
+  .stat-row {
+    display: flex; flex-wrap: wrap; gap: 10px; margin-top: 22px;
+  }
+  .stat {
+    display: flex; flex-direction: column; gap: 2px;
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 10px 15px; box-shadow: var(--shadow);
+  }
+  .stat b { font-size: 19px; font-weight: 700; }
+  .stat span { font-size: 11.5px; color: var(--ink-mid); letter-spacing: 0.02em; }
+
+  /* ── legend ── */
+  .legend {
+    display: flex; flex-wrap: wrap; gap: 8px 20px; margin: 26px 0 8px;
+    padding: 14px 18px; background: var(--panel-2);
+    border: 1px solid var(--line-soft); border-radius: 12px;
+    font-size: 13px; align-items: center;
+  }
+  .legend .lg { display: inline-flex; align-items: center; gap: 8px; }
+  .swatch {
+    width: 13px; height: 13px; border-radius: 4px; flex: none;
+    border: 1.5px solid;
+  }
+  .sw-l { background: var(--learned-bg); border-color: var(--learned); }
+  .sw-c { background: var(--carrier-bg); border-color: var(--carrier); }
+  .sw-h { background: var(--head-bg); border-color: var(--head); }
+  .sw-i { background: var(--sunk); border-color: var(--line); }
+  .legend .note { color: var(--ink-mid); margin-left: auto; font-size: 12.5px; }
+
+  /* ── band ── */
+  .band { position: relative; padding-top: 10px; }
+  .band-label {
+    font-size: 11px; font-weight: 700; letter-spacing: 0.16em;
+    text-transform: uppercase; color: var(--ink-mid); margin: 0 0 12px;
+    display: flex; align-items: baseline; gap: 10px;
+  }
+  .band-label .cn { letter-spacing: 0.02em; font-weight: 600;
+    color: var(--ink); font-size: 13px; text-transform: none; }
+
+  .row { display: flex; flex-wrap: wrap; gap: 12px; }
+  .row.cols4 > .node { flex: 1 1 220px; }
+  .row.cols2 > .node { flex: 1 1 340px; }
+
+  /* node card */
+  .node {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 13px; padding: 14px 16px; box-shadow: var(--shadow);
+    position: relative; min-width: 0;
+  }
+  .node.learned { border-top: 3px solid var(--learned); }
+  .node.carrier { border-top: 3px solid var(--carrier); }
+  .node.head    { border-top: 3px solid var(--head); }
+  .node.input   { border-top: 3px solid var(--line); background: var(--panel-2); }
+  .node.critic  { border-top: 3px solid var(--critic); }
+
+  .node h3 {
+    margin: 0 0 3px; font-size: 15px; font-weight: 700; letter-spacing: -0.01em;
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  }
+  .node h3 .op { font-size: 12px; font-weight: 600; color: var(--ink-mid);
+    font-family: ui-monospace, Consolas, monospace; }
+  .node .desc { font-size: 12.5px; color: var(--ink-mid); margin: 4px 0 0; }
+  .node .why {
+    font-size: 12px; color: var(--ink-mid); margin: 9px 0 0;
+    padding-top: 9px; border-top: 1px dashed var(--line);
+    line-height: 1.45;
+  }
+  .node .why b { color: var(--ink); font-weight: 600; }
+
+  /* shape pill */
+  .shape {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-family: ui-monospace, Consolas, monospace; font-size: 11.5px;
+    font-variant-numeric: tabular-nums;
+    padding: 2px 7px; border-radius: 6px; background: var(--sunk);
+    color: var(--ink); border: 1px solid var(--line-soft); white-space: nowrap;
+  }
+  .io { display: flex; align-items: center; gap: 7px; margin-top: 9px;
+    flex-wrap: wrap; }
+  .io .arrow { color: var(--ink-mid); font-size: 13px; }
+  .io-label { font-size: 10.5px; color: var(--ink-soft); text-transform: uppercase;
+    letter-spacing: 0.08em; }
+
+  /* connector between bands */
+  .flow {
+    display: flex; flex-direction: column; align-items: center;
+    gap: 3px; padding: 12px 0; color: var(--ink-mid);
+  }
+  .flow .bar { width: 2px; height: 14px; background: var(--line); }
+  .flow .tag {
+    font-family: ui-monospace, Consolas, monospace; font-size: 11.5px;
+    padding: 3px 9px; border-radius: 20px; background: var(--panel);
+    border: 1px solid var(--line); color: var(--ink-mid);
+    font-variant-numeric: tabular-nums;
+  }
+  .flow .chev { font-size: 12px; line-height: 0.6; }
+
+  /* concatenation chips inside a head */
+  .concat { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 4px;
+    align-items: center; }
+  .chip {
+    display: inline-flex; align-items: baseline; gap: 5px;
+    font-family: ui-monospace, Consolas, monospace; font-size: 11.5px;
+    font-variant-numeric: tabular-nums;
+    padding: 3px 8px; border-radius: 7px; border: 1px solid;
+  }
+  .chip .nm { font-weight: 600; }
+  .chip .d { opacity: 0.72; }
+  .chip.l { background: var(--learned-bg); border-color: var(--learned-line);
+    color: var(--learned); }
+  .chip.c { background: var(--carrier-bg); border-color: var(--carrier-line);
+    color: var(--carrier); }
+  .chip.plus { border: none; background: none; color: var(--ink-soft);
+    padding: 0 1px; font-size: 13px; }
+  .eq { font-family: ui-monospace, Consolas, monospace; font-size: 12px;
+    color: var(--ink-mid); margin-left: 2px; }
+  .eq b { color: var(--ink); }
+
+  /* split layout: policy + critic */
+  .split { display: grid; grid-template-columns: 1fr; gap: 14px; }
+  @media (min-width: 780px) { .split { grid-template-columns: 1.55fr 1fr; } }
+  .critic-col .node { height: 100%; }
+
+  .foot {
+    margin-top: 40px; padding: 22px 24px; background: var(--panel-2);
+    border: 1px solid var(--line-soft); border-radius: 14px;
+    font-size: 13.5px; color: var(--ink-mid);
+  }
+  .foot h4 { margin: 0 0 10px; color: var(--ink); font-size: 14px;
+    letter-spacing: 0.01em; }
+  .foot ul { margin: 0; padding-left: 18px; }
+  .foot li { margin: 6px 0; line-height: 1.5; }
+  .foot code {
+    font-family: ui-monospace, Consolas, monospace; font-size: 12.5px;
+    background: var(--sunk); padding: 1px 6px; border-radius: 5px;
+    border: 1px solid var(--line-soft);
+  }
+  .foot b { color: var(--ink); }
+  a { color: var(--learned); }
+</style>
+
+<div class="wrap">
+  <header>
+    <p class="kicker">TRPG · Combat RL Policy · trpg/rl/model.py</p>
+    <h1><span class="mono">CombatPolicyNet</span> 的資料流動</h1>
+    <p class="lede">一張盲眼統一策略網:一路編碼 → 128 維共享主幹 <span class="mono">h</span> → 四個階層式頭
+      (end → skill →(entity｜grid))。<b style="color:var(--carrier)">琥珀色</b>是 <span class="mono">forward()</span>
+      當場算出、拼進頭的額外輸入。技能組身分用 <b class="mono">codeword</b>(<span class="mono">skill_combo_dim</span>)
+      以加法雙線性項餵進 skill 頭;<b>免疫/抗性沒有任何手寫特徵</b>——全靠 <span class="mono" style="color:var(--carrier)">sk_ent_ctx</span>
+      這條學習注意力,從實體描述子把抗性讀出來。所有形狀從現行網
+      (<span class="mono">CombatPolicyNet(n_head_groups=1, skill_combo_dim=8)</span>)實測。</p>
+    <div class="stat-row">
+      <div class="stat"><b class="mono">312,229</b><span>總參數量</span></div>
+      <div class="stat"><b class="mono">128</b><span>隱藏維度</span></div>
+      <div class="stat"><b>4</b><span>階層式動作頭</span></div>
+      <div class="stat"><b>1</b><span>共享頭組(盲眼)</span></div>
+      <div class="stat"><b class="mono">8</b><span>codeword 維度</span></div>
+    </div>
+  </header>
+
+  <div class="legend">
+    <span class="lg"><span class="swatch sw-i"></span>輸入張量 (obs dict)</span>
+    <span class="lg"><span class="swatch sw-l"></span>學習權重 nn.Module</span>
+    <span class="lg"><span class="swatch sw-c"></span>頭的額外輸入 (forward 現算)</span>
+    <span class="lg"><span class="swatch sw-h"></span>輸出頭</span>
+    <span class="note">形狀記法 <span class="mono">[B, …]</span>,B = batch</span>
+  </div>
+
+  <!-- INPUTS -->
+  <section class="band">
+    <p class="band-label">01 · Inputs <span class="cn">觀測字典 obs</span></p>
+    <div class="row cols4">
+      <div class="node input">
+        <h3>skills</h3>
+        <p class="desc">20 個技能槽,每槽 66 維特徵(尾 13 維＝傷害型軟 one-hot)</p>
+        <div class="io"><span class="shape">[B, 20, 66]</span>
+          <span class="shape">skill_mask [B, 20]</span></div>
+      </div>
+      <div class="node input">
+        <h3>entities</h3>
+        <p class="desc">10 個實體槽(slot 0＝自己),每列 121 維:等級/HP/AC/瀕死＋抗性/免疫描述子
+          (含 I_DESC_RESIST 13 維:每型倍率−1)</p>
+        <div class="io"><span class="shape">[B, 10, 121]</span></div>
+      </div>
+      <div class="node input">
+        <h3>spatial grids</h3>
+        <p class="desc">30×30 網格 × 9 通道:地形1＋實體3＋距離2＋視線1＋觸及1＋威脅1</p>
+        <div class="io"><span class="shape">terrain / entity / dist</span>
+          <span class="shape">los / reach / threat</span></div>
+      </div>
+      <div class="node input">
+        <h3>scalars</h3>
+        <p class="desc">資源、結束特徵、決策情境(反應/傳奇;正常回合全 0)</p>
+        <div class="io"><span class="shape">resources [B, 4]</span>
+          <span class="shape">end_features [B, 20]</span>
+          <span class="shape">decision_ctx [B, 9]</span></div>
+      </div>
+    </div>
+  </section>
+
+  <div class="flow"><div class="bar"></div><span class="chev">▼</span></div>
+
+  <!-- ENCODER -->
+  <section class="band">
+    <p class="band-label">02 · Encoder <span class="cn">四路並行編碼(_encode)</span></p>
+    <div class="row cols4">
+      <div class="node learned">
+        <h3>skill_proj + encoder <span class="op">Linear→Transformer</span></h3>
+        <p class="desc">66→64 投影,再過 2 層 TransformerEncoder(d=64, 4 head, ff=128),
+          padding 槽遮罩。masked-mean → <span class="mono">sk_mean</span>。</p>
+        <div class="io"><span class="io-label">out</span>
+          <span class="shape">sk_emb [B,20,64]</span>
+          <span class="arrow">·</span>
+          <span class="shape">sk_mean [B,64]</span></div>
+      </div>
+      <div class="node learned">
+        <h3>entity_mlp <span class="op">MLP 121→64→32</span></h3>
+        <p class="desc">每列共享 MLP。取 slot 0 → <span class="mono">self_emb</span>。</p>
+        <div class="io"><span class="io-label">out</span>
+          <span class="shape">ent_emb [B,10,32]</span>
+          <span class="arrow">·</span>
+          <span class="shape">self_emb [B,32]</span></div>
+        <p class="why"><b>無 CNN</b>、<b>不做全域池化</b>。位置經「自我索引讀取」進入 h(取 slot 0、取自己那格),
+          平均池化會把位置稀釋成 1/900。<b>抗性/免疫描述子也在這裡壓進 ent_emb</b> →
+          是 <span class="mono">sk_ent_ctx</span> 讀免疫的唯一來源。</p>
+      </div>
+      <div class="node learned">
+        <h3>spatial gather <span class="op">cat + gather</span></h3>
+        <p class="desc">9 通道疊成 <span class="mono">spatial_feat [B,9,30,30]</span>;
+          在自己所在格取一根 → <span class="mono">self_cell_feat</span>。</p>
+        <div class="io"><span class="io-label">out</span>
+          <span class="shape">self_cell_feat [B,9]</span></div>
+      </div>
+      <div class="node learned">
+        <h3>res_mlp <span class="op">Linear 4→16</span></h3>
+        <p class="desc">資源向量小 MLP。</p>
+        <div class="io"><span class="io-label">out</span>
+          <span class="shape">res_ctx [B,16]</span></div>
+      </div>
+    </div>
+  </section>
+
+  <div class="flow"><div class="bar"></div>
+    <span class="tag">concat → [B, 130]</span><span class="chev">▼</span></div>
+
+  <!-- TRUNK -->
+  <section class="band">
+    <p class="band-label">03 · Trunk + FiLM <span class="cn">共享主幹表徵 h</span></p>
+    <div class="row">
+      <div class="node learned" style="flex:1 1 100%">
+        <h3>trunk <span class="op">Linear 130→128→128 (ReLU)</span> &nbsp;·&nbsp; FiLM 調變</h3>
+        <div class="concat">
+          <span class="chip l"><span class="nm">sk_mean</span><span class="d">64</span></span>
+          <span class="chip plus">+</span>
+          <span class="chip l"><span class="nm">self_emb</span><span class="d">32</span></span>
+          <span class="chip plus">+</span>
+          <span class="chip l"><span class="nm">self_cell_feat</span><span class="d">9</span></span>
+          <span class="chip plus">+</span>
+          <span class="chip l"><span class="nm">res_ctx</span><span class="d">16</span></span>
+          <span class="chip plus">+</span>
+          <span class="chip l"><span class="nm">decision_ctx</span><span class="d">9</span></span>
+          <span class="eq">= <b>130</b> → trunk → <b class="mono">h [B,128]</b></span>
+        </div>
+        <p class="why"><b>FiLM:</b> 由自身 archetype one-hot(12 維)產生 per-archetype 的
+          <span class="mono">γ, β</span>,做 <span class="mono">h ← γ·h + β</span>。初始化為恆等(γ=1, β=0)。
+          這條 <span class="mono">h</span> <b>只餵進 grid 頭</b>——在 skill / entity 頭裡 h 對選擇是<b>逐槽常數</b>、
+          會被 softmax 消掉(死權重),已移除;end 頭本來就不吃 h。</p>
+      </div>
+    </div>
+  </section>
+
+  <div class="flow"><div class="bar"></div>
+    <span class="tag mono">h [B,128]  +  raw obs</span><span class="chev">▼</span></div>
+
+  <!-- CARRIERS -->
+  <section class="band">
+    <p class="band-label">04 · Head-side extras <span class="cn">頭的額外輸入(forward 現算)</span></p>
+    <div class="row cols2">
+      <div class="node carrier">
+        <h3>sk_ent_ctx <span class="op">cross-attention · 1 個學習投影</span></h3>
+        <p class="desc"><b>技能→實體</b>注意力:每招用 query=proj(sk_emb) 去挑「跟我這招相關的單位」,
+          遮掉不存在的槽 → 讓 skill 頭條件化於 per-entity 狀態。學習權重 skill_ent_attn_proj(64→32)。</p>
+        <div class="io"><span class="shape">[B,20,32]</span></div>
+        <p class="why"><b>免疫/抗性的唯一通路。</b>抗性描述子(I_DESC_RESIST)已在 entity_mlp 壓進 ent_emb,
+          這條注意力把它 soft-attend 進來 → 模型可據此逐局讀出敵人對哪型免疫、選對傷害型
+          (2026-07-06 隔離實驗證:單靠這條就能從零學會)。</p>
+      </div>
+      <div class="node carrier">
+        <h3>blocked_feat <span class="op">scale × sk_emb</span></h3>
+        <p class="desc"><span class="mono">blockedness × sk_emb</span> → [B,20,64]。
+          blockedness = 1 − 自身格視線近接度。開闊地視線=1 → 此項<b>恆為 0</b>。</p>
+        <p class="why">只在<b>被牆擋住</b>時非零 → 練它只改被擋時的選招,開闊/團隊戰位元級不變。</p>
+      </div>
+    </div>
+  </section>
+
+  <div class="flow"><div class="bar"></div><span class="chev">▼</span></div>
+
+  <!-- HEADS + CRITIC -->
+  <section class="band">
+    <p class="band-label">05 · Heads <span class="cn">四個階層式頭 · 每個頭的輸入拼接(顏色＝來源類型)</span></p>
+    <p style="font-size:12.5px;color:var(--ink-mid);margin:-2px 0 14px;max-width:74ch">
+      讀法:chip 上的數字是<b>每一個技能槽/每一對的特徵寬度</b>(相加＝拼接後的寬度),
+      技能槽數 20 是<b>另一條軸</b>——頭對每個槽各跑一次、20 這軸保留成輸出長度。
+      例:skill_head 的輸入其實是 <span class="mono">[B,20,160]</span>,Linear 160→1 把最後一軸壓成
+      1 → <span class="mono">[B,20]</span>。<b>主幹 h 不在 skill / entity 頭裡</b>——它對每個槽都一樣、
+      在 softmax 會被消掉,所以移除(見下方 skill_head 說明);h 仍進 grid 頭。</p>
+    <div class="split">
+      <div class="policy-col">
+        <div class="row">
+          <!-- end head -->
+          <div class="node head" style="flex:1 1 100%">
+            <h3>end_head <span class="op">MLP 22→32→1</span></h3>
+            <p class="desc">結束 vs 繼續。<b>與主幹 h 解耦</b>——只讀手挑的標量。</p>
+            <div class="concat">
+              <span class="chip l"><span class="nm">end_features</span><span class="d">20</span></span>
+              <span class="chip plus">+</span>
+              <span class="chip c"><span class="nm">self_threat</span><span class="d">1</span></span>
+              <span class="chip plus">+</span>
+              <span class="chip c"><span class="nm">self_reach</span><span class="d">1</span></span>
+              <span class="eq">= <b>22</b> → <b class="mono">end_logit [B]</b></span>
+            </div>
+            <p class="why">解耦是為了堵「輸棋時梯度沿 end 方向漂移逼模型提早結束」;threat/reach 兩旗讓「安全就停止風箏」「打不到又滿血就結束保留治療」有依據。</p>
+          </div>
+
+          <!-- skill head -->
+          <div class="node head" style="flex:1 1 100%">
+            <h3>skill_head <span class="op">Linear 160→1 · per-group gather</span></h3>
+            <p class="desc">每個技能槽一個 logit。<b>不含 h</b>(逐槽常數、softmax 消掉)。</p>
+            <div class="concat">
+              <span class="chip l"><span class="nm">sk_emb</span><span class="d">64</span></span>
+              <span class="chip plus">+</span>
+              <span class="chip c"><span class="nm">sk_ent_ctx</span><span class="d">32</span></span>
+              <span class="chip plus">+</span>
+              <span class="chip c"><span class="nm">blocked_feat</span><span class="d">64</span></span>
+              <span class="eq">= <b>160</b> → <b class="mono">skill_logits [B,20]</b></span>
+            </div>
+            <p class="why"><b>+ codeword(技能組身分,加法雙線性項,不進 concat):</b>
+              <span class="mono">skill_combo_proj(sk_emb)</span> [B,20,8] 對<b>持有的技能</b> masked-mean-pool → 身分
+              <span class="mono">c [B,8]</span>;<span class="mono">skill_combo_pref(c)</span> → <span class="mono">pref [B,64]</span>;
+              <span class="mono">skill_logits += ⟨sk_emb, pref⟩</span>(per-skill)。這正是為何 <b>h 被移除、codeword 被加入</b>:
+              h 對每個槽相同、在 softmax/argmax 會被消掉動不了選擇(實測歸零 h 欄,選招 softmax 差 &lt;1e-7);
+              身分訊號必須用這種<b>逐招不同</b>的乘法項才推得動選招。</p>
+          </div>
+
+          <!-- entity head -->
+          <div class="node head" style="flex:1 1 100%">
+            <h3>entity_head <span class="op">Linear 96→1 · per (skill,entity)</span></h3>
+            <p class="desc">給目標選擇——每個(技能,實體)對一個分數。<b>不含 h</b>
+              (h 對某招下的各實體也是常數、在 per-skill 選目標 softmax 消掉)。</p>
+            <div class="concat">
+              <span class="chip l"><span class="nm">sk_emb</span><span class="d">64</span></span>
+              <span class="chip plus">+</span>
+              <span class="chip l"><span class="nm">ent_emb</span><span class="d">32</span></span>
+              <span class="eq">= <b>96</b> → <b class="mono">entity_logits [B,20,10]</b></span>
+            </div>
+            <p class="why">導向抗性敵/脆弱敵的判斷走 <span class="mono">ent_emb</span>(內含抗性描述子)——
+              和 sk_ent_ctx 同源,不再有手寫的 per-pair 免疫欄。</p>
+          </div>
+
+          <!-- grid head -->
+          <div class="node head" style="flex:1 1 100%">
+            <h3>grid_head <span class="op">query 192→9 · bmm</span></h3>
+            <p class="desc">每技能一個 <span class="mono">grid_query</span>,與 <span class="mono">spatial_feat</span>
+              做點積 → 每格分數。<b>取代 CNN</b>:距離已預算成通道,只需線性打分。</p>
+            <div class="concat">
+              <span class="chip l"><span class="nm">sk_emb</span><span class="d">64</span></span>
+              <span class="chip plus">+</span>
+              <span class="chip l"><span class="nm">h</span><span class="d">128</span></span>
+              <span class="eq">= <b>192</b> → query <b class="mono">[B,20,9]</b> ⨯ <b class="mono">spatial[B,9,900]</b>
+                → <b class="mono">grid_logits [B,20,900]</b></span>
+            </div>
+            <p class="why"><b>唯一保留 h 的頭。</b>這裡 h 進 query、再與<b>每格不同</b>的 spatial 特徵點積 →
+              <span class="mono">h·spatial[cell]</span> 逐格不同,不是常數,<b>真的會影響落點選擇</b>(故不移除)。</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- critic -->
+      <div class="critic-col">
+        <div class="node critic">
+          <h3>critic <span class="op">MLP 1309→128→128→1</span></h3>
+          <p class="desc"><b>獨立價值網</b>,自己的權重、自己的簡易編碼器——<b>與策略完全解耦</b>。
+            價值 MSE 不會擾動策略表徵。</p>
+          <div class="concat">
+            <span class="chip l"><span class="nm">entities_flat</span><span class="d">1210</span></span>
+            <span class="chip plus">+</span>
+            <span class="chip l"><span class="nm">resources</span><span class="d">4</span></span>
+            <span class="chip plus">+</span>
+            <span class="chip l"><span class="nm">end_features</span><span class="d">20</span></span>
+            <span class="chip plus">+</span>
+            <span class="chip l"><span class="nm">skill_pool</span><span class="d">66</span></span>
+            <span class="chip plus">+</span>
+            <span class="chip l"><span class="nm">decision_ctx</span><span class="d">9</span></span>
+          </div>
+          <p class="eq" style="margin-top:8px">= <b>1309</b> → <b class="mono">V(s) [B]</b></p>
+          <p class="why"><b>skill_pool</b>(可用技能特徵的遮罩平均)讓 critic 分得出「大招/戰技骰還在」與「已用掉」,
+            否則 PPO advantage 偏誤會把近戰連招職業推離攻擊。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="flow"><div class="bar"></div>
+    <span class="tag">pick_action · 階層取樣</span><span class="chev">▼</span></div>
+
+  <!-- ACTION -->
+  <section class="band">
+    <p class="band-label">06 · Action <span class="cn">階層式動作組裝 + 決策層遮罩</span></p>
+    <div class="row">
+      <div class="node input" style="flex:1 1 100%">
+        <h3>end → skill →(entity ｜ grid)</h3>
+        <p class="desc"><span class="mono">σ(end_logit) &gt; 0.5</span> → 結束本子回合。否則從 skill_logits 選技能;
+          再依該技能的 <span class="mono">target_type</span> 走 entity 頭(打單體/治療)或 grid 頭(POINT/LINE/CONE 落點)。
+          per-skill 條件結構鏡射引擎的動作語義,治好了舊版共享頭「grid 塌到 cell 0、entity 塌到 self」的聯合-邊際問題。</p>
+        <p class="why">取樣<b>之前</b>,<span class="mono">apply_resource_mask</span> / <span class="mono">apply_entity_mask</span>
+          先遮掉引擎會拒絕或效果為 null 的招/目標:資源不足、射程外、無視線、滿血硬補、重複 dodge 等。
+          <b>沒有免疫空砸遮罩</b>——選對傷害型完全交給策略,不由決策層代勞。</p>
+      </div>
+    </div>
+  </section>
+
+  <div class="foot">
+    <h4>改結構前必讀 — 被架構硬保證的不變量</h4>
+    <ul>
+      <li><b>免疫沒有手寫特徵,只有一條學習通路。</b> 抗性/免疫從 obs(I_DESC_RESIST)→ entity_mlp →
+        <code>ent_emb</code> → <code>sk_ent_ctx</code> 注意力 →(skill / entity 頭)。決策層也不再有免疫空砸遮罩。
+        要判斷模型有沒有真的會讀免疫,只能看這條路的行為(如歸零敵抗性欄,看選型是否塌回亂猜)。</li>
+      <li><b>skill / entity 頭不吃 h,grid 頭吃。</b> h 對「選招」的 20 槽、對「選目標」某招下的 10 實體都是<b>同一個常數</b>
+        → 在那兩個 softmax 會被消掉(死權重、零梯度,實測歸零 h 欄選擇差 &lt;1e-7),故移除。grid 頭 <b>保留</b> h——
+        query·cell 逐格不同,h 真的影響落點。身分要影響選招得靠 <code>codeword</code>(逐招不同的乘法項)。</li>
+      <li><b>end_head 刻意不吃 h。</b> 它只讀 <code>end_features + self_threat + self_reach</code>。若你為了「更強」把 h 接進去,
+        會重新打開「輸棋→梯度漂移→提早結束」那條退化路徑(已量測)。</li>
+      <li><b>self-indexed 讀取取代全域池化。</b> 位置靠取 slot 0 / 取自己那格進入 h;任何改回 <code>mean(1)</code> / 空間 pool 的動作,
+        都要先跑位置敏感度診斷。</li>
+      <li><b>codeword 是加法雙線性項,不是 concat 欄。</b> 它 += 進 skill_logits;因為 <code>h</code> 是每格廣播的常數、
+        在 softmax 會被消掉,身分訊號必須用這種<b>逐招不同</b>的乘法項才動得了選擇。</li>
+    </ul>
+    <h4 style="margin-top:16px">想要工具自動產的版本?</h4>
+    <ul>
+      <li><b>逐層參數表(純 Python,無系統依賴):</b> <code>pip install torchinfo</code> →
+        <code>torchinfo.summary(net, input_data=obs)</code>。會列出所有 nn.Module 的形狀與參數量,
+        但抓不到上面琥珀色那些 functional 現算(它們不是 Module)。</li>
+      <li><b>模組級資料流圖:</b> <code>pip install torchview</code> ＋系統 Graphviz。追蹤 forward 產 <code>.svg</code>,
+        會把 bmm/gather/attention 畫成散算子——比這張雜,但可交叉核對形狀。</li>
+      <li>這張圖是我依 <code>forward()</code> 逐行手繪、形狀從現行網實測,重點在<b>語義</b>而非算子。</li>
+    </ul>
+  </div>
+</div>
+
+<script>
+  (function () {
+    var root = document.documentElement;
+    function apply(t) { root.setAttribute("data-theme", t); }
+    try {
+      var mq = window.matchMedia("(prefers-color-scheme: dark)");
+      // respect OS by default; the artifact host may stamp data-theme itself.
+      if (!root.getAttribute("data-theme")) apply(mq.matches ? "dark" : "light");
+      mq.addEventListener && mq.addEventListener("change", function (e) {
+        apply(e.matches ? "dark" : "light");
+      });
+    } catch (e) {}
+  })();
+</script>
