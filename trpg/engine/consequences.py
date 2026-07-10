@@ -227,3 +227,127 @@ def _x_rep(p, world, ctx):
 
 
 _register(ConsequenceTemplate("REP_FACTION", _v_rep, _x_rep))
+
+
+# ── OBJ_STATE / TRANSACT / RESOURCE / CONDITION ─────────────────────────────
+
+# 物件狀態機：通用合法轉移（之後可按物件類別細化；未列出的轉移一律非法）
+OBJ_TRANSITIONS = {
+    ("完好", "損壞"), ("損壞", "毀壞"), ("完好", "毀壞"), ("損壞", "完好"),
+    ("鎖上", "開啟"), ("開啟", "鎖上"),
+    ("隱藏", "可見"), ("可見", "隱藏"),
+    ("開啟", "下毒"), ("完好", "下毒"),
+}
+
+RESOURCE_CATALOG = {"hp", "補給", "彈藥"}
+
+SOCIAL_CONDITIONS = {"中毒", "受傷", "迷醉", "昏睡", "束縛", "通緝", "受詛咒",
+                     "被判有罪", "偽裝"}
+
+
+def _v_obj_state(p, world, ctx):
+    oid, new = p.get("object_id"), p.get("new_state")
+    cur = world.social.object_states.get(oid)
+    if cur is None:
+        return [f"OBJ_STATE: 物件 {oid!r} 未登記（不可無中生有——先 SPAWN）"]
+    if (cur, new) not in OBJ_TRANSITIONS:
+        return [f"OBJ_STATE: {cur} → {new} 不是合法轉移"]
+    return []
+
+
+def _x_obj_state(p, world, ctx):
+    old = world.social.object_states[p["object_id"]]
+    world.social.object_states[p["object_id"]] = p["new_state"]
+    return f"{p['object_id']}：{old} → {p['new_state']}"
+
+
+_register(ConsequenceTemplate("OBJ_STATE", _v_obj_state, _x_obj_state))
+
+
+def _gear_of(world, eid):
+    c = world.characters.get(eid)
+    return c.gear if c is not None else None
+
+
+def _v_transact(p, world, ctx):
+    kind = p.get("kind")
+    if kind == "money":
+        amt = p.get("amount")
+        if not isinstance(amt, int) or amt <= 0:
+            return ["TRANSACT: amount 必須是正整數"]
+        if world.social.accounts.get(p.get("src"), 0) < amt:
+            return [f"TRANSACT: {p.get('src')!r} 持有金錢不足（轉出方必須確實持有）"]
+        return []
+    if kind == "item":
+        gear = _gear_of(world, p.get("src"))
+        if gear is None or p.get("item") not in gear:
+            return [f"TRANSACT: {p.get('src')!r} 未持有 {p.get('item')!r}"]
+        if _gear_of(world, p.get("dst")) is None:
+            return [f"TRANSACT: 收受方 {p.get('dst')!r} 不存在"]
+        return []
+    return [f"TRANSACT: 未知 kind {kind!r}"]
+
+
+def _x_transact(p, world, ctx):
+    if p["kind"] == "money":
+        s = world.social.accounts
+        s[p["src"]] = s.get(p["src"], 0) - p["amount"]
+        s[p["dst"]] = s.get(p["dst"], 0) + p["amount"]
+        return f"{p['src']} 付給 {p['dst']} {p['amount']} 金"
+    _gear_of(world, p["src"]).remove(p["item"])
+    _gear_of(world, p["dst"]).append(p["item"])
+    return f"{p['item']} 由 {p['src']} 轉手給 {p['dst']}"
+
+
+_register(ConsequenceTemplate("TRANSACT", _v_transact, _x_transact))
+
+
+def _v_resource(p, world, ctx):
+    if p.get("resource") not in RESOURCE_CATALOG:
+        return [f"RESOURCE: {p.get('resource')!r} 不在資源目錄 {sorted(RESOURCE_CATALOG)}"]
+    if not isinstance(p.get("delta"), int):
+        return ["RESOURCE: delta 必須是整數"]
+    if p["resource"] == "hp" and p.get("entity") not in world.characters:
+        return [f"RESOURCE: 實體 {p.get('entity')!r} 不存在"]
+    return []
+
+
+def _x_resource(p, world, ctx):
+    if p["resource"] == "hp":
+        c = world.characters[p["entity"]]
+        old = c.hp
+        c.hp = max(0, min(c.max_hp, c.hp + p["delta"]))
+        return f"{c.name} HP {old} → {c.hp}"
+    key = (p["entity"], p["resource"])
+    old = world.social.resources.get(key, 0)
+    world.social.resources[key] = max(0, old + p["delta"])
+    return f"{p['entity']} 的{p['resource']} {old} → {world.social.resources[key]}"
+
+
+_register(ConsequenceTemplate("RESOURCE", _v_resource, _x_resource))
+
+
+def _v_condition(p, world, ctx):
+    errs = []
+    if p.get("status") not in SOCIAL_CONDITIONS:
+        errs.append(f"CONDITION: {p.get('status')!r} 不在狀態目錄")
+    op = p.get("op", "+")
+    if op not in ("+", "-"):
+        errs.append("CONDITION: op 必須是 '+' 或 '-'")
+    if op == "-":
+        cur = world.social.conditions.get(p.get("entity"), [])
+        if not any(c["status"] == p.get("status") for c in cur):
+            errs.append(f"CONDITION: {p.get('entity')!r} 身上沒有 {p.get('status')!r}（−解需狀態在身）")
+    return errs
+
+
+def _x_condition(p, world, ctx):
+    lst = world.social.conditions.setdefault(p["entity"], [])
+    if p.get("op", "+") == "+":
+        lst.append({"status": p["status"], "until_min": p.get("until_min")})
+        return f"{p['entity']} 獲得狀態：{p['status']}"
+    lst[:] = [c for c in lst if c["status"] != p["status"]]
+    return f"{p['entity']} 解除狀態：{p['status']}"
+
+
+_register(ConsequenceTemplate("CONDITION", _v_condition, _x_condition))
