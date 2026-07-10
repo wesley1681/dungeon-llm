@@ -482,3 +482,198 @@ def _x_standing_rule(p, world, ctx):
 
 
 _register(ConsequenceTemplate("STANDING_RULE", _v_standing_rule, _x_standing_rule))
+
+
+# ── SPAWN / ENTITY_REMOVE / RECRUIT / TRAVEL / AGGREGATE_STATE ──────────────
+
+SPAWN_SOURCES = {"oracle", "craft", "recruit_org", "collective"}
+AGGREGATE_VARS = {"物價", "供給", "民心", "治安"}
+AGGREGATE_DEFAULT = 5
+
+
+def _v_spawn(p, world, ctx):
+    errs = []
+    kind, eid = p.get("kind"), p.get("entity_id")
+    if p.get("source") not in SPAWN_SOURCES:
+        errs.append(f"SPAWN: 來源 {p.get('source')!r} 不合法（{sorted(SPAWN_SOURCES)}）")
+    if not eid:
+        errs.append("SPAWN: entity_id 必填")
+    if kind == "npc":
+        if eid in world.social.npc_cards:
+            errs.append(f"SPAWN: NPC {eid!r} 已存在")
+        if not p.get("name"):
+            errs.append("SPAWN(npc): name 必填")
+    elif kind == "organization":
+        if eid in world.social.factions:
+            errs.append(f"SPAWN: 組織 {eid!r} 已存在")
+    elif kind == "item":
+        dst = p.get("dst")
+        if dst is not None and dst not in world.characters:
+            errs.append(f"SPAWN(item): 持有者 {dst!r} 不存在")
+    elif kind == "location":
+        if eid in world.social.spawned_locations:
+            errs.append(f"SPAWN: 地點 {eid!r} 已存在")
+    else:
+        errs.append(f"SPAWN: 未知 kind {kind!r}")
+    return errs
+
+
+def _x_spawn(p, world, ctx):
+    from .social_state import NPCCard, Faction
+    kind, eid = p["kind"], p["entity_id"]
+    if kind == "npc":
+        world.social.npc_cards[eid] = NPCCard(
+            npc_id=eid, name=p["name"], goals=list(p.get("goals", [])),
+            disposition={"party": p.get("disposition", 0)},
+            insight=p.get("insight", 12), will=p.get("will", 12),
+            faction_id=p.get("faction_id"))
+        return f"新人物登場：{p['name']}"
+    if kind == "organization":
+        world.social.factions[eid] = Faction(faction_id=eid, name=p.get("name", eid))
+        return f"新組織成立：{p.get('name', eid)}"
+    if kind == "item":
+        dst = p.get("dst")
+        if dst is not None:
+            world.characters[dst].gear.append(eid)
+            return f"{dst} 獲得了 {eid}"
+        world.social.object_states[eid] = p.get("state", "完好")
+        return f"出現了 {eid}"
+    world.social.spawned_locations[eid] = {"name": p.get("name", eid),
+                                           "desc": p.get("desc", "")}
+    return f"發現新地點：{p.get('name', eid)}"
+
+
+_register(ConsequenceTemplate("SPAWN", _v_spawn, _x_spawn))
+
+
+def _v_entity_remove(p, world, ctx):
+    errs = []
+    card = _require_card(world, p.get("entity_id"))
+    if card is None:
+        return [f"ENTITY_REMOVE: {p.get('entity_id')!r} 沒有 NPC 卡"]
+    if card.removed:
+        errs.append(f"ENTITY_REMOVE: {card.name} 已被移除")
+    if p.get("way") not in ("死亡", "俘虜", "驅離"):
+        errs.append("ENTITY_REMOVE: way 必須是 死亡/俘虜/驅離")
+    r = ctx.get("ruling") or {}
+    if not (r.get("kind") == "check" and r.get("success")):
+        errs.append("ENTITY_REMOVE: 須附成功的檢定裁決（無助前提由裁決層背書；"
+                    "清醒有備者必須走 START_COMBAT）")
+    return errs
+
+
+def _x_entity_remove(p, world, ctx):
+    s = world.social
+    card = s.npc_cards[p["entity_id"]]
+    card.removed = p["way"]
+    # 外向引用處置（壓測漏洞7）：己方常駐規則停用；雙向承諾轉 orphaned（不蒸發）
+    for rule in s.standing_rules.values():
+        if rule.owner == p["entity_id"]:
+            rule.active = False
+    for pr in s.promises.values():
+        if pr.status == "open" and p["entity_id"] in (pr.a, pr.b):
+            pr.status = "orphaned"
+    if p.get("leave_corpse") and p["way"] == "死亡":
+        s.object_states[f"屍體:{card.name}"] = "可見"
+    return f"{card.name} 被{p['way']}，退出社會層"
+
+
+_register(ConsequenceTemplate("ENTITY_REMOVE", _v_entity_remove, _x_entity_remove))
+
+
+def _v_recruit(p, world, ctx):
+    errs = []
+    card = _require_card(world, p.get("entity_id"))
+    if card is None:
+        return [f"RECRUIT: {p.get('entity_id')!r} 沒有 NPC 卡"]
+    if card.removed:
+        errs.append(f"RECRUIT: {card.name} 已被移除")
+    if card.recruited:
+        errs.append(f"RECRUIT: {card.name} 已在名冊上")
+    if not isinstance(p.get("loyalty"), int) or not (1 <= p["loyalty"] <= 10):
+        errs.append("RECRUIT: loyalty 必須是 1~10 整數")
+    wage = p.get("wage")
+    if wage is not None and (not isinstance(wage.get("amount"), int)
+                             or wage["amount"] <= 0
+                             or not wage.get("interval_days")):
+        errs.append("RECRUIT: wage 須含正整數 amount 與 interval_days")
+    return errs
+
+
+def _x_recruit(p, world, ctx):
+    card = world.social.npc_cards[p["entity_id"]]
+    card.recruited = {"role": p.get("role", ""), "loyalty": p["loyalty"]}
+    wage = p.get("wage")
+    if wage:
+        from .social_state import StandingRule
+        rid = f"wage:{p['entity_id']}"
+        world.social.standing_rules[rid] = StandingRule(
+            rule_id=rid, owner=ctx["actor"],
+            trigger={"kind": "periodic", "interval_days": wage["interval_days"]},
+            effects=[{"template": "TRANSACT",
+                      "params": {"kind": "money", "amount": wage["amount"],
+                                 "src": ctx["actor"], "dst": p["entity_id"]}}],
+            last_fired_day=world.social.day)
+    return f"{card.name} 加入名冊（{p.get('role', '')}）"
+
+
+_register(ConsequenceTemplate("RECRUIT", _v_recruit, _x_recruit))
+
+
+def _v_travel(p, world, ctx):
+    dest = p.get("dest")
+    if dest in world.social.spawned_locations:
+        return []
+    dmap = world.dungeon_map
+    if dmap is None or dest not in getattr(dmap, "rooms", {}):
+        return [f"TRAVEL: 目的地 {dest!r} 不存在"]
+    mode = p.get("mode", "徒步")
+    if mode == "徒步" and dest not in dmap.current_room.exits.values():
+        return [f"TRAVEL: {dest!r} 與當前位置不連通（徒步）"]
+    if mode == "已知節點" and not dmap.rooms[dest].visited:
+        return [f"TRAVEL: {dest!r} 不是已知節點（傳送需已知或視線）"]
+    return []
+
+
+def _x_travel(p, world, ctx):
+    dest = p["dest"]
+    dmap = world.dungeon_map
+    fact = f"隊伍抵達 {dest}"
+    if dmap is not None and dest in getattr(dmap, "rooms", {}):
+        dmap.current_room_id = dest
+        dmap.current_room.visited = True
+        fact = f"隊伍抵達 {dmap.current_room.name}"
+    else:
+        world.social.flags.add(f"at:{dest}")
+    hours = p.get("hours", 0)
+    if hours:
+        from .social_time import advance_time
+        advance_time(world, int(hours * 60))
+        fact += f"（耗時 {hours} 小時）"
+    return fact
+
+
+_register(ConsequenceTemplate("TRAVEL", _v_travel, _x_travel))
+
+
+def _v_aggregate(p, world, ctx):
+    errs = []
+    if p.get("var") not in AGGREGATE_VARS:
+        errs.append(f"AGGREGATE_STATE: {p.get('var')!r} 不在聚合變數目錄")
+    if not p.get("region"):
+        errs.append("AGGREGATE_STATE: region 必填")
+    if not isinstance(p.get("delta"), int) or not (1 <= abs(p["delta"]) <= 3):
+        errs.append("AGGREGATE_STATE: delta 必須是 ±1~3 的整數")
+    return errs
+
+
+def _x_aggregate(p, world, ctx):
+    key = f"{p['var']}:{p['region']}"
+    eff = _effective_delta(world, ctx, "AGGREGATE_STATE",
+                           {"var": p["var"], "region": p["region"]}, p["delta"])
+    old = world.social.aggregates.get(key, AGGREGATE_DEFAULT)
+    world.social.aggregates[key] = _clamp(old + eff, 0, 10)   # 絕對上下限（壓測漏洞3）
+    return f"{p['region']}的{p['var']}：{old} → {world.social.aggregates[key]}"
+
+
+_register(ConsequenceTemplate("AGGREGATE_STATE", _v_aggregate, _x_aggregate))
