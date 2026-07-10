@@ -15,8 +15,12 @@
 
 實驗端契約（模組頂層需有這兩個函式）：
   build_net(**net_kwargs) -> CombatPolicyNet
-  collect(net, n_steps, seed, *rest) -> (batch_dict, n_episodes)
+  collect(net, n_steps, seed, *rest) -> (batch_dict, n_episodes)             # 或 3-tuple
       batch_dict 需含 "obs"(dict of arrays) 與其餘 1D/2D array 欄位（與 ppo_update 相容）。
+      **可選**：回 (batch_dict, n_episodes, aux_list) 第三個＝逐局附帶資料的 list（如
+      線上強度貨幣要收回主程序 update 的 (隊A,隊B,勝負) 三元組）。用 run_aux 取回。
+  *rest 必須可 pickle（spawn）——closure/lambda 不行，改傳參數在 worker 內重建（見
+   exp_matchup_train.collect：傳 model.to_dict()+draw 參數，worker 內 from_dict/重建 draw）。
 
 用法（在實驗 main 內）：
   from trpg.rl.exp_parallel import ExpParallel
@@ -24,6 +28,7 @@
                    scripts_dir=os.path.dirname(os.path.abspath(__file__)),
                    net_kwargs=dict(skill_combo_dim=8))
   batch, neps = pc.run(net, steps, base_seed, level, opp_level, wmc)   # -> 合併後 batch
+  batch, neps, aux = pc.run_aux(net, steps, base_seed, *rest)          # 需逐局附帶資料時
   ...
   pc.close()
 
@@ -89,8 +94,11 @@ class ExpParallel:
             initargs=(scripts_dir, module_name, net_kwargs or {}),
         )
 
-    def run(self, net, n_steps, base_seed, *rest):
-        """把 n_steps 拆給 workers 個 worker 同時收集。rest 原封傳給 collect()（level 等）。"""
+    def _run(self, net, n_steps, base_seed, rest):
+        """核心：拆 n_steps 給 workers、合併。回 (batch, neps, aux)。
+        aux＝各 worker collect() 第三個回傳（若有）攤平串接的 list——給需要把 rollout
+        逐局附帶資料（如線上強度貨幣的 (隊A,隊B,勝負) 三元組）收回主程序的實驗用；
+        collect() 只回 (batch, neps) 時 aux＝[]（向後相容）。"""
         sd = {k: v.cpu() for k, v in net.state_dict().items()}
         per = max(1, n_steps // self.workers)
         tasks = [(sd, per, base_seed * 131 + i * 100_003, rest)
@@ -98,7 +106,21 @@ class ExpParallel:
         results = self.pool.map(_task, tasks)
         batches = [r[0] for r in results]
         neps = sum(r[1] for r in results)
-        return _merge(batches), neps
+        aux = []
+        for r in results:
+            if len(r) > 2 and r[2]:
+                aux.extend(r[2])
+        return _merge(batches), neps, aux
+
+    def run(self, net, n_steps, base_seed, *rest):
+        """把 n_steps 拆給 workers 個 worker 同時收集。rest 原封傳給 collect()（level 等）。
+        回 (batch, neps)——collect() 的第三個回傳（若有）在此被丟棄，要收就用 run_aux。"""
+        batch, neps, _aux = self._run(net, n_steps, base_seed, rest)
+        return batch, neps
+
+    def run_aux(self, net, n_steps, base_seed, *rest):
+        """同 run，但**保留** collect() 第三個回傳（攤平串接）→ 回 (batch, neps, aux)。"""
+        return self._run(net, n_steps, base_seed, rest)
 
     def close(self):
         self.pool.close()

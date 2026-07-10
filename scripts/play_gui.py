@@ -156,10 +156,23 @@ _envmod.run_legendary_actions = _traced_legendary
 
 
 def load_model(path: str):
-    net = CombatPolicyNet(hidden=128)
-    sd = torch.load(path, map_location="cpu")
-    sd = CombatPolicyNet.adapt_state_dict_for_perarch(sd)
-    net.load_state_dict(sd, strict=False)
+    """Load a policy net for the (blinded) opponent seat.
+
+    Registry checkpoints (those with an ``.arch.json`` sidecar — e.g. v05
+    codeword-noarch-enemyskill from exp_matchup_train) load via the architecture
+    registry: the sidecar picks the CORRECT arch and the load is STRICT, so a
+    wrong-arch checkpoint raises instead of silently loading as garbage (default
+    CombatPolicyNet(hidden=128) mismatches v05 on ~70 params → a near-random net).
+    Pre-registry checkpoints without a sidecar (e.g. uni_v7) keep the legacy
+    default-arch best-effort path."""
+    if os.path.exists(path + ".arch.json"):
+        from trpg.rl import architectures as A
+        net = A.load_net(path)            # sidecar → correct arch, strict (raises on real mismatch)
+    else:
+        net = CombatPolicyNet(hidden=128)
+        sd = CombatPolicyNet.adapt_state_dict_for_perarch(
+            torch.load(path, map_location="cpu"))
+        net.load_state_dict(sd, strict=False)   # legacy, no sidecar
     net.eval()
     return net
 

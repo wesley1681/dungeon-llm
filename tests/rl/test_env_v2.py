@@ -53,6 +53,52 @@ def test_reset_opp_level_defaults_to_symmetric():
     assert env.ws.characters[env.opp_ids[0]].level == 4
 
 
+def test_per_entity_levels_honored_on_mixed_seat():
+    # A mixed monster+class team: each entity carries its OWN level, not the
+    # seat scalar (the whole point — a monster keeps its natural_level).
+    from trpg.scenarios.monsters import register_monsters, MONSTER_DEFS
+    register_monsters()
+    env = CombatEnvV2(seed=1, n_agents=2, n_opps=1)
+    env.reset(agent_archs=["champion", "goblin"], opp_archs=["orc"],
+              agent_levels=[6, MONSTER_DEFS["goblin"].natural_level],
+              opp_levels=[3])
+    assert env.agent_levels == [6, MONSTER_DEFS["goblin"].natural_level]
+    assert env.opp_levels == [3]
+    assert env.ws.characters[env.agent_ids[0]].level == 6
+    assert env.ws.characters[env.agent_ids[1]].level == MONSTER_DEFS["goblin"].natural_level
+    assert env.ws.characters[env.opp_ids[0]].level == 3
+
+
+def test_per_entity_levels_default_to_seat_scalar():
+    # None / short lists fall back to the seat scalar -> bit-identical to the
+    # historical single-level path.
+    env = CombatEnvV2(seed=1, n_agents=2, n_opps=2)
+    env.reset(agent_archs=["champion", "life"], opp_archs=["champion", "life"],
+              level=5, opp_level=7)
+    assert env.agent_levels == [5, 5]
+    assert env.opp_levels == [7, 7]
+    # a SHORT list fills only the given prefix, rest fall back to scalar
+    env.reset(agent_archs=["champion", "life"], opp_archs=["champion", "life"],
+              agent_levels=[8], level=5, opp_level=7)
+    assert env.agent_levels == [8, 5]
+
+
+def test_per_entity_levels_fix_monster_proficiency_fidelity():
+    # The bug this closes: a monster on a mixed team, given the seat scalar,
+    # gets buffed proficiency. Per-entity natural_level restores fidelity.
+    from trpg.scenarios.monsters import register_monsters, MONSTER_DEFS
+    register_monsters()
+    env = CombatEnvV2(seed=1, n_agents=2, n_opps=1)
+    # buffed path: goblin inherits team level 5
+    env.reset(agent_archs=["champion", "goblin"], opp_archs=["orc"], level=5)
+    buffed = env.ws.characters[env.agent_ids[1]].proficiency_bonus
+    # fidelity path: goblin pinned to its natural_level
+    env.reset(agent_archs=["champion", "goblin"], opp_archs=["orc"],
+              agent_levels=[5, MONSTER_DEFS["goblin"].natural_level], level=5)
+    natural = env.ws.characters[env.agent_ids[1]].proficiency_bonus
+    assert natural < buffed
+
+
 def test_reset_seed_is_reproducible():
     env1 = CombatEnvV2(seed=42, n_agents=1, n_opps=1)
     env2 = CombatEnvV2(seed=42, n_agents=1, n_opps=1)

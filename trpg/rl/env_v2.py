@@ -142,6 +142,8 @@ class CombatEnvV2:
         self._opp_ids: tuple[str, ...] = ()
         self.agent_archs: list[str] = []
         self.opp_archs: list[str] = []
+        self.agent_levels: list[int] = []
+        self.opp_levels: list[int] = []
         self._opp_policies: dict[str, Any] = {}
         self._opponent_override = None
         self._opponent_blind = True
@@ -187,10 +189,21 @@ class CombatEnvV2:
               layout: str | None = None,
               seed: int | None = None,
               agent_archs: list[str] | None = None,
-              opp_archs: list[str] | None = None) -> tuple[dict, dict]:
+              opp_archs: list[str] | None = None,
+              agent_levels: list[int] | None = None,
+              opp_levels: list[int] | None = None) -> tuple[dict, dict]:
         """``level`` sets the agent side; ``opp_level`` the opponent side
         (default: same as ``level`` — the historical symmetric behaviour).
-        A cross-side gap creates asymmetric encounters (stomp / be stomped)."""
+        A cross-side gap creates asymmetric encounters (stomp / be stomped).
+
+        ``agent_levels`` / ``opp_levels`` override the level PER ENTITY (index i
+        of the seat); entries missing/short fall back to the seat scalar. This is
+        what a mixed monster+class team needs — each monster carries its own
+        ``natural_level`` (prof/DC/obs threat-scale fidelity) while classmates
+        keep theirs, instead of the whole seat sharing one ``level``. Callers own
+        the per-entity level policy; the env never auto-substitutes a monster's
+        natural_level (eval_gate's NvM buckets pin monsters to CALIBRATED levels,
+        not natural ones). Both None ⇒ bit-identical to the historical path."""
         if seed is not None:
             self._rng = random.Random(seed)
         lvl = level if level is not None else self._rng.randint(3, 8)
@@ -219,14 +232,28 @@ class CombatEnvV2:
             for i in range(n_opps)
         ]
 
+        # Per-entity level (index i of the seat); short/None ⇒ seat scalar.
+        self.agent_levels = [
+            (agent_levels[i] if agent_levels is not None and i < len(agent_levels)
+             else lvl)
+            for i in range(n_agents)
+        ]
+        self.opp_levels = [
+            (opp_levels[i] if opp_levels is not None and i < len(opp_levels)
+             else opp_lvl)
+            for i in range(n_opps)
+        ]
+
         chars: dict = {}
-        for aid, arch in zip(self._agent_ids, self.agent_archs):
-            c = ARCHETYPE_FACTORIES[arch](level=lvl)
+        for aid, arch, elvl in zip(self._agent_ids, self.agent_archs,
+                                   self.agent_levels):
+            c = ARCHETYPE_FACTORIES[arch](level=elvl)
             c.char_id = aid
             c.is_npc = False
             chars[aid] = c
-        for oid, arch in zip(self._opp_ids, self.opp_archs):
-            c = ARCHETYPE_FACTORIES[arch](level=opp_lvl)
+        for oid, arch, elvl in zip(self._opp_ids, self.opp_archs,
+                                   self.opp_levels):
+            c = ARCHETYPE_FACTORIES[arch](level=elvl)
             c.char_id = oid
             c.is_npc = True
             c.attitude = 0
@@ -275,7 +302,8 @@ class CombatEnvV2:
             # dropping them here used to silently swap the comp to random).
             return self.reset(seed=(seed or 0) + 99999,
                               level=level, opp_level=opp_level, layout=layout,
-                              agent_archs=agent_archs, opp_archs=opp_archs)
+                              agent_archs=agent_archs, opp_archs=opp_archs,
+                              agent_levels=agent_levels, opp_levels=opp_levels)
         self._prev_phi = self._potential()
         return build_obs(self.ws, self._current_agent_id, self.resources), {}
 
