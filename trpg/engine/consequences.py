@@ -351,3 +351,85 @@ def _x_condition(p, world, ctx):
 
 
 _register(ConsequenceTemplate("CONDITION", _v_condition, _x_condition))
+
+
+# ── TIME_ADVANCE / CLOCK_MODIFY / CLOCK_SPAWN ───────────────────────────────
+
+def _v_time_advance(p, world, ctx):
+    m = p.get("minutes")
+    if not isinstance(m, int) or m <= 0:
+        return ["TIME_ADVANCE: minutes 必須是正整數"]
+    return []
+
+
+def _x_time_advance(p, world, ctx):
+    from .social_time import advance_time
+    facts = advance_time(world, p["minutes"])
+    hours = p["minutes"] / 60
+    lead = f"時間推進 {hours:.1f} 小時"
+    return "；".join([lead] + facts) if facts else lead
+
+
+_register(ConsequenceTemplate("TIME_ADVANCE", _v_time_advance, _x_time_advance))
+
+
+def _v_clock_modify(p, world, ctx):
+    errs = []
+    clock = world.social.clocks.get(p.get("clock_id"))
+    if clock is None:
+        return [f"CLOCK_MODIFY: 時鐘 {p.get('clock_id')!r} 不存在"]
+    d = p.get("delta_days")
+    if not isinstance(d, (int, float)) or not (0 < abs(d) <= 2):
+        errs.append("CLOCK_MODIFY: |delta_days| 必須 ≤ 2 且非零")
+    # 壓測漏洞4：延後（+）自己擁有的時鐘須付代價＝附成功的 check 裁決
+    if isinstance(d, (int, float)) and d > 0 and clock.owner == ctx["actor"]:
+        r = ctx.get("ruling") or {}
+        if not (r.get("kind") == "check" and r.get("success")):
+            errs.append("CLOCK_MODIFY: 延後自己擁有的時鐘須通過檢定（無阻力≠自動成功的例外）")
+    return errs
+
+
+def _x_clock_modify(p, world, ctx):
+    c = world.social.clocks[p["clock_id"]]
+    old = c.remaining_days
+    c.remaining_days = max(0.0, c.remaining_days + p["delta_days"])
+    return f"時鐘「{c.name}」{old:.1f} 天 → {c.remaining_days:.1f} 天"
+
+
+_register(ConsequenceTemplate("CLOCK_MODIFY", _v_clock_modify, _x_clock_modify))
+
+
+_FORBIDDEN_IN_EXPIRE = {"TIME_ADVANCE", "STANDING_RULE"}
+
+
+def _v_clock_spawn(p, world, ctx):
+    errs = []
+    cid = p.get("clock_id")
+    if not cid or not p.get("name"):
+        errs.append("CLOCK_SPAWN: clock_id 與 name 必填")
+    if cid in world.social.clocks:
+        errs.append(f"CLOCK_SPAWN: {cid!r} 已存在")
+    if not isinstance(p.get("days"), (int, float)) or p["days"] < 0:
+        errs.append("CLOCK_SPAWN: days 必須 ≥ 0")
+    for inst in p.get("on_expire", []):
+        t = inst.get("template")
+        if t in _FORBIDDEN_IN_EXPIRE:
+            errs.append(f"CLOCK_SPAWN: 到期束不得含 {t}")
+        if t == "CLOCK_SPAWN" and inst.get("params", {}).get("clock_id") == cid:
+            errs.append("CLOCK_SPAWN: 到期束不得重生自身（不朽時鐘）")
+        if t == "CLOCK_MODIFY" and inst.get("params", {}).get("clock_id") == cid:
+            errs.append("CLOCK_SPAWN: 到期束不得修改自身")
+        if t not in CONSEQUENCE_REGISTRY:
+            errs.append(f"CLOCK_SPAWN: 到期束含未註冊模板 {t!r}")
+    return errs
+
+
+def _x_clock_spawn(p, world, ctx):
+    from .social_state import Clock
+    world.social.clocks[p["clock_id"]] = Clock(
+        clock_id=p["clock_id"], name=p["name"], remaining_days=float(p["days"]),
+        on_expire=list(p.get("on_expire", [])), owner=p.get("owner", ctx["actor"]))
+    return f"新時鐘：{p['name']}（{p['days']} 天）"
+
+
+_register(ConsequenceTemplate("CLOCK_SPAWN", _v_clock_spawn, _x_clock_spawn))
