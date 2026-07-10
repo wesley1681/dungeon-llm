@@ -433,3 +433,52 @@ def _x_clock_spawn(p, world, ctx):
 
 
 _register(ConsequenceTemplate("CLOCK_SPAWN", _v_clock_spawn, _x_clock_spawn))
+
+
+# ── STANDING_RULE ────────────────────────────────────────────────────────────
+
+_FORBIDDEN_IN_RULE = {"STANDING_RULE", "CLOCK_SPAWN", "TIME_ADVANCE"}
+
+
+def _v_standing_rule(p, world, ctx):
+    errs = []
+    if not p.get("rule_id"):
+        errs.append("STANDING_RULE: rule_id 必填")
+    if p.get("rule_id") in world.social.standing_rules:
+        errs.append(f"STANDING_RULE: {p.get('rule_id')!r} 已存在")
+    trig = p.get("trigger", {})
+    kind = trig.get("kind")
+    if kind == "periodic":
+        if not isinstance(trig.get("interval_days"), (int, float)) or trig["interval_days"] <= 0:
+            errs.append("STANDING_RULE: periodic 須 interval_days > 0")
+    elif kind == "conditional":
+        pred = trig.get("predicate")
+        if not isinstance(pred, dict):
+            errs.append("STANDING_RULE: conditional 須附 predicate")
+        else:
+            errs.extend(validate_predicate(pred, world))
+    else:
+        errs.append(f"STANDING_RULE: 未知 trigger kind {kind!r}")
+    if p.get("cancel") is not None:
+        errs.extend(validate_predicate(p["cancel"], world))
+    for inst in p.get("effects", []):
+        t = inst.get("template")
+        if t in _FORBIDDEN_IN_RULE:
+            errs.append(f"STANDING_RULE: 效果束不得含 {t}（防自激迴圈）")
+        elif t not in CONSEQUENCE_REGISTRY:
+            errs.append(f"STANDING_RULE: 效果束含未註冊模板 {t!r}")
+    if not p.get("effects"):
+        errs.append("STANDING_RULE: effects 不得為空")
+    return errs
+
+
+def _x_standing_rule(p, world, ctx):
+    from .social_state import StandingRule
+    world.social.standing_rules[p["rule_id"]] = StandingRule(
+        rule_id=p["rule_id"], owner=p.get("owner", ctx["actor"]),
+        trigger=dict(p["trigger"]), effects=list(p["effects"]),
+        cancel=p.get("cancel"), last_fired_day=world.social.day)
+    return f"常駐規則成立：{p['rule_id']}"
+
+
+_register(ConsequenceTemplate("STANDING_RULE", _v_standing_rule, _x_standing_rule))
