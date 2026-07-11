@@ -634,6 +634,13 @@ class GameSession:
         npc_ctrl  = self.controllers[npc_id]
         npc_char  = ws.characters[npc_id]
 
+        # The player input that opened this conversation (e.g. "走向老柯說話")
+        # has now been fully consumed by the [TALK] that brought us here. Clear
+        # it immediately so that leaving/quitting — which take early-return paths
+        # out of the loop below — can't leave it queued for TagAgent to
+        # re-classify into another [TALK] next turn (== you can never leave).
+        self._tag_actions = []
+
         # Approach cue: re-entry uses a different opening prompt
         prior = [e for e in ws.narrative_log if e["speaker"] == npc_id]
         if prior:
@@ -727,8 +734,7 @@ class GameSession:
                 break
 
         # Conversation finished. GM reads everything from the log on next turn;
-        # TagAgent doesn't need conversation actions queued.
-        self._tag_actions = []
+        # TagAgent's queue was already cleared on entry (see top of method).
         return outcome
 
     _SOCIAL_RE     = re.compile(r'\[SOCIAL:\s*(\w+)\s+<?(\w+)>?(?:\s+DC\d+)?\]', re.IGNORECASE)
