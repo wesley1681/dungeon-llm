@@ -3,11 +3,6 @@ from typing import Optional
 from .character import Character, CombatState
 
 
-def _make_social():
-    from .social_state import SocialState   # lazy — 避免 import 環
-    return SocialState()
-
-
 def _present_in_current_room(ws) -> list[str]:
     """Snapshot of alive characters considered in the current scene.
 
@@ -66,10 +61,6 @@ class WorldState:
     # / combat_policy.LegendaryContext for the payload each receives.
     reaction_decider: Optional[object] = None
     legendary_decider: Optional[object] = None
-
-    # ── 非戰鬥（社會層）state — intent_table.md / consequence_table.md ───────
-    # 一切變更經 consequences.commit_bundle 落帳；這裡只是現值容器。
-    social: object = field(default_factory=lambda: _make_social())
 
     def log_event(self, speaker: str, text: str, *,
                   room_id: Optional[str] = None,
