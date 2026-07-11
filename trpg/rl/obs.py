@@ -476,12 +476,16 @@ def end_features(ws: WorldState, agent_id: str, resources: dict) -> np.ndarray:
     skills = available_skills(agent, ws)
     n_playable = sum(1 for s in skills
                       if s.skill_id not in ("end", "move"))
+    combatants = _combatant_ids(ws)
+    def _in_fight(cid):
+        return combatants is None or cid in combatants
     any_enemy = any(
-        c.is_alive() and ws.is_party_ally(cid) != ws.is_party_ally(agent_id)
+        c.is_alive() and _in_fight(cid)
+        and ws.is_party_ally(cid) != ws.is_party_ally(agent_id)
         for cid, c in ws.characters.items()
     )
     any_ally = any(
-        cid != agent_id and c.is_alive()
+        cid != agent_id and c.is_alive() and _in_fight(cid)
         and ws.is_party_ally(cid) == ws.is_party_ally(agent_id)
         for cid, c in ws.characters.items()
     )
@@ -532,11 +536,30 @@ def terrain_obs(battlefield: Battlefield) -> np.ndarray:
     return grid
 
 
+def _combatant_ids(ws: WorldState):
+    """Ids actually IN this combat (its initiative order), or None when there is
+    no active combat with an order — callers then fall back to the whole world.
+
+    This scopes the policy's view to the REAL fight. In CombatEnvV2 the world
+    holds only the combatants and they are all in initiative_order, so the filter
+    removes nothing → obs is bit-identical (zero RL regression). In the narrative
+    game ws.characters holds EVERY room's monsters + NPCs; without this filter
+    partition_entities pulls in out-of-combat characters that share the default
+    (0,0) position, so the policy sees phantom "enemies" at origin, paths there,
+    and attacks them (bug: an ally walked off and killed a bystander civilian).
+    """
+    combat = getattr(ws, "combat", None)
+    order = getattr(combat, "initiative_order", None) if combat is not None else None
+    return set(order) if order else None
+
+
 def partition_entities(ws: WorldState, agent_id: str) -> tuple[list[str], list[str]]:
     """Partition live characters (excluding self) into (allies, enemies_sorted_by_distance).
 
     Both lists contain char_ids. Enemy ordering is the slot ordering used by
-    entities_obs (slot ENEMY_SLOT_START = enemies[0] = closest).
+    entities_obs (slot ENEMY_SLOT_START = enemies[0] = closest). Restricted to
+    the current combat's participants (see _combatant_ids) so out-of-combat
+    characters — other rooms' monsters, bystander NPCs — are never seen/targeted.
 
     DYING characters (PC at 0 HP making death saves) are INCLUDED — they are
     on the field, can be healed back up (revive) or attacked (finished off),
@@ -546,11 +569,14 @@ def partition_entities(ws: WorldState, agent_id: str) -> tuple[list[str], list[s
     """
     self_char = ws.characters[agent_id]
     is_party = ws.is_party_ally(agent_id)
+    combatants = _combatant_ids(ws)
     allies: list[str] = []
     enemies: list[str] = []
     for cid, c in ws.characters.items():
         if cid == agent_id or c.is_dead():
             continue
+        if combatants is not None and cid not in combatants:
+            continue   # not in THIS fight (other room / bystander at origin)
         other_is_party = ws.is_party_ally(cid)
         if is_party == other_is_party:
             allies.append(cid)
