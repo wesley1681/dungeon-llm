@@ -13,6 +13,7 @@ Run:  python -m trpg.desktop
 """
 from __future__ import annotations
 import sys
+import pathlib
 import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox
 
@@ -31,6 +32,13 @@ _PUMP_MS = 40          # event-poll cadence (ms) on the tk main loop
 _BATTLE_PX = 560       # battlefield image side (px)
 _MELEE_FONT = ("Microsoft JhengHei", 11)
 _MONO_FONT = ("Consolas", 10)
+
+# Combat trace log (repo root, overwritten each launch). The desktop transcript
+# is in-memory only; this file is what to hand Claude when a fight misbehaves —
+# it records the full roster (team / attitude / position / HP / driving policy),
+# every round, every action, so a bug ("civilian dragged into the fight", "ally
+# hides in a corner") can be diagnosed from data instead of guessed at.
+_LOG_PATH = pathlib.Path(__file__).resolve().parent.parent / "desktop_game_log.txt"
 
 # skills handled by dedicated buttons — filtered out of the generated skill list
 # so we never render duplicate move/dodge/end buttons.
@@ -52,6 +60,10 @@ class DesktopApp(tk.Tk):
         self._pending_skill = None         # skill dict awaiting a target/cell click
         self._aim = None                   # None | 'point' | 'enemy' | 'ally'
         self._bf_photo = None              # keep a ref so tk doesn't GC the image
+        try:
+            self._logf = open(_LOG_PATH, "w", encoding="utf-8")
+        except Exception:
+            self._logf = None
 
         self._build_ui()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -127,15 +139,23 @@ class DesktopApp(tk.Tk):
             lines = [f"  • {r}" for r in ev.ok] + [f"  ⚠ {e}" for e in ev.errors]
             if lines:
                 self._append("【機制結算】", "\n".join(lines), "sys")
+                self._log("[TAG] " + " | ".join(ev.ok + [f"ERR:{e}" for e in ev.errors]))
         elif isinstance(ev, ActionResult):
             self._append_inline(f"  〔{ev.summary}〕\n", "result")
+            self._log(f"[ACTION] {ev.actor}｜{ev.debug}｜{ev.summary}")
         elif isinstance(ev, CombatStart):
             self._append("戰鬥", "⚔ 先攻順序：" + "→".join(ev.order), "sys")
+            self._log("\n========== COMBAT START ==========")
+            self._log("先攻順序: " + " → ".join(ev.order))
+            self._dump_roster()
         elif isinstance(ev, RoundStart):
             self._append("回合", f"—— 第 {ev.number} 回合 ——", "sys")
+            self._log(f"\n----- Round {ev.number} -----")
         elif isinstance(ev, CombatEnd):
             loot = f"　可拾取：{'、'.join(ev.loot)}" if ev.loot else ""
             self._append("戰鬥", "✨ 敵人已倒下，戰鬥結束。" + loot, "sys")
+            self._log("---- COMBAT END ----")
+            self._dump_roster()
             self._hide_combat()
         elif isinstance(ev, ExplorationPrompt):
             # narration already arrived as StreamChunks — just open the input.
@@ -146,16 +166,19 @@ class DesktopApp(tk.Tk):
                     ev.aria, ev.ctx, self.world_state)
             self._show_combat()
             self._prompt("combat")
+            self._log("[你的回合] 等待玩家輸入")
         elif isinstance(ev, ConversationPrompt):
             self._append("系統", f"【與 {ev.npc_name} 對話中｜態度：{ev.attitude_label}】"
                                   f"　輸入「離開」結束對話", "sys")
             self._prompt("conversation")
         elif isinstance(ev, StatusMessage):
             self._append("系統", ev.text, "sys")
+            self._log(f"[STATUS] {ev.text}")
         elif isinstance(ev, QuestComplete):
             self._append("系統", f"✅ 任務達成：{ev.title}（回去找 {ev.giver_name} 回報）", "sys")
         elif isinstance(ev, GameOver):
             self._append("系統", f"💀 {ev.reason}", "sys")
+            self._log(f"[GAME OVER] {ev.reason}")
             self._set_input_enabled(False)
             self._awaiting = None
 
@@ -200,6 +223,41 @@ class DesktopApp(tk.Tk):
         self.log.insert("end", text, (tag,))
         self.log.see("end")
         self.log.config(state="disabled")
+
+    # ── combat trace log (desktop_game_log.txt) ─────────────────────────────────
+    def _log(self, msg: str):
+        if self._logf is None:
+            return
+        try:
+            self._logf.write(msg + "\n")
+            self._logf.flush()
+        except Exception:
+            pass
+
+    def _dump_roster(self):
+        """Full roster — the data needed to see who is actually in the fight and
+        why: team (by attitude), position, HP, and which policy drives each."""
+        if self._logf is None:
+            return
+        ws = self.world_state
+        combat = getattr(ws, "combat", None)
+        order = list(combat.initiative_order) if combat else []
+        room = ws.dungeon_map.current_room if getattr(ws, "dungeon_map", None) else None
+        room_npcs = list(room.npc_ids) if room else []
+        self._log(f"當前房間 npc_ids: {room_npcs}")
+        self._log(f"party_ids: {list(ws.party_ids)}   pc_ids: {list(ws.pc_ids)}")
+        self._log("roster (id｜名｜類｜attitude｜HP｜pos｜init｜party｜room｜policy):")
+        for cid, c in ws.characters.items():
+            if not c.is_alive():
+                continue
+            kind = "NPC" if c.is_npc else "PC"
+            pos = getattr(c, "position", None)
+            posf = f"({pos.x:.1f},{pos.y:.1f})" if pos is not None else "?"
+            pol = type((getattr(self.session, "policies", {}) or {}).get(cid)).__name__
+            self._log(
+                f"  {cid:14} {c.name:8} {kind:3} att={getattr(c, 'attitude', '?')} "
+                f"HP={c.hp}/{c.max_hp} {posf} init={cid in order} "
+                f"party={cid in ws.party_ids} room={cid in room_npcs} pol={pol}")
 
     # ── input gating ────────────────────────────────────────────────────────────
     def _set_input_enabled(self, on: bool):
@@ -352,6 +410,11 @@ class DesktopApp(tk.Tk):
             self.session.stop()
         except Exception:
             pass
+        if self._logf is not None:
+            try:
+                self._logf.close()
+            except Exception:
+                pass
         self.destroy()
 
 
