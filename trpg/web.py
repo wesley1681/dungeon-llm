@@ -22,8 +22,11 @@ from .game import (
     ConversationPrompt, StatusMessage, GameOver, QuestComplete,
 )
 from .engine.quests import objective_progress_str
+from .llm import config as llm_config
+from .rl.combat_model import load_combat_policy
+from . import web_combat
 from .cli import (
-    check_ollama, MODEL,
+    check_ollama,
     GM_THINK, GM_SHOW_THINKING, GM_OPTIONS,
     TAG_OPTIONS,
     THOR_THINK, THOR_SHOW_THINKING, THOR_OPTIONS,
@@ -61,16 +64,24 @@ def _aria_status(world_state) -> str:
 
 
 def _init_game() -> dict:
+    try:
+        cfg = llm_config.resolve()
+    except llm_config.BackendConfigError as e:
+        raise RuntimeError(str(e)) from e
+    url, model, bk, api_key = cfg["base_url"], cfg["model"], cfg["backend"], cfg["api_key"]
+    if bk == "ollama":
+        check_ollama(model, url)
+
     world_state = build_world_state()
     session = GameSession(
         world_state = world_state,
-        gm          = GMAgent(model=MODEL, world_state=world_state,
+        gm          = GMAgent(model=model, world_state=world_state,
                               think=GM_THINK, show_thinking=GM_SHOW_THINKING,
-                              options=GM_OPTIONS),
-        tag_agent   = TagAgent(model=MODEL, world_state=world_state,
-                               base_url="http://localhost:11434", backend="ollama",
-                               options=TAG_OPTIONS),
-        thor_agent  = PlayerAgent(model=MODEL,
+                              options=GM_OPTIONS, base_url=url, backend=bk, api_key=api_key),
+        tag_agent   = TagAgent(model=model, world_state=world_state,
+                               base_url=url, backend=bk,
+                               options=TAG_OPTIONS, api_key=api_key),
+        thor_agent  = PlayerAgent(model=model,
                                   char_id="thor",
                                   character=world_state.characters["thor"],
                                   personality=THOR_PERSONALITY,
@@ -78,9 +89,9 @@ def _init_game() -> dict:
                                   combat_tactics=THOR_TACTICS_COMBAT,
                                   world_state=world_state,
                                   think=THOR_THINK, show_thinking=THOR_SHOW_THINKING,
-                                  options=THOR_OPTIONS),
-        npc_agents  = build_npc_agents(world_state, MODEL,
-                                       "http://localhost:11434", "ollama"),
+                                  options=THOR_OPTIONS, base_url=url, backend=bk, api_key=api_key),
+        npc_agents  = build_npc_agents(world_state, model, url, bk, api_key=api_key),
+        default_combat_policy = load_combat_policy(),   # allies+monsters ← general model
     )
     session.start()
     return {"session": session, "world_state": world_state}
@@ -228,6 +239,7 @@ def _consume_until_prompt(state, gm_msgs, thor_msgs, aria_msgs):
 
         # ── CombatEnd ─────────────────────────────────────────────────────────
         elif isinstance(event, CombatEnd):
+            state["combat_view"] = None      # hide the battlefield/controls
             msg = "✨ **所有敵人已倒下！戰鬥結束。**"
             if event.loot:
                 msg += f"\n\n💰 **可拾取：{'、'.join(event.loot)}**\n（告訴GM你想拿什麼）"
@@ -254,13 +266,19 @@ def _consume_until_prompt(state, gm_msgs, thor_msgs, aria_msgs):
 
         # ── CombatPrompt ──────────────────────────────────────────────────────
         elif isinstance(event, CombatPrompt):
+            # Structured state for the GUI battlefield/skill/target controls
+            # (the wrapper reads state["combat_view"] to show them). ctx carries
+            # everything; fall back to text-only if it's absent (older emitters).
+            if event.ctx is not None:
+                state["combat_view"] = web_combat.combat_view_state(
+                    event.aria, event.ctx, world_state)
             if event.info_text:
                 info_block = event.info_text
             else:
                 enemies_str = "、".join(f"{n}（{c}）" for c, n in event.enemies.items())
                 info_block = f"敵人：{enemies_str}"
             aria_msgs.append({"role": "assistant",
-                               "content": (f"**⚔ 輪到你了！**\n\n"
+                               "content": (f"**⚔ 輪到你了！**（可用下方戰場面板操作，或直接打字）\n\n"
                                            f"```\n{info_block}\n```\n\n"
                                            f"{_aria_status(world_state)}")})
             yield gm_msgs[:], thor_msgs[:], aria_msgs[:], state, ""
@@ -296,6 +314,42 @@ def _consume_until_prompt(state, gm_msgs, thor_msgs, aria_msgs):
             return
 
 
+# ── Combat GUI: battlefield image + skill/target controls ──────────────────────
+# The whole thing rides the existing text-command input path: a GUI selection is
+# synthesised into the same command string a player could type (web_combat.
+# command_for), so no new game seam is needed. The wrapper below turns each
+# streamed frame into updates for [battlefield, controls, skill_radio, target].
+
+_BATTLE_PX = 600
+
+
+def _combat_updates(state):
+    """(battlefield_img, combat_controls, skill_radio, target_dropdown) updates
+    for the current frame — read purely from state (world_state + combat_view)."""
+    if not state:
+        return (gr.update(visible=False), gr.update(visible=False),
+                gr.update(), gr.update())
+    ws = state["world_state"]
+    active = bool(getattr(ws, "combat", None) and ws.combat.active)
+    cv = state.get("combat_view")
+    if not active or not ws.combat.initiative_order:
+        return (gr.update(value=None, visible=False), gr.update(visible=False),
+                gr.update(), gr.update())
+    actor_id = cv["actor_id"] if cv else ws.combat.initiative_order[0]
+    img, transform = web_combat.render_battlefield(ws, actor_id, px=_BATTLE_PX)
+    state["view_transform"] = transform      # (ox, oy, scale) — for click→metre mapping
+    if cv:      # the human's turn — show the action controls
+        skills = [s["display_name"] for s in cv["skills"]]
+        targets = list({**cv["enemies"], **cv["allies"]}.values())
+        return (gr.update(value=img, visible=True),
+                gr.update(visible=True),
+                gr.update(choices=skills, value=(skills[0] if skills else None)),
+                gr.update(choices=targets, value=(targets[0] if targets else None)))
+    # an NPC's turn — battlefield only, controls hidden
+    return (gr.update(value=img, visible=True), gr.update(visible=False),
+            gr.update(), gr.update())
+
+
 # ── Opening (page load) ───────────────────────────────────────────────────────
 
 def on_load():
@@ -307,26 +361,69 @@ def on_load():
 
     for gm_msgs, thor_msgs, aria_msgs, state, _ in _consume_until_prompt(
             state, gm_msgs, thor_msgs, aria_msgs):
-        yield gm_msgs, thor_msgs, aria_msgs, state
+        yield (gm_msgs, thor_msgs, aria_msgs, state) + _combat_updates(state)
 
 
-# ── Submit (player action) ────────────────────────────────────────────────────
+# ── Submit (player action — typed OR synthesised from the combat GUI) ──────────
 
 def on_submit(human_input: str,
               gm_msgs: list, thor_msgs: list, aria_msgs: list,
               state: dict):
     if not human_input.strip() or state is None:
-        yield gm_msgs, thor_msgs, aria_msgs, state, ""
+        yield (gm_msgs, thor_msgs, aria_msgs, state, "") + _combat_updates(state)
         return
 
+    state["combat_view"] = None      # player is acting → hide controls until next prompt
     session = state["session"]
     session.submit_player_input(human_input)
     aria_msgs = aria_msgs + [{"role": "user", "content": human_input}]
-    yield gm_msgs, thor_msgs, aria_msgs, state, ""
+    yield (gm_msgs, thor_msgs, aria_msgs, state, "") + _combat_updates(state)
 
     for gm_msgs, thor_msgs, aria_msgs, state, _ in _consume_until_prompt(
             state, gm_msgs[:], thor_msgs[:], aria_msgs[:]):
-        yield gm_msgs, thor_msgs, aria_msgs, state, ""
+        yield (gm_msgs, thor_msgs, aria_msgs, state, "") + _combat_updates(state)
+
+
+def on_combat_act(skill_label, target_label,
+                  gm_msgs, thor_msgs, aria_msgs, state):
+    """Battlefield 'act' button → synthesise a command string → normal submit."""
+    cv = state.get("combat_view") if state else None
+    skill = next((s for s in cv["skills"] if s["display_name"] == skill_label),
+                 None) if cv else None
+    if skill is None:
+        yield (gm_msgs, thor_msgs, aria_msgs, state, "") + _combat_updates(state)
+        return
+    name2id = {n: i for i, n in {**cv["enemies"], **cv["allies"]}.items()}
+    tid = name2id.get(target_label)
+    cmd = web_combat.command_for(skill, target_id=tid, cell=state.get("move_cell"))
+    state["move_cell"] = None
+    yield from on_submit(cmd, gm_msgs, thor_msgs, aria_msgs, state)
+
+
+def on_dodge(gm_msgs, thor_msgs, aria_msgs, state):
+    yield from on_submit("閃避", gm_msgs, thor_msgs, aria_msgs, state)
+
+
+def on_end_turn(gm_msgs, thor_msgs, aria_msgs, state):
+    yield from on_submit("結束", gm_msgs, thor_msgs, aria_msgs, state)
+
+
+def on_grid_click(state, evt: gr.SelectData):
+    """Click a battlefield cell → remember it as the move/AoE destination.
+    Uses the last render's view transform (auto-fit zoom) to map pixel→metre."""
+    if not state:
+        return state, ""
+    ws = state["world_state"]
+    if not (getattr(ws, "combat", None) and ws.combat.active):
+        return state, ""
+    ox, oy, scale = state.get("view_transform", (0.0, 0.0, _BATTLE_PX / 30.0))
+    try:
+        px, py = evt.index
+    except Exception:
+        return state, ""
+    mx, my = round(px / scale + ox, 1), round(py / scale + oy, 1)
+    state["move_cell"] = (mx, my)
+    return state, f"已選格：({mx}, {my})m —— 選「移動」或範圍技能後按〔行動〕"
 
 
 # ── UI ────────────────────────────────────────────────────────────────────────
@@ -348,25 +445,55 @@ def build_ui() -> gr.Blocks:
                 gr.Markdown("### 🗡️ 你（凱恩）")
                 aria_chat = gr.Chatbot(height=550, show_label=False)
 
+        # Combat panel — hidden until a fight starts, then shows the battlefield
+        # (updates every combat action) plus your turn's skill/target controls.
+        with gr.Row():
+            battlefield_img = gr.Image(
+                label="⚔ 戰場（藍=你、綠=隊友、紅=敵人；點格子選移動/範圍目標）",
+                visible=False, interactive=False, height=560)
+            with gr.Column(visible=False, scale=1) as combat_controls:
+                gr.Markdown("**戰鬥操作**")
+                combat_hint = gr.Markdown("")
+                skill_radio = gr.Radio(label="技能", choices=[])
+                target_dropdown = gr.Dropdown(label="目標（單體技能用）", choices=[])
+                with gr.Row():
+                    act_btn = gr.Button("行動", variant="primary")
+                    dodge_btn = gr.Button("閃避")
+                    end_btn = gr.Button("結束回合")
+
         with gr.Row():
             input_box = gr.Textbox(
-                placeholder="輸入你（凱恩）的行動，按 Enter 確認…",
+                placeholder="輸入你（凱恩）的行動，按 Enter 確認…（戰鬥中也可打字）",
                 show_label=False, scale=5,
             )
             submit_btn = gr.Button("確認", scale=1, variant="primary")
 
-        demo.load(fn=on_load, outputs=[gm_chat, thor_chat, aria_chat, state])
+        combat_out = [battlefield_img, combat_controls, skill_radio, target_dropdown]
+        demo.load(fn=on_load, outputs=[gm_chat, thor_chat, aria_chat, state] + combat_out)
 
-        inputs  = [input_box, gm_chat, thor_chat, aria_chat, state]
-        outputs = [gm_chat, thor_chat, aria_chat, state, input_box]
-        submit_btn.click(on_submit, inputs=inputs, outputs=outputs)
-        input_box.submit(on_submit, inputs=inputs, outputs=outputs)
+        full_out = [gm_chat, thor_chat, aria_chat, state, input_box] + combat_out
+        sub_in   = [input_box, gm_chat, thor_chat, aria_chat, state]
+        submit_btn.click(on_submit, inputs=sub_in, outputs=full_out)
+        input_box.submit(on_submit, inputs=sub_in, outputs=full_out)
+
+        quick_in = [gm_chat, thor_chat, aria_chat, state]
+        act_btn.click(on_combat_act,
+                      inputs=[skill_radio, target_dropdown] + quick_in, outputs=full_out)
+        dodge_btn.click(on_dodge, inputs=quick_in, outputs=full_out)
+        end_btn.click(on_end_turn, inputs=quick_in, outputs=full_out)
+        battlefield_img.select(on_grid_click, inputs=[state], outputs=[state, combat_hint])
 
     return demo
 
 
 def main() -> None:
-    check_ollama(MODEL)
+    try:
+        cfg = llm_config.resolve()
+    except llm_config.BackendConfigError as e:
+        print(f"錯誤：{e}")
+        return
+    if cfg["backend"] == "ollama":
+        check_ollama(cfg["model"], cfg["base_url"])
     build_ui().launch(theme=gr.themes.Soft())
 
 

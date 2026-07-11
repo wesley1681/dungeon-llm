@@ -15,6 +15,7 @@ from .scenarios.dungeon import (
     build_world_state, build_npc_agents, OPENING_SCENE,
     THOR_PERSONALITY, THOR_TACTICS_GENERAL, THOR_TACTICS_COMBAT,
 )
+from .llm import config as llm_config
 from .llm.gm_agent import GMAgent
 from .llm.tag_agent import TagAgent
 from .llm.player_agent import PlayerAgent
@@ -25,15 +26,11 @@ from .game import (
     ExplorationPrompt, CombatPrompt,
     ConversationPrompt, StatusMessage, GameOver,
 )
+from .rl.combat_model import load_combat_policy
 
-OLLAMA_URL   = "http://localhost:11434"
-LLAMACPP_URL = "http://localhost:11435"
-BACKEND      = "ollama"
-MODEL        = "qwen3.6-prism"
-LLAMACPP_MODEL = "Qwen3.6-27B-TQ3_4S"
-
-def _backend_url():  return LLAMACPP_URL if BACKEND == "llamacpp" else OLLAMA_URL
-def _active_model(): return LLAMACPP_MODEL if BACKEND == "llamacpp" else MODEL
+# 要用哪個模型/來源，唯一改動的地方是 start_llama_server.ps1 的 $selectedModel；
+# 這裡不再放 BACKEND/MODEL 常數，run_game() 一律讀 start_llama_server.ps1 寫出的
+# _server_config.json（見 trpg/llm/config.py）。
 
 GM_THINK         = False
 GM_SHOW_THINKING = False
@@ -65,12 +62,12 @@ def _read_player_input() -> str:
     return _claude_input() if CLAUDE_TEST else input().strip()
 
 
-def check_ollama(model: str) -> None:
+def check_ollama(model: str, base_url: str) -> None:
     try:
-        r = requests.get(f"{OLLAMA_URL}/api/tags", timeout=5)
+        r = requests.get(f"{base_url}/api/tags", timeout=5)
         r.raise_for_status()
         installed = [m["name"] for m in r.json().get("models", [])]
-        if model not in installed:
+        if model not in installed and f"{model}:latest" not in installed:
             print(f"錯誤：找不到模型 '{model}'\n已安裝：{installed}")
             sys.exit(1)
     except requests.ConnectionError:
@@ -88,12 +85,16 @@ def print_status(world_state) -> None:
 
 
 def run_game() -> None:
-    url   = _backend_url()
-    model = _active_model()
-    bk    = BACKEND
+    try:
+        cfg = llm_config.resolve()
+    except llm_config.BackendConfigError as e:
+        print(f"錯誤：{e}")
+        sys.exit(1)
+
+    url, model, bk, api_key = cfg["base_url"], cfg["model"], cfg["backend"], cfg["api_key"]
 
     if bk == "ollama":
-        check_ollama(model)
+        check_ollama(model, url)
 
     world_state = build_world_state()
 
@@ -101,9 +102,9 @@ def run_game() -> None:
         world_state = world_state,
         gm          = GMAgent(model=model, world_state=world_state,
                               think=GM_THINK, show_thinking=GM_SHOW_THINKING,
-                              options=GM_OPTIONS, base_url=url, backend=bk),
+                              options=GM_OPTIONS, base_url=url, backend=bk, api_key=api_key),
         tag_agent   = TagAgent(model=model, world_state=world_state,
-                               base_url=url, backend=bk, options=TAG_OPTIONS),
+                               base_url=url, backend=bk, options=TAG_OPTIONS, api_key=api_key),
         thor_agent  = PlayerAgent(model=model,
                                   char_id="thor",
                                   character=world_state.characters["thor"],
@@ -112,8 +113,9 @@ def run_game() -> None:
                                   combat_tactics=THOR_TACTICS_COMBAT,
                                   world_state=world_state,
                                   think=THOR_THINK, show_thinking=THOR_SHOW_THINKING,
-                                  options=THOR_OPTIONS, base_url=url, backend=bk),
-        npc_agents  = build_npc_agents(world_state, model, url, bk),
+                                  options=THOR_OPTIONS, base_url=url, backend=bk, api_key=api_key),
+        npc_agents  = build_npc_agents(world_state, model, url, bk, api_key=api_key),
+        default_combat_policy = load_combat_policy(),   # allies+monsters ← general model
     )
 
     print("\n" + "═" * 60)
