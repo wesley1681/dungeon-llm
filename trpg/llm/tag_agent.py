@@ -99,12 +99,13 @@ _SYSTEM = """你是D&D 5e規則裁判。根據玩家行動，決定並輸出需�
 
 class TagAgent:
     def __init__(self, model: str, world_state: WorldState,
-                 base_url: str, backend: str, options: dict = None):
+                 base_url: str, backend: str, options: dict = None, api_key: str = None):
         self.model = model
         self.world_state = world_state
         self.base_url = base_url
         self.backend = backend
         self.options = options or {}
+        self.api_key = api_key
 
     def _system_prompt(self) -> str:
         ws = self.world_state
@@ -196,6 +197,7 @@ class TagAgent:
         result = stream_chat(
             self.base_url, self.model, messages, opts,
             think=False, on_chunk=_on_chunk, backend=self.backend, timeout=30,
+            api_key=self.api_key,
         )
         if not on_chunk:
             print()
@@ -261,6 +263,7 @@ class TagAgent:
         result = stream_chat(
             self.base_url, self.model, messages, opts,
             think=False, on_chunk=None, backend=self.backend, timeout=30,
+            api_key=self.api_key,
         )
         (_DEBUG_DIR / "social_tag_output.txt").write_text(result, encoding="utf-8", errors="replace")
         return result.strip()

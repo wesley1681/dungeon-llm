@@ -43,7 +43,7 @@ class GMAgent:
     def __init__(self, model: str, world_state: WorldState,
                  think: bool = False, show_thinking: bool = False,
                  options: dict = None,
-                 base_url: str = OLLAMA_URL, backend: str = "ollama"):
+                 base_url: str = OLLAMA_URL, backend: str = "ollama", api_key: str = None):
         self.model = model
         self.world_state = world_state
         self.think = think
@@ -51,6 +51,7 @@ class GMAgent:
         self.options = options or {}
         self.base_url = base_url
         self.backend = backend
+        self.api_key = api_key
 
     def _state_block(self) -> str:
         """Per-turn snapshot of room + visible chars. Injected at end of message list."""
@@ -145,6 +146,7 @@ class GMAgent:
         full = stream_chat(
             self.base_url, self.model, messages, self.options,
             think=self.think, on_chunk=_on_chunk, backend=self.backend, timeout=180,
+            api_key=self.api_key,
         )
         if not on_chunk:
             print()
@@ -172,4 +174,5 @@ class GMAgent:
         return stream_chat(
             self.base_url, self.model, messages, opts,
             think=False, on_chunk=on_chunk, backend=self.backend, timeout=60,
+            api_key=self.api_key,
         )

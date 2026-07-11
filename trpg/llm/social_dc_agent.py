@@ -53,11 +53,13 @@ _TYPE_LABELS = {"intimidate": "恐嚇", "persuade": "說服", "deceive": "欺騙
 
 
 class SocialDcAgent:
-    def __init__(self, model: str, base_url: str, backend: str, options: dict = None):
+    def __init__(self, model: str, base_url: str, backend: str, options: dict = None,
+                 api_key: str = None):
         self.model    = model
         self.base_url = base_url
         self.backend  = backend
         self.options  = options or {"temperature": 0.1, "num_predict": 10}
+        self.api_key  = api_key
 
     def estimate(self, social_type: str, attempt_text: str,
                  personality: str, attitude: int, attitude_label: str,
@@ -92,6 +94,7 @@ class SocialDcAgent:
         result = stream_chat(
             self.base_url, self.model, messages, self.options,
             think=False, on_chunk=None, backend=self.backend, timeout=30,
+            api_key=self.api_key,
         )
 
         for word in result.strip().split():

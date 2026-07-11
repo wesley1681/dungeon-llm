@@ -36,7 +36,7 @@ class PlayerAgent:
                  combat_tactics: str = "",
                  think: bool = False, show_thinking: bool = False,
                  options: dict = None,
-                 base_url: str = OLLAMA_URL, backend: str = "ollama"):
+                 base_url: str = OLLAMA_URL, backend: str = "ollama", api_key: str = None):
         self.model = model
         self.char_id = char_id
         self.character = character
@@ -54,6 +54,7 @@ class PlayerAgent:
         self.options = options or {}
         self.base_url = base_url
         self.backend = backend
+        self.api_key = api_key
 
     def _system_prompt(self) -> str:
         c = self.character
@@ -110,6 +111,7 @@ class PlayerAgent:
         full = stream_chat(
             self.base_url, self.model, messages, self.options,
             think=self.think, on_chunk=_on_chunk, backend=self.backend, timeout=120,
+            api_key=self.api_key,
         )
         if not on_chunk:
             print()

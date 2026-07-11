@@ -14,18 +14,18 @@ def _strip_surrogates(s: str) -> str:
 
 def stream_chat(base_url: str, model: str, messages: list, options: dict,
                 think: bool = False, on_chunk=None, backend: str = "ollama",
-                timeout: int = 180) -> str:
+                timeout: int = 180, api_key: str = None) -> str:
     """Stream a chat request. Calls on_chunk(text, thinking=bool) per token.
     Returns the full assistant content string."""
 
     if backend == "ollama":
         return _stream_ollama(base_url, model, messages, options, think, on_chunk, timeout)
     else:
-        return _stream_openai(base_url, model, messages, options, on_chunk, timeout)
+        return _stream_openai(base_url, model, messages, options, on_chunk, timeout, api_key, think)
 
 
 def complete_chat(base_url: str, model: str, messages: list, options: dict,
-                  backend: str = "ollama", timeout: int = 60) -> str:
+                  backend: str = "ollama", timeout: int = 60, api_key: str = None) -> str:
     """Non-streaming chat. Returns full content string."""
 
     if backend == "ollama":
@@ -36,7 +36,8 @@ def complete_chat(base_url: str, model: str, messages: list, options: dict,
         return resp.json().get("message", {}).get("content", "").strip()
     else:
         payload = _openai_payload(model, messages, options, stream=False)
-        resp = requests.post(f"{base_url}/v1/chat/completions", json=payload, timeout=timeout)
+        resp = requests.post(f"{base_url}/v1/chat/completions", json=payload,
+                             headers=_auth_headers(api_key), timeout=timeout)
         resp.raise_for_status()
         choices = resp.json().get("choices", [])
         return choices[0]["message"]["content"].strip() if choices else ""
@@ -77,10 +78,15 @@ def _stream_ollama(base_url, model, messages, options, think, on_chunk, timeout)
     return full
 
 
-def _stream_openai(base_url, model, messages, options, on_chunk, timeout):
-    payload = _openai_payload(model, messages, options, stream=True)
+def _auth_headers(api_key: str = None):
+    return {"Authorization": f"Bearer {api_key}"} if api_key else None
+
+
+def _stream_openai(base_url, model, messages, options, on_chunk, timeout, api_key=None, think=False):
+    payload = _openai_payload(model, messages, options, stream=True, think=think)
     resp = requests.post(f"{base_url}/v1/chat/completions",
-                         json=payload, stream=True, timeout=timeout)
+                         json=payload, headers=_auth_headers(api_key),
+                         stream=True, timeout=timeout)
     resp.raise_for_status()
 
     full = ""
@@ -107,8 +113,15 @@ def _stream_openai(base_url, model, messages, options, on_chunk, timeout):
     return full
 
 
-def _openai_payload(model, messages, options, stream):
+def _openai_payload(model, messages, options, stream, think=False):
     payload = {"model": model, "messages": messages, "stream": stream}
+    # llama-server runs with --reasoning auto, which otherwise routes the model's
+    # <think> section into a separate reasoning_content field we never read —
+    # burning the token budget so small-budget agents (NPC=300, tag=200) hit the
+    # max_tokens cap mid-reasoning and return an EMPTY content string. Honour the
+    # think flag the same way the Ollama path does (payload["think"]): tell the
+    # jinja chat template to skip thinking entirely when think=False.
+    payload["chat_template_kwargs"] = {"enable_thinking": bool(think)}
     if "temperature" in options:
         payload["temperature"] = options["temperature"]
     if "num_predict" in options:

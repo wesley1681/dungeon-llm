@@ -322,7 +322,7 @@ GOBLIN_SHAMAN_PERSONALITY = (
 
 
 def build_npc_agents(world_state: WorldState, model: str,
-                     base_url: str, backend: str) -> dict:
+                     base_url: str, backend: str, api_key: str = None) -> dict:
     """Build all NPC agents for this scenario. Add new NPCs here only."""
     def _agent(cid, personality, tactics="", combat_tactics="",
                combat_reasoning=False,
@@ -341,6 +341,7 @@ def build_npc_agents(world_state: WorldState, model: str,
             world_state=world_state,
             base_url=base_url,
             backend=backend,
+            api_key=api_key,
         )
     civilian_quests = [q for q in world_state.quests.values() if q.giver_id == CIVILIAN_ID]
     return {

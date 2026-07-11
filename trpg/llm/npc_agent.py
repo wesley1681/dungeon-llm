@@ -143,12 +143,13 @@ class NpcAgent:
                  combat_tactics: str = "",
                  combat_reasoning: bool = False,
                  secrets: list[str] = None, reveal_threshold: int = 3,
-                 quests: list[Quest] = None):
+                 quests: list[Quest] = None, api_key: str = None):
         self.model            = model
         self.char_id          = char_id
         self.char             = character
         self.base_url         = base_url
         self.backend          = backend
+        self.api_key          = api_key
         self.world_state      = world_state
         # Reasoning agents need budget for <think>…</think> + action; plain
         # NPCs stay slim. 500 was tight enough that a single verbose model
@@ -180,7 +181,7 @@ class NpcAgent:
         self.pending_join_decision: bool = False        # one-shot: NPC must answer join/decline this turn
         self.recruit_decision: str = ""                 # "" / "join" / "decline" — parsed from this turn's output
         self.in_party: bool = False                     # mirror of (char_id in ws.party_ids)
-        self._social_dc = SocialDcAgent(model, base_url, backend)
+        self._social_dc = SocialDcAgent(model, base_url, backend, api_key=api_key)
 
     def _quest_section(self) -> str:
         parts: list[str] = []
@@ -290,6 +291,7 @@ class NpcAgent:
         full = stream_chat(
             self.base_url, self.model, messages, self.options,
             think=False, on_chunk=_on_chunk, backend=self.backend, timeout=60,
+            api_key=self.api_key,
         )
 
         if combat:

@@ -44,3 +44,7 @@ scripts/*_fingerprints.json
 
 # Scratch run logs (train/eval/bc/ppo/mirror *.log, battle.jsonl, compare.txt)
 /logs/
+
+# Local LLM backend config (may contain API keys / local-only paths)
+/_server_config.json
+/_deepseek_config.json
