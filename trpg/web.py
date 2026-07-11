@@ -7,15 +7,8 @@ sys.stdout.reconfigure(encoding="utf-8")
 
 import gradio as gr
 
-from .scenarios.dungeon import (
-    build_world_state, build_npc_agents, OPENING_SCENE,
-    THOR_PERSONALITY, THOR_TACTICS_GENERAL, THOR_TACTICS_COMBAT,
-)
-from .llm.gm_agent import GMAgent
-from .llm.tag_agent import TagAgent
-from .llm.player_agent import PlayerAgent
+from .scenarios.dungeon import OPENING_SCENE
 from .game import (
-    GameSession,
     TagResult, StreamChunk, ActionResult,
     RoundStart, CombatStart, CombatEnd,
     ExplorationPrompt, CombatPrompt,
@@ -23,15 +16,8 @@ from .game import (
 )
 from .engine.quests import objective_progress_str
 from .llm import config as llm_config
-from .rl.combat_model import load_combat_policy
 from . import web_combat
-from .cli import (
-    check_ollama,
-    GM_THINK, GM_SHOW_THINKING, GM_OPTIONS,
-    TAG_OPTIONS,
-    THOR_THINK, THOR_SHOW_THINKING, THOR_OPTIONS,
-    DEBUG_COMBAT_ACTION,
-)
+from .cli import check_ollama, GM_SHOW_THINKING, DEBUG_COMBAT_ACTION
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -64,37 +50,12 @@ def _aria_status(world_state) -> str:
 
 
 def _init_game() -> dict:
+    # Single construction point shared with the desktop front-end (bootstrap.py).
+    from .bootstrap import init_game
     try:
-        cfg = llm_config.resolve()
+        return init_game()
     except llm_config.BackendConfigError as e:
         raise RuntimeError(str(e)) from e
-    url, model, bk, api_key = cfg["base_url"], cfg["model"], cfg["backend"], cfg["api_key"]
-    if bk == "ollama":
-        check_ollama(model, url)
-
-    world_state = build_world_state()
-    session = GameSession(
-        world_state = world_state,
-        gm          = GMAgent(model=model, world_state=world_state,
-                              think=GM_THINK, show_thinking=GM_SHOW_THINKING,
-                              options=GM_OPTIONS, base_url=url, backend=bk, api_key=api_key),
-        tag_agent   = TagAgent(model=model, world_state=world_state,
-                               base_url=url, backend=bk,
-                               options=TAG_OPTIONS, api_key=api_key),
-        thor_agent  = PlayerAgent(model=model,
-                                  char_id="thor",
-                                  character=world_state.characters["thor"],
-                                  personality=THOR_PERSONALITY,
-                                  tactics=THOR_TACTICS_GENERAL,
-                                  combat_tactics=THOR_TACTICS_COMBAT,
-                                  world_state=world_state,
-                                  think=THOR_THINK, show_thinking=THOR_SHOW_THINKING,
-                                  options=THOR_OPTIONS, base_url=url, backend=bk, api_key=api_key),
-        npc_agents  = build_npc_agents(world_state, model, url, bk, api_key=api_key),
-        default_combat_policy = load_combat_policy(),   # allies+monsters ← general model
-    )
-    session.start()
-    return {"session": session, "world_state": world_state}
 
 
 # ── Event → Gradio renderer ───────────────────────────────────────────────────
