@@ -71,6 +71,8 @@ class CombatPrompt:
     aria: Any
     enemies: dict[str, str]
     info_text: str = ""   # pre-formatted position / distance / weapon range block
+    ctx: Any = None       # engine CombatContext — lets a GUI front-end render the
+                          # battlefield / skills / targets (CLI ignores it, uses info_text)
 
 @dataclass
 class ConversationPrompt:
@@ -150,7 +152,8 @@ def format_aria_combat_info(aria, ctx) -> str:
 class GameSession:
     def __init__(self, world_state: WorldState, gm, tag_agent, thor_agent,
                  npc_agents: dict = None,
-                 policies: dict[str, CombatPolicy] | None = None):
+                 policies: dict[str, CombatPolicy] | None = None,
+                 default_combat_policy: CombatPolicy | None = None):
         self.world_state = world_state
         self.gm          = gm
         self.tag_agent   = tag_agent
@@ -162,12 +165,13 @@ class GameSession:
         self._player_in : queue.Queue = queue.Queue()
         self._stop_flag = threading.Event()
 
-        # Combat decisions go through a policy per character. Aria gets the
-        # human-input policy by default (regex parser, no LLM). Everyone else
-        # defaults to the scripted heuristic — the trained RL policy will plug
-        # in by passing a custom `policies` dict.
+        # Combat decisions go through a policy per character. Aria (the human PC)
+        # gets the human-input policy. Every other combatant — allies AND monsters
+        # — defaults to `default_combat_policy` (the trained general model, a
+        # shared NeuralCombatPolicy) when provided, else the scripted heuristic.
+        # An explicit per-char entry in `policies` still overrides both.
         self.policies: dict[str, CombatPolicy] = dict(policies or {})
-        heuristic = HeuristicCombatPolicy()
+        non_human = default_combat_policy or HeuristicCombatPolicy()
         human_policy = HumanInputPolicy(
             char_id="aria",
             prompt_fn=self._combat_prompt,
@@ -177,7 +181,7 @@ class GameSession:
             if cid == "aria":
                 self.policies.setdefault(cid, human_policy)
             else:
-                self.policies.setdefault(cid, heuristic)
+                self.policies.setdefault(cid, non_human)
 
         from .llm.controllers import HumanController, LLMPlayerController, LLMNpcController
         self.controllers = {
@@ -226,6 +230,7 @@ class GameSession:
         self._emit(CombatPrompt(
             aria=actor, enemies=ctx.enemies,
             info_text=format_aria_combat_info(actor, ctx),
+            ctx=ctx,
         ))
         return self._get_input()
 
@@ -590,6 +595,17 @@ class GameSession:
         self._emit(ActionResult(char.name, summary, debug, valid=True))
         ws.log_event("system", summary)
         consume_resources(resources, action, result)
+        # No-op-move guard — MIRROR of env_v2._step_agent (env_v2.py ~590-593),
+        # the turn-loop the combat model was TRAINED against. A MOVE that travels
+        # ~0m or leaves <0.5m budget ends movement for the turn, so the model
+        # can't spin on "move to my own cell" wasting its whole turn. The RL env
+        # applies this in its own turn loop; the narrative loop (this method) is
+        # a separate turn loop and must replicate it to present the model the
+        # same resource dynamics. (Canonical source: env_v2.py:590-593.)
+        if action.get("type") == "MOVE" and (
+                result.get("distance", 0) < 0.01
+                or resources.get("movement", 0) < 0.5):
+            resources["movement"] = 0.0
         return summary
 
     def _check_quests(self) -> None:
