@@ -757,6 +757,32 @@ _register(Ability(
 ))
 
 _register(Ability(
+    skill_id="fire_bolt",
+    display_name="火焰箭",
+    description="戲法：36m 內單體法術攻擊骰，命中造成 1d10 火焰傷害（不耗法術位）。",
+    features=SkillFeatures(
+        expected_damage=5.5,           # 1d10, no ability mod (a cantrip)
+        attack_vs_ac=5.0,
+        range_m=36.0,                  # 120 ft
+        cost_action=1.0,
+        target_type=TargetType.SINGLE_ENEMY,
+        damage_types=("火",),
+    ),
+    engine_ready=True,
+    min_level=1, refresh_on="never", max_uses=0,   # cantrip: any level, unlimited
+    # Single-target spell attack (vs AC) — same engine path as guiding_bolt_life,
+    # but slot_level=0 so no spell slot is spent (cantrip). Flat 1d10 (this
+    # codebase does not level-scale cantrip dice; the shaman is fixed at L3).
+    builder=lambda actor, target, coord, char=None: ({
+        "type": "SPELL_ATTACK", "caster": actor, "target": target,
+        "spell_name": "火焰箭",
+        "damage_dice": "1d10", "damage_type": "火",
+        "range_m": 36.0, "slot_level": 0, "add_spell_mod": False,
+        "consumes": ["action"],
+    } if target else None),
+))
+
+_register(Ability(
     skill_id="web_ev",
     display_name="蜘蛛網",
     description="4.5m 半徑 AOE，DEX 豁免失敗則 restrained，專注。",

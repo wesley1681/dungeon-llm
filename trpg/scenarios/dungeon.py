@@ -161,7 +161,7 @@ def build_world_state() -> WorldState:
         spell_slots={1: 3, 2: 2, 3: 1},
         spellcasting_ability="WIS",
         proficiencies=["WIS", "奧秘"],
-        known_abilities=["fireball_ev"],
+        known_abilities=["fire_bolt"],   # 戲法：level 3 薩滿放得出來（火球 min_level 5 放不了）
         is_npc=True,
         attitude=0,
     )
