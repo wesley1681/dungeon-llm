@@ -1,0 +1,252 @@
+{
+  "codename": "codeword-noarch-enemyskill",
+  "arch_kwargs": {
+    "hidden": 128,
+    "n_head_groups": 1,
+    "skill_combo_dim": 8,
+    "ablate_immunity_joins": false,
+    "drop_noop_h": true,
+    "ablate_archetype": true,
+    "encode_entity_skills": true
+  },
+  "fingerprint": {
+    "params": {
+      "attn_legacy": [],
+      "skill_proj.weight": [
+        64,
+        66
+      ],
+      "skill_proj.bias": [
+        64
+      ],
+      "skill_encoder.layers.0.self_attn.in_proj_weight": [
+        192,
+        64
+      ],
+      "skill_encoder.layers.0.self_attn.in_proj_bias": [
+        192
+      ],
+      "skill_encoder.layers.0.self_attn.out_proj.weight": [
+        64,
+        64
+      ],
+      "skill_encoder.layers.0.self_attn.out_proj.bias": [
+        64
+      ],
+      "skill_encoder.layers.0.linear1.weight": [
+        128,
+        64
+      ],
+      "skill_encoder.layers.0.linear1.bias": [
+        128
+      ],
+      "skill_encoder.layers.0.linear2.weight": [
+        64,
+        128
+      ],
+      "skill_encoder.layers.0.linear2.bias": [
+        64
+      ],
+      "skill_encoder.layers.0.norm1.weight": [
+        64
+      ],
+      "skill_encoder.layers.0.norm1.bias": [
+        64
+      ],
+      "skill_encoder.layers.0.norm2.weight": [
+        64
+      ],
+      "skill_encoder.layers.0.norm2.bias": [
+        64
+      ],
+      "skill_encoder.layers.1.self_attn.in_proj_weight": [
+        192,
+        64
+      ],
+      "skill_encoder.layers.1.self_attn.in_proj_bias": [
+        192
+      ],
+      "skill_encoder.layers.1.self_attn.out_proj.weight": [
+        64,
+        64
+      ],
+      "skill_encoder.layers.1.self_attn.out_proj.bias": [
+        64
+      ],
+      "skill_encoder.layers.1.linear1.weight": [
+        128,
+        64
+      ],
+      "skill_encoder.layers.1.linear1.bias": [
+        128
+      ],
+      "skill_encoder.layers.1.linear2.weight": [
+        64,
+        128
+      ],
+      "skill_encoder.layers.1.linear2.bias": [
+        64
+      ],
+      "skill_encoder.layers.1.norm1.weight": [
+        64
+      ],
+      "skill_encoder.layers.1.norm1.bias": [
+        64
+      ],
+      "skill_encoder.layers.1.norm2.weight": [
+        64
+      ],
+      "skill_encoder.layers.1.norm2.bias": [
+        64
+      ],
+      "entity_mlp.0.weight": [
+        64,
+        90
+      ],
+      "entity_mlp.0.bias": [
+        64
+      ],
+      "entity_mlp.2.weight": [
+        32,
+        64
+      ],
+      "entity_mlp.2.bias": [
+        32
+      ],
+      "res_mlp.0.weight": [
+        16,
+        4
+      ],
+      "res_mlp.0.bias": [
+        16
+      ],
+      "trunk.0.weight": [
+        128,
+        194
+      ],
+      "trunk.0.bias": [
+        128
+      ],
+      "trunk.2.weight": [
+        128,
+        128
+      ],
+      "trunk.2.bias": [
+        128
+      ],
+      "end_head.0.weight": [
+        32,
+        10
+      ],
+      "end_head.0.bias": [
+        32
+      ],
+      "end_head.2.weight": [
+        1,
+        32
+      ],
+      "end_head.2.bias": [
+        1
+      ],
+      "skill_ent_attn_proj.weight": [
+        96,
+        64
+      ],
+      "skill_ent_attn_proj.bias": [
+        96
+      ],
+      "skill_heads.0.weight": [
+        1,
+        226
+      ],
+      "skill_heads.0.bias": [
+        1
+      ],
+      "entity_heads.0.weight": [
+        1,
+        162
+      ],
+      "entity_heads.0.bias": [
+        1
+      ],
+      "grid_query_projs.0.weight": [
+        9,
+        192
+      ],
+      "grid_query_projs.0.bias": [
+        9
+      ],
+      "skill_combo_proj.0.weight": [
+        64,
+        64
+      ],
+      "skill_combo_proj.0.bias": [
+        64
+      ],
+      "skill_combo_proj.2.weight": [
+        8,
+        64
+      ],
+      "skill_combo_proj.2.bias": [
+        8
+      ],
+      "skill_combo_pref.weight": [
+        64,
+        8
+      ],
+      "skill_combo_pref.bias": [
+        64
+      ],
+      "critic.net.0.weight": [
+        128,
+        1119
+      ],
+      "critic.net.0.bias": [
+        128
+      ],
+      "critic.net.2.weight": [
+        128,
+        128
+      ],
+      "critic.net.2.bias": [
+        128
+      ],
+      "critic.net.4.weight": [
+        1,
+        128
+      ],
+      "critic.net.4.bias": [
+        1
+      ]
+    },
+    "obs": {
+      "OBS_KEYS": [
+        "skills",
+        "skill_mask",
+        "entity_skills",
+        "entity_skill_mask",
+        "entities",
+        "resources",
+        "terrain",
+        "entity_grid",
+        "distance_grid",
+        "los_grid",
+        "reach_grid",
+        "threat_grid",
+        "end_features",
+        "decision_context"
+      ],
+      "ENTITY_DIM": 102,
+      "N_V3_EXTRA": 6,
+      "N_V4_DESC": 19,
+      "N_V5_TRAIT": 4,
+      "N_V6_CIMMUN": 16,
+      "N_V7_ABILITY": 6,
+      "I_DESC_RESIST": 63,
+      "I_DESC_CIMMUN": 80,
+      "N_SKILL_SLOTS": 20,
+      "SKILL_FEATURE_DIM": 66,
+      "N_ENTITY_SLOTS": 10
+    }
+  }
+}

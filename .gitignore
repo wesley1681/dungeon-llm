@@ -15,14 +15,17 @@ llama.cpp-tq3/_*.bat
 llama.cpp-tq3/*.txt
 llama.cpp-tq3/*.py
 
-# Downloaded models
-models/
+# Downloaded/generated models. Keep only the deployed combat checkpoint and
+# its metadata in Git; LLM GGUF files and training runs remain local.
+models/*
+!models/general_selfplay/
+models/general_selfplay/*
+!models/general_selfplay/mt_u0300.pt
+!models/general_selfplay/mt_u0300.pt.arch.json
+!models/general_selfplay/strength_u0300.json
 
 # Docs / planning
 docs/
-!docs/
-docs/*
-!docs/COMBAT_MODEL_TRAINING.md
 
 # IDE
 .vscode/

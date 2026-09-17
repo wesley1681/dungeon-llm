@@ -2,6 +2,24 @@
 
 本機／API LLM 驅動的 D&D 5e 文字 TRPG。遊戲包含探索、NPC 多輪對話、任務、格狀戰鬥，以及由訓練模型或規則策略控制的非玩家角色。
 
+## 首次安裝
+
+建立虛擬環境並安裝遊戲與訓練所需套件：
+
+```powershell
+py -3.13 -m venv gemma-env
+.\gemma-env\Scripts\python.exe -m pip install --upgrade pip
+.\gemma-env\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+若要執行測試，再安裝：
+
+```powershell
+.\gemma-env\Scripts\python.exe -m pip install -r requirements-dev.txt
+```
+
+需要 NVIDIA CUDA 訓練時，請依 [PyTorch 官方安裝頁](https://pytorch.org/get-started/locally/) 選擇適合本機 CUDA 的安裝命令。LLM 權重不存放在本 repository；請依下方選擇 Ollama、GGUF 或 DeepSeek，並自行取得有權使用的模型。
+
 ## 最快啟動：桌面版
 
 `start_llama_server.ps1` 已設定使用本機模型 `gemma4-hauhau-q4`。請開啟兩個 PowerShell 視窗，兩個視窗都先切換到本專案根目錄。
@@ -33,12 +51,12 @@ powershell -ExecutionPolicy Bypass -File .\start_llama_server.ps1
 | 終端機版 | `.\gemma-env\Scripts\python.exe -m trpg --mode terminal` | 純文字操作 |
 | Claude 測試模式 | `.\gemma-env\Scripts\python.exe -m trpg --mode claude` | 透過 `claude_response.txt` 提供玩家輸入 |
 
-桌面版是獨立入口，不支援 `--mode desktop` 或 `start.bat desktop`。
+桌面版是獨立入口，不支援 `--mode desktop`。
 
 ## 執行需求
 
 - Windows 與 PowerShell
-- 專案內已建立的 `gemma-env`，或具備相同套件的 Python 3.11+
+- 專案內依 `requirements.txt` 建立的 `gemma-env`，或具備相同套件的 Python 3.11+
 - 執行期套件：`requests`、`gradio`、`Pillow`、`torch`
 - 桌面版需要 Python 的 Tk 支援
 - 下列其中一種 LLM 後端：
@@ -80,7 +98,27 @@ powershell -ExecutionPolicy Bypass -File .\start_llama_server.ps1
 - `gemma4-huihui-q4`
 - `gemma4-hauhau-q4`
 
-`llama-server.exe` 與 GGUF 使用本機絕對路徑。若專案移到另一台電腦，必須同步修改腳本內的 `$exe` 與 `$modelPaths`。
+LLM 權重不會由 GitHub repository 提供，請自行下載 GGUF。預設模型 `gemma4-hauhau-q4` 對應以下檔案：
+
+```text
+models/llm/Gemma4-26B-A4B-Uncensored-HauhauCS-Balanced-Q4_K_M.gguf
+```
+
+預設的 `llama-server.exe` 位置是：
+
+```text
+llama.cpp/build/bin/Release/llama-server.exe
+```
+
+也可以用環境變數指定其他安裝位置，不必修改已追蹤的腳本：
+
+```powershell
+$env:LLAMA_SERVER_EXE = "D:\llama.cpp\llama-server.exe"
+$env:TRPG_LLM_MODEL_DIR = "D:\models"
+powershell -ExecutionPolicy Bypass -File .\start_llama_server.ps1
+```
+
+模型目錄仍需使用腳本中列出的檔名；也可以直接把 `$selectedModel` 設成完整 GGUF 路徑。
 
 ## 使用 Ollama
 
@@ -102,12 +140,15 @@ $selectedModel = "ollama:gemma4:26b"
 powershell -ExecutionPolicy Bypass -File .\start_llama_server.ps1
 ```
 
-接著可使用 `start.bat`。它會以 `GGML_FLASH_ATTENTION=0` 重啟 Ollama、等待服務就緒，然後啟動指定介面：
+確認 Ollama 服務正在運行，再啟動所需介面：
 
 ```powershell
-.\start.bat            # 網頁版
-.\start.bat terminal   # 終端機版
-.\start.bat claude     # Claude 測試模式
+$env:GGML_FLASH_ATTENTION = "0"  # Gemma4 長 context 有問題時使用
+ollama serve
+# 另開 PowerShell 後執行其中之一：
+.\gemma-env\Scripts\python.exe -m trpg
+.\gemma-env\Scripts\python.exe -m trpg --mode terminal
+.\gemma-env\Scripts\python.exe -m trpg --mode claude
 ```
 
 若要使用桌面版，請先確認 Ollama 已在背景運行，再直接執行：
@@ -115,8 +156,6 @@ powershell -ExecutionPolicy Bypass -File .\start_llama_server.ps1
 ```powershell
 .\gemma-env\Scripts\python.exe -m trpg.desktop
 ```
-
-`start.bat` 內的 Ollama 與 Python 使用本機路徑；換電腦時需修改 `OLLAMA` 與 `PYTHON`。
 
 ## 使用 DeepSeek API
 
@@ -144,7 +183,7 @@ powershell -ExecutionPolicy Bypass -File .\start_llama_server.ps1
 
 若檔案不存在，第一次啟動遊戲時會自動建立空白範本並停止，填入 key 後再次啟動即可。模型與 API 位址取自 `_server_config.json`；`_deepseek_config.json` 只提供 API key。兩個檔案都不會被 Git 追蹤。
 
-DeepSeek 不需要 `start.bat`，直接啟動所需介面即可：
+DeepSeek 不需要本機模型服務，直接啟動所需介面即可：
 
 ```powershell
 .\gemma-env\Scripts\python.exe -m trpg.desktop
@@ -197,7 +236,7 @@ DeepSeek 不需要 `start.bat`，直接啟動所需介面即可：
   --eval_every 5 --k_refresh 5 --pool_size 5
 ```
 
-請使用新的 `--out_dir`，不要直接覆寫目前遊戲使用的 checkpoint。完整的訓練策略、reward、參數、checkpoint、驗收與部署方式見 [`docs/COMBAT_MODEL_TRAINING.md`](docs/COMBAT_MODEL_TRAINING.md)。其餘訓練腳本是歷史／研究用途，不是目前正式入口。
+請使用新的 `--out_dir`，不要直接覆寫目前遊戲使用的 checkpoint。完整的訓練策略、reward、參數、checkpoint、驗收與部署方式見 [`trpg/rl/COMBAT_MODEL_TRAINING.md`](trpg/rl/COMBAT_MODEL_TRAINING.md)。其餘訓練腳本是歷史／研究用途，不是目前正式入口。
 
 ## 遊戲操作
 
@@ -290,11 +329,11 @@ desktop.py / web.py / cli.py
 
 這表示 `_server_config.json` 指向 llama.cpp，但 `llama-server` 沒有運行。執行 `start_llama_server.ps1`，等待伺服器開始監聽 8090，並保持該視窗開啟。
 
-若要使用 Ollama，請把 `$selectedModel` 設為 `ollama:<模型名稱>`，執行設定腳本，再執行 `start.bat`。
+若要使用 Ollama，請把 `$selectedModel` 設為 `ollama:<模型名稱>`、執行設定腳本，確認 `ollama serve` 正在運行，再啟動遊戲。
 
 ### 顯示「無法連線 Ollama」
 
-確認 Ollama 正在 `localhost:11434` 運行，並確認 `_server_config.json` 的來源是 `ollama`。使用 `start.bat` 會自動重啟並等待 Ollama。
+確認 Ollama 正在 `localhost:11434` 運行，並確認 `_server_config.json` 的來源是 `ollama`。
 
 ### 顯示找不到 Ollama 模型
 
@@ -314,7 +353,7 @@ powershell -ExecutionPolicy Bypass -File .\start_llama_server.ps1
 
 ### Gemma4 + Ollama 長 context 卡住
 
-`start.bat` 已用 `GGML_FLASH_ATTENTION=0` 啟動 Ollama。若手動啟動服務，請先設定：
+若 Gemma4 長 context 卡住，請在啟動 Ollama 前設定：
 
 ```powershell
 $env:GGML_FLASH_ATTENTION = "0"

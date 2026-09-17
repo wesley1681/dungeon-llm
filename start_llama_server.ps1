@@ -1,6 +1,6 @@
 # Single control point for which model trpg uses this run.
 #
-# Run this in its own terminal BEFORE starting the game (start.bat / python -m trpg).
+# Run this in its own terminal BEFORE starting the game (python -m trpg).
 # It always writes _server_config.json; trpg/cli.py has no backend/model constants
 # of its own and just reads whatever this script decided.
 #
@@ -15,14 +15,27 @@
 #   DeepSeek:   deepseek:<model name>     (e.g. deepseek:deepseek-v4-flash; api_key still lives in _deepseek_config.json)
 $selectedModel = "gemma4-hauhau-q4"
 
-$exe = "C:\Users\Wesley\Desktop\Python\llama.cpp-tq3\build\bin\Release\llama-server.exe"
+# Local paths are portable by default and can be overridden without editing
+# this file:
+#   $env:LLAMA_SERVER_EXE = "D:\llama.cpp\llama-server.exe"
+#   $env:TRPG_LLM_MODEL_DIR = "D:\models"
+$exe = if ($env:LLAMA_SERVER_EXE) {
+    $env:LLAMA_SERVER_EXE
+} else {
+    Join-Path $PSScriptRoot "llama.cpp\build\bin\Release\llama-server.exe"
+}
+$modelDir = if ($env:TRPG_LLM_MODEL_DIR) {
+    $env:TRPG_LLM_MODEL_DIR
+} else {
+    Join-Path $PSScriptRoot "models\llm"
+}
 
 $modelPaths = @{
-    "qwen3.6-mtp-q4"   = "C:\Users\Wesley\Desktop\Python\llama.cpp-tq3\models\qwen3.6-35b-mtp\Qwen3.6-35B-A3B-UD-Q4_K_M.gguf"
-    "qwen3-30b"        = "C:\Users\Wesley\Desktop\Python\llama.cpp-tq3\models\qwen3-30b-a3b\Qwen3-30B-A3B-Q4_K_M.gguf"
-    "gemma4-google-q4" = "C:\Users\Wesley\Desktop\Python\llama.cpp-tq3\models\gemma4-26b\gemma-4-26B-A4B-it-ollama-text.gguf"
-    "gemma4-huihui-q4" = "C:\Users\Wesley\Desktop\Python\llama.cpp-tq3\models\gemma4-26b\gemma-4-26B-A4B-it-UD-Q4_K_M.gguf"
-    "gemma4-hauhau-q4" = "C:\Users\Wesley\Desktop\Python\llama.cpp-tq3\models\gemma4-26b\Gemma4-26B-A4B-Uncensored-HauhauCS-Balanced-Q4_K_M.gguf"
+    "qwen3.6-mtp-q4"   = Join-Path $modelDir "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf"
+    "qwen3-30b"        = Join-Path $modelDir "Qwen3-30B-A3B-Q4_K_M.gguf"
+    "gemma4-google-q4" = Join-Path $modelDir "gemma-4-26B-A4B-it-ollama-text.gguf"
+    "gemma4-huihui-q4" = Join-Path $modelDir "gemma-4-26B-A4B-it-UD-Q4_K_M.gguf"
+    "gemma4-hauhau-q4" = Join-Path $modelDir "Gemma4-26B-A4B-Uncensored-HauhauCS-Balanced-Q4_K_M.gguf"
 }
 
 # Per-model ncmoe (MoE expert layers on CPU). Tune per benchmark.
@@ -57,6 +70,15 @@ $model = $modelPaths[$selectedModel]
 if (-not $model) { $model = $selectedModel }
 $ncmoe = $ncmoeValues[$selectedModel]
 if (-not $ncmoe) { $ncmoe = 32 }
+
+if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
+    Write-Error ("llama-server was not found: {0}{1}Set LLAMA_SERVER_EXE or place llama-server.exe under llama.cpp\build\bin\Release." -f $exe, [Environment]::NewLine)
+    exit 1
+}
+if (-not (Test-Path -LiteralPath $model -PathType Leaf)) {
+    Write-Error ("GGUF model was not found: {0}{1}Download it under models\llm or set TRPG_LLM_MODEL_DIR." -f $model, [Environment]::NewLine)
+    exit 1
+}
 
 # base_url is bare host:port -- trpg's backend.py appends /v1/chat/completions itself
 $config = @{ backend = "llamacpp"; model = $selectedModel; base_url = "http://127.0.0.1:8090" } | ConvertTo-Json
