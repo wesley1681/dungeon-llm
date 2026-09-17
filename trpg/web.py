@@ -22,13 +22,13 @@ from .cli import check_ollama, GM_SHOW_THINKING, DEBUG_COMBAT_ACTION
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _aria_status(world_state) -> str:
-    aria     = world_state.characters["aria"]
-    status   = "、".join(fx.name for fx in aria.status_effects) if aria.status_effects else "無"
-    weapons  = "、".join(w.name for w in aria.weapons) or "無"
+def _kaine_status(world_state) -> str:
+    kaine     = world_state.characters["kaine"]
+    status   = "、".join(fx.name for fx in kaine.status_effects) if kaine.status_effects else "無"
+    weapons  = "、".join(w.name for w in kaine.weapons) or "無"
     usable   = [
         f"{c.name}×{c.quantity}" if c.quantity > 1 else c.name
-        for c in aria.consumables if c.effect_type != "ammo" and c.quantity > 0
+        for c in kaine.consumables if c.effect_type != "ammo" and c.quantity > 0
     ]
     items = "、".join(usable) or "無"
     quest_parts = []
@@ -42,7 +42,7 @@ def _aria_status(world_state) -> str:
             quest_parts.append(f"✅ {q.title}（回去找 {gname}）")
     quest_line = ("\n" + "　".join(quest_parts)) if quest_parts else ""
     return (
-        f"*HP {aria.hp}/{aria.max_hp}  AC {aria.ac}  狀態：{status}*\n"
+        f"*HP {kaine.hp}/{kaine.max_hp}  AC {kaine.ac}  狀態：{status}*\n"
         f"⚔ 武器：{weapons}\n"
         f"🎒 道具：{items}"
         f"{quest_line}"
@@ -60,10 +60,10 @@ def _init_game() -> dict:
 
 # ── Event → Gradio renderer ───────────────────────────────────────────────────
 
-def _consume_until_prompt(state, gm_msgs, thor_msgs, aria_msgs):
+def _consume_until_prompt(state, gm_msgs, thor_msgs, kaine_msgs):
     """Consume GameSession events, yield Gradio updates, stop at player prompt.
 
-    Yields (gm_msgs, thor_msgs, aria_msgs, state, "").
+    Yields (gm_msgs, thor_msgs, kaine_msgs, state, "").
     """
     session     = state["session"]
     world_state = state["world_state"]
@@ -98,7 +98,7 @@ def _consume_until_prompt(state, gm_msgs, thor_msgs, aria_msgs):
                 gm_msgs.append({"role": "assistant",
                                 "content": "**【機制結算】**\n" + "\n".join(tag_lines)})
                 last_source = "tag"
-                yield gm_msgs[:], thor_msgs[:], aria_msgs[:], state, ""
+                yield gm_msgs[:], thor_msgs[:], kaine_msgs[:], state, ""
 
         # ── StreamChunk ───────────────────────────────────────────────────────
         elif isinstance(event, StreamChunk):
@@ -121,14 +121,14 @@ def _consume_until_prompt(state, gm_msgs, thor_msgs, aria_msgs):
                             last_source = "gm"
                     gm_msgs[-1]["content"] += event.text
                     gm_text += event.text
-                    yield gm_msgs[:], thor_msgs[:], aria_msgs[:], state, ""
+                    yield gm_msgs[:], thor_msgs[:], kaine_msgs[:], state, ""
 
             elif src == "thor":
                 if not event.thinking:
                     _ensure_thor_slot("thor")
                     thor_msgs[-1]["content"] += event.text
                     thor_text += event.text
-                    yield gm_msgs[:], thor_msgs[:], aria_msgs[:], state, ""
+                    yield gm_msgs[:], thor_msgs[:], kaine_msgs[:], state, ""
 
             elif src == "npc":
                 actor_key = f"npc_{event.actor}"
@@ -137,7 +137,7 @@ def _consume_until_prompt(state, gm_msgs, thor_msgs, aria_msgs):
                     gm_msgs.append({"role": "assistant", "content": ""})
                     last_source = actor_key
                 gm_msgs[-1]["content"] += event.text
-                yield gm_msgs[:], thor_msgs[:], aria_msgs[:], state, ""
+                yield gm_msgs[:], thor_msgs[:], kaine_msgs[:], state, ""
 
             elif src == "pc_combat":
                 # All LLM-PC combat streams route to the Thor panel for now.
@@ -146,12 +146,12 @@ def _consume_until_prompt(state, gm_msgs, thor_msgs, aria_msgs):
                     slot_key = f"pc_combat_{event.actor}"
                     _ensure_thor_slot(slot_key)
                     thor_msgs[-1]["content"] += event.text
-                    yield gm_msgs[:], thor_msgs[:], aria_msgs[:], state, ""
+                    yield gm_msgs[:], thor_msgs[:], kaine_msgs[:], state, ""
 
             elif src == "narrate":
                 _ensure_gm_slot("narrate")
                 gm_msgs[-1]["content"] += event.text
-                yield gm_msgs[:], thor_msgs[:], aria_msgs[:], state, ""
+                yield gm_msgs[:], thor_msgs[:], kaine_msgs[:], state, ""
 
             elif src == "npc_talk":
                 if last_source != "npc_talk":
@@ -159,7 +159,7 @@ def _consume_until_prompt(state, gm_msgs, thor_msgs, aria_msgs):
                     gm_msgs.append({"role": "assistant", "content": ""})
                     last_source = "npc_talk"
                 gm_msgs[-1]["content"] += event.text
-                yield gm_msgs[:], thor_msgs[:], aria_msgs[:], state, ""
+                yield gm_msgs[:], thor_msgs[:], kaine_msgs[:], state, ""
 
         # ── ActionResult ──────────────────────────────────────────────────────
         elif isinstance(event, ActionResult):
@@ -168,19 +168,19 @@ def _consume_until_prompt(state, gm_msgs, thor_msgs, aria_msgs):
             # Append to whatever the last open slot is (npc / pc_combat message)
             if gm_msgs and last_source and last_source.startswith("npc"):
                 gm_msgs[-1]["content"] += result_line
-                yield gm_msgs[:], thor_msgs[:], aria_msgs[:], state, ""
+                yield gm_msgs[:], thor_msgs[:], kaine_msgs[:], state, ""
             elif last_source and last_source.startswith("pc_combat_"):
                 if thor_msgs:
                     thor_msgs[-1]["content"] += result_line
-                # Also show in aria panel (uses event.actor — not hardcoded)
+                # Also show in kaine panel (uses event.actor — not hardcoded)
                 last_line = thor_msgs[-1]['content'].split('`')[0].strip() if thor_msgs else ''
-                aria_msgs.append({"role": "assistant",
+                kaine_msgs.append({"role": "assistant",
                                    "content": f"**{event.actor}：**{last_line}\n\n`{event.summary}`"})
-                yield gm_msgs[:], thor_msgs[:], aria_msgs[:], state, ""
+                yield gm_msgs[:], thor_msgs[:], kaine_msgs[:], state, ""
             else:
-                # Aria action result
-                aria_msgs.append({"role": "assistant", "content": f"`{event.summary}`{debug_str}"})
-                yield gm_msgs[:], thor_msgs[:], aria_msgs[:], state, ""
+                # 凱恩 action result
+                kaine_msgs.append({"role": "assistant", "content": f"`{event.summary}`{debug_str}"})
+                yield gm_msgs[:], thor_msgs[:], kaine_msgs[:], state, ""
             last_source = "result"
 
         # ── CombatStart ───────────────────────────────────────────────────────
@@ -189,14 +189,14 @@ def _consume_until_prompt(state, gm_msgs, thor_msgs, aria_msgs):
             gm_msgs.append({"role": "assistant",
                              "content": f"⚔ **先攻順序：{order_str}**"})
             last_source = "combat_start"
-            yield gm_msgs[:], thor_msgs[:], aria_msgs[:], state, ""
+            yield gm_msgs[:], thor_msgs[:], kaine_msgs[:], state, ""
 
         # ── RoundStart ────────────────────────────────────────────────────────
         elif isinstance(event, RoundStart):
             gm_msgs.append({"role": "assistant",
                              "content": f"---\n**第 {event.number} 回合**"})
             last_source = "round"
-            yield gm_msgs[:], thor_msgs[:], aria_msgs[:], state, ""
+            yield gm_msgs[:], thor_msgs[:], kaine_msgs[:], state, ""
 
         # ── CombatEnd ─────────────────────────────────────────────────────────
         elif isinstance(event, CombatEnd):
@@ -206,7 +206,7 @@ def _consume_until_prompt(state, gm_msgs, thor_msgs, aria_msgs):
                 msg += f"\n\n💰 **可拾取：{'、'.join(event.loot)}**\n（告訴GM你想拿什麼）"
             gm_msgs.append({"role": "assistant", "content": msg})
             last_source = "combat_end"
-            yield gm_msgs[:], thor_msgs[:], aria_msgs[:], state, ""
+            yield gm_msgs[:], thor_msgs[:], kaine_msgs[:], state, ""
 
         # ── ExplorationPrompt ─────────────────────────────────────────────────
         elif isinstance(event, ExplorationPrompt):
@@ -214,15 +214,15 @@ def _consume_until_prompt(state, gm_msgs, thor_msgs, aria_msgs):
             if thor_msgs and thor_text:
                 thor_msgs[-1]["content"] = thor_text
 
-            # Aria panel: combined summary — GM + each prior PC remark + status
+            # 凱恩 panel: combined summary — GM + each prior PC remark + status
             remark_lines = "\n\n".join(f"**{name}：** {text}"
                                        for name, text in event.prior_remarks.items())
             summary = f"**GM：** {event.gm_text}"
             if remark_lines:
                 summary += "\n\n" + remark_lines
-            summary += f"\n\n{_aria_status(world_state)}"
-            aria_msgs.append({"role": "assistant", "content": summary})
-            yield gm_msgs[:], thor_msgs[:], aria_msgs[:], state, ""
+            summary += f"\n\n{_kaine_status(world_state)}"
+            kaine_msgs.append({"role": "assistant", "content": summary})
+            yield gm_msgs[:], thor_msgs[:], kaine_msgs[:], state, ""
             return  # stop — wait for player submit
 
         # ── CombatPrompt ──────────────────────────────────────────────────────
@@ -232,46 +232,46 @@ def _consume_until_prompt(state, gm_msgs, thor_msgs, aria_msgs):
             # everything; fall back to text-only if it's absent (older emitters).
             if event.ctx is not None:
                 state["combat_view"] = web_combat.combat_view_state(
-                    event.aria, event.ctx, world_state)
+                    event.kaine, event.ctx, world_state)
             if event.info_text:
                 info_block = event.info_text
             else:
                 enemies_str = "、".join(f"{n}（{c}）" for c, n in event.enemies.items())
                 info_block = f"敵人：{enemies_str}"
-            aria_msgs.append({"role": "assistant",
+            kaine_msgs.append({"role": "assistant",
                                "content": (f"**⚔ 輪到你了！**（可用下方戰場面板操作，或直接打字）\n\n"
                                            f"```\n{info_block}\n```\n\n"
-                                           f"{_aria_status(world_state)}")})
-            yield gm_msgs[:], thor_msgs[:], aria_msgs[:], state, ""
+                                           f"{_kaine_status(world_state)}")})
+            yield gm_msgs[:], thor_msgs[:], kaine_msgs[:], state, ""
             return  # stop — wait for player submit
 
         # ── ConversationPrompt ────────────────────────────────────────────────
         elif isinstance(event, ConversationPrompt):
-            aria_msgs.append({"role": "assistant",
+            kaine_msgs.append({"role": "assistant",
                                "content": (f"**【與 {event.npc_name} 對話中｜態度：{event.attitude_label}】**\n\n"
-                                           f"{_aria_status(world_state)}\n\n"
+                                           f"{_kaine_status(world_state)}\n\n"
                                            f"*輸入「離開」結束對話*")})
-            yield gm_msgs[:], thor_msgs[:], aria_msgs[:], state, ""
+            yield gm_msgs[:], thor_msgs[:], kaine_msgs[:], state, ""
             return  # wait for player input
 
         # ── StatusMessage ─────────────────────────────────────────────────────
         elif isinstance(event, StatusMessage):
-            aria_msgs.append({"role": "assistant", "content": event.text})
-            yield gm_msgs[:], thor_msgs[:], aria_msgs[:], state, ""
+            kaine_msgs.append({"role": "assistant", "content": event.text})
+            yield gm_msgs[:], thor_msgs[:], kaine_msgs[:], state, ""
 
         # ── QuestComplete ─────────────────────────────────────────────────────
         elif isinstance(event, QuestComplete):
             msg = f"✅ **任務達成：{event.title}**（可回去找 {event.giver_name} 回報）"
             gm_msgs.append({"role": "assistant", "content": msg})
-            aria_msgs.append({"role": "assistant", "content": msg})
+            kaine_msgs.append({"role": "assistant", "content": msg})
             last_source = "quest"
-            yield gm_msgs[:], thor_msgs[:], aria_msgs[:], state, ""
+            yield gm_msgs[:], thor_msgs[:], kaine_msgs[:], state, ""
 
         # ── GameOver ──────────────────────────────────────────────────────────
         elif isinstance(event, GameOver):
             gm_msgs.append({"role": "assistant",
                              "content": f"💀 **{event.reason}**"})
-            yield gm_msgs[:], thor_msgs[:], aria_msgs[:], state, ""
+            yield gm_msgs[:], thor_msgs[:], kaine_msgs[:], state, ""
             return
 
 
@@ -318,55 +318,55 @@ def on_load():
 
     gm_msgs   = [{"role": "user", "content": "（開場）"}]
     thor_msgs : list = []
-    aria_msgs = [{"role": "user", "content": OPENING_SCENE}]
+    kaine_msgs = [{"role": "user", "content": OPENING_SCENE}]
 
-    for gm_msgs, thor_msgs, aria_msgs, state, _ in _consume_until_prompt(
-            state, gm_msgs, thor_msgs, aria_msgs):
-        yield (gm_msgs, thor_msgs, aria_msgs, state) + _combat_updates(state)
+    for gm_msgs, thor_msgs, kaine_msgs, state, _ in _consume_until_prompt(
+            state, gm_msgs, thor_msgs, kaine_msgs):
+        yield (gm_msgs, thor_msgs, kaine_msgs, state) + _combat_updates(state)
 
 
 # ── Submit (player action — typed OR synthesised from the combat GUI) ──────────
 
 def on_submit(human_input: str,
-              gm_msgs: list, thor_msgs: list, aria_msgs: list,
+              gm_msgs: list, thor_msgs: list, kaine_msgs: list,
               state: dict):
     if not human_input.strip() or state is None:
-        yield (gm_msgs, thor_msgs, aria_msgs, state, "") + _combat_updates(state)
+        yield (gm_msgs, thor_msgs, kaine_msgs, state, "") + _combat_updates(state)
         return
 
     state["combat_view"] = None      # player is acting → hide controls until next prompt
     session = state["session"]
     session.submit_player_input(human_input)
-    aria_msgs = aria_msgs + [{"role": "user", "content": human_input}]
-    yield (gm_msgs, thor_msgs, aria_msgs, state, "") + _combat_updates(state)
+    kaine_msgs = kaine_msgs + [{"role": "user", "content": human_input}]
+    yield (gm_msgs, thor_msgs, kaine_msgs, state, "") + _combat_updates(state)
 
-    for gm_msgs, thor_msgs, aria_msgs, state, _ in _consume_until_prompt(
-            state, gm_msgs[:], thor_msgs[:], aria_msgs[:]):
-        yield (gm_msgs, thor_msgs, aria_msgs, state, "") + _combat_updates(state)
+    for gm_msgs, thor_msgs, kaine_msgs, state, _ in _consume_until_prompt(
+            state, gm_msgs[:], thor_msgs[:], kaine_msgs[:]):
+        yield (gm_msgs, thor_msgs, kaine_msgs, state, "") + _combat_updates(state)
 
 
 def on_combat_act(skill_label, target_label,
-                  gm_msgs, thor_msgs, aria_msgs, state):
+                  gm_msgs, thor_msgs, kaine_msgs, state):
     """Battlefield 'act' button → synthesise a command string → normal submit."""
     cv = state.get("combat_view") if state else None
     skill = next((s for s in cv["skills"] if s["display_name"] == skill_label),
                  None) if cv else None
     if skill is None:
-        yield (gm_msgs, thor_msgs, aria_msgs, state, "") + _combat_updates(state)
+        yield (gm_msgs, thor_msgs, kaine_msgs, state, "") + _combat_updates(state)
         return
     name2id = {n: i for i, n in {**cv["enemies"], **cv["allies"]}.items()}
     tid = name2id.get(target_label)
     cmd = web_combat.command_for(skill, target_id=tid, cell=state.get("move_cell"))
     state["move_cell"] = None
-    yield from on_submit(cmd, gm_msgs, thor_msgs, aria_msgs, state)
+    yield from on_submit(cmd, gm_msgs, thor_msgs, kaine_msgs, state)
 
 
-def on_dodge(gm_msgs, thor_msgs, aria_msgs, state):
-    yield from on_submit("閃避", gm_msgs, thor_msgs, aria_msgs, state)
+def on_dodge(gm_msgs, thor_msgs, kaine_msgs, state):
+    yield from on_submit("閃避", gm_msgs, thor_msgs, kaine_msgs, state)
 
 
-def on_end_turn(gm_msgs, thor_msgs, aria_msgs, state):
-    yield from on_submit("結束", gm_msgs, thor_msgs, aria_msgs, state)
+def on_end_turn(gm_msgs, thor_msgs, kaine_msgs, state):
+    yield from on_submit("結束", gm_msgs, thor_msgs, kaine_msgs, state)
 
 
 def on_grid_click(state, evt: gr.SelectData):
@@ -404,7 +404,7 @@ def build_ui() -> gr.Blocks:
                 thor_chat = gr.Chatbot(height=550, show_label=False)
             with gr.Column():
                 gr.Markdown("### 🗡️ 你（凱恩）")
-                aria_chat = gr.Chatbot(height=550, show_label=False)
+                kaine_chat = gr.Chatbot(height=550, show_label=False)
 
         # Combat panel — hidden until a fight starts, then shows the battlefield
         # (updates every combat action) plus your turn's skill/target controls.
@@ -430,14 +430,14 @@ def build_ui() -> gr.Blocks:
             submit_btn = gr.Button("確認", scale=1, variant="primary")
 
         combat_out = [battlefield_img, combat_controls, skill_radio, target_dropdown]
-        demo.load(fn=on_load, outputs=[gm_chat, thor_chat, aria_chat, state] + combat_out)
+        demo.load(fn=on_load, outputs=[gm_chat, thor_chat, kaine_chat, state] + combat_out)
 
-        full_out = [gm_chat, thor_chat, aria_chat, state, input_box] + combat_out
-        sub_in   = [input_box, gm_chat, thor_chat, aria_chat, state]
+        full_out = [gm_chat, thor_chat, kaine_chat, state, input_box] + combat_out
+        sub_in   = [input_box, gm_chat, thor_chat, kaine_chat, state]
         submit_btn.click(on_submit, inputs=sub_in, outputs=full_out)
         input_box.submit(on_submit, inputs=sub_in, outputs=full_out)
 
-        quick_in = [gm_chat, thor_chat, aria_chat, state]
+        quick_in = [gm_chat, thor_chat, kaine_chat, state]
         act_btn.click(on_combat_act,
                       inputs=[skill_radio, target_dropdown] + quick_in, outputs=full_out)
         dodge_btn.click(on_dodge, inputs=quick_in, outputs=full_out)

@@ -20,7 +20,7 @@ class Quest:
       {"items": [Consumable(...), ...],  # given to recipient_id
        "info":  ["你聽到頭目怕火..."],     # added to giver_id's secrets
        "attitude_delta": 1,               # change to giver_id's attitude
-       "recipient_id": "aria"}            # who receives items (default "aria")
+       "recipient_id": "kaine"}            # who receives items (default "kaine")
     """
     id: str
     title: str
@@ -29,6 +29,9 @@ class Quest:
     objective: dict
     reward: dict = field(default_factory=dict)
     status: str = "inactive"    # inactive / active / completed / turned_in
+    offered: bool = False       # giver has voiced this quest to the player →
+                                # quest_accept becomes available in the event stage
+                                # (prevents same-turn false-accept on the offer turn)
 
 
 def _count_item(ws: WorldState, item_name: str) -> int:
@@ -82,7 +85,7 @@ def apply_reward(quest: Quest, ws: WorldState) -> list[str]:
     reward = quest.reward or {}
 
     items = reward.get("items") or []
-    recipient_id = reward.get("recipient_id", "aria")
+    recipient_id = reward.get("recipient_id", "kaine")
     recipient = ws.characters.get(recipient_id)
     if items and recipient:
         from .items import Weapon, Consumable

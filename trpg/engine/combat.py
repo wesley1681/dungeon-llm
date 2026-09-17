@@ -2,7 +2,7 @@ import math
 import re as _re
 from dataclasses import dataclass, field
 
-from .dice import roll, roll_d20, combine_advantage
+from .dice import roll, roll_d20, combine_advantage, cantrip_multiplier
 from .character import Character, CombatState
 from .world_state import WorldState
 from .vec2 import Vec2, Battlefield
@@ -20,13 +20,7 @@ def _roll_scaled_cantrip(dice_str: str, caster_level: int) -> int:
     '1d8' at L1-4 → 1 call; at L5-10 → 2 calls; at L11-16 → 3 calls;
     at L17+ → 4 calls.  Any +N modifier on the base dice string is added once.
     """
-    multiplier = 1
-    if caster_level >= 17:
-        multiplier = 4
-    elif caster_level >= 11:
-        multiplier = 3
-    elif caster_level >= 5:
-        multiplier = 2
+    multiplier = cantrip_multiplier(caster_level)
     m = _re.match(r'^(\d+)(d\d+)([+-]\d+)?$', dice_str)
     if not m:
         # Unrecognised notation — fall back to a single roll() call.
@@ -531,9 +525,11 @@ def tick_aura_damage(char: Character, world_state: WorldState,
         spell_mod = caster.stats.modifier(save_stat)
         save_dc = 8 + caster.proficiency_bonus + spell_mod
         success, save_roll = make_saving_throw(char, "WIS", save_dc)
-        raw = roll("3d8")
+        from .abilities import CONFERRED_DAMAGE_DICE
+        _sg_dice, _sg_type = CONFERRED_DAMAGE_DICE["spirit_guardians"]
+        raw = roll(_sg_dice)
         amount = raw // 2 if success else raw
-        dealt = apply_damage(char, amount, dtype="光耀",
+        dealt = apply_damage(char, amount, dtype=_sg_type,
                              attacker=caster, world_state=world_state)
         events.append({
             "type":        "AURA_DAMAGE",
@@ -544,7 +540,7 @@ def tick_aura_damage(char: Character, world_state: WorldState,
             "save_roll":   save_roll,
             "save_success": success,
             "damage":      dealt,
-            "damage_dice": "3d8",
+            "damage_dice": _sg_dice,
             "target_hp":   char.hp,
             "target_max_hp": char.max_hp,
             "target_alive": char.is_alive(),
@@ -1330,8 +1326,10 @@ def _resolve_single_attack(attacker: Character, target: Character, action: dict,
         for fx in target.status_effects:
             if (isinstance(fx, _SE3) and fx.name == "hunters_mark"
                     and fx.source_id == attacker_id_hm):
-                hm_dmg = roll("1d6")
-                apply_damage(target, hm_dmg, dtype="穿刺",
+                from .abilities import CONFERRED_DAMAGE_DICE
+                _hm_dice, _hm_type = CONFERRED_DAMAGE_DICE["hunters_mark"]
+                hm_dmg = roll(_hm_dice)
+                apply_damage(target, hm_dmg, dtype=_hm_type,
                              attacker=attacker, world_state=world_state)
                 result["hunters_mark_damage"] = hm_dmg
                 result["damage"] = result.get("damage", 0) + hm_dmg
@@ -1662,13 +1660,10 @@ def _execute_action_impl(action: dict, world_state: WorldState) -> dict:
         # damaging abilities (save-based spells included; hit/miss irrelevant).
         # Consumers ask "has this character ever even TRIED to deal damage".
         if actor is not None:
-            _sid = action.get("skill_id", "")
             _off = t in ("ATTACK", "SPELL_ATTACK")
-            if not _off and _sid:
-                from .abilities import ABILITY_REGISTRY
-                _ab = ABILITY_REGISTRY.get(_sid)
-                _off = (_ab is not None
-                        and getattr(_ab.features, "expected_damage", 0) > 0)
+            if not _off:
+                from .skill import action_expected_damage
+                _off = action_expected_damage(action, actor) > 0
             if _off:
                 actor._outgoing_attempts = getattr(
                     actor, "_outgoing_attempts", 0) + 1

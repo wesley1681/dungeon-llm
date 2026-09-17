@@ -78,14 +78,32 @@ def _trait_links_skill(t: TraitGrant, skill_ids: set[str]) -> bool:
     return any(sid == k or sid.startswith(k) for k in keys for sid in skill_ids)
 
 
+_PROBE_CHAR = None
+
+
+def _ability_deals_damage(skill_id: str) -> bool:
+    """Does this ability deal damage? expected_damage is now DERIVED on
+    materialize (0 on the static features), so probe it with a generic capable
+    character (has weapons + stats) and sum the built action's damage packets."""
+    global _PROBE_CHAR
+    ab = ABILITY_REGISTRY.get(skill_id)
+    if ab is None or ab.builder is None:
+        return False
+    if _PROBE_CHAR is None:
+        _PROBE_CHAR = make_character("champion", level=20)
+    from trpg.engine.skill import action_expected_damage
+    from trpg.engine.vec2 import Vec2
+    act = ab.build_action(_PROBE_CHAR.name, "foe", Vec2(0.0, 0.0), char=_PROBE_CHAR)
+    return action_expected_damage(act, _PROBE_CHAR) > 0
+
+
 def _can_fight(cd: ClassDef, level: int) -> bool:
     if cd.weapons:
         return True
     for g in cd.skills:
         if g.min_level > level or g.reaction:
             continue
-        ab = ABILITY_REGISTRY.get(g.skill_id)
-        if ab is not None and ab.features.expected_damage > 0:
+        if _ability_deals_damage(g.skill_id):
             return True
     return False
 

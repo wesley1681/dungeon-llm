@@ -6,7 +6,7 @@ shapes match the gymnasium API exactly — wrapping it in `gymnasium.Env` later
 takes one subclass declaration and two `Space` attributes.
 
 Phase 1 scope (deliberately narrow; expand later):
-  - Single agent (default: aria, a level-3 warrior)
+  - Single agent (default: kaine, a level-3 warrior)
   - Single opponent (goblin, melee)
   - No spells, no allies, no obstacles
   - Flat float32 observation, MultiDiscrete factored action
@@ -53,7 +53,7 @@ _MAX_AGENT_STEPS_PER_EPISODE = 50
 
 
 def _build_1v1_world(layout: str = "open") -> WorldState:
-    """Build a fresh 1v1 encounter: aria (warrior, lvl 3) vs goblin.
+    """Build a fresh 1v1 encounter: kaine (warrior, lvl 3) vs goblin.
 
     `layout` controls the battlefield terrain:
       - "open"          empty 30x30 field (default)
@@ -62,7 +62,7 @@ def _build_1v1_world(layout: str = "open") -> WorldState:
       - "lava"          two dangerous-terrain pools off-axis
     """
     agent = Character(
-        name="aria", race="人類", class_="戰士", level=3,
+        name="kaine", race="人類", class_="戰士", level=3,
         stats=Stats(STR=14, DEX=12, CON=12), hp=24, max_hp=24, ac=14,
         weapons=[WEAPON_DEFS["長劍"]],
     )
@@ -72,11 +72,11 @@ def _build_1v1_world(layout: str = "open") -> WorldState:
         weapons=[WEAPON_DEFS["短劍"]], is_npc=True, attitude=0,
     )
     ws = WorldState(
-        characters={"aria": agent, "goblin": enemy},
+        characters={"kaine": agent, "goblin": enemy},
         scene="rl_training",
-        party_ids=["aria"], pc_ids=["aria"],
+        party_ids=["kaine"], pc_ids=["kaine"],
     )
-    cs = CombatState(initiative_order=["aria", "goblin"])
+    cs = CombatState(initiative_order=["kaine", "goblin"])
     ws.combat = cs
     setup_combat_positions(ws, cs)
 
@@ -100,7 +100,7 @@ class CombatEnv:
     observation_dim: int = OBS_DIM
     action_dims: tuple[int, int, int] = (N_ACTION_TYPES, N_MOVE_CELLS, N_MOVE_CELLS)
 
-    def __init__(self, agent_id: str = "aria",
+    def __init__(self, agent_id: str = "kaine",
                  opponent_policy: CombatPolicy | None = None,
                  layout: str = "open",
                  seed: int | None = None):

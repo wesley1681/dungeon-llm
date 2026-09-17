@@ -125,10 +125,10 @@ def test_available_skills_reactions_excluded():
     assert "shield_spell" not in skill_ids   # is_reaction=True → excluded
 
 
-def test_aria_available_skills_include_class_abilities():
+def test_kaine_available_skills_include_class_abilities():
     ws = build_world_state()
-    aria = ws.characters["aria"]
-    skills = available_skills(aria)
+    kaine = ws.characters["kaine"]
+    skills = available_skills(kaine)
     skill_ids = [s.skill_id for s in skills]
     # These base-class abilities (archetype_id="") should appear
     base_abilities = {"second_wind", "action_surge", "magic_missile",
@@ -142,10 +142,10 @@ def test_aria_available_skills_include_class_abilities():
     assert "shield_spell" not in skill_ids
 
 
-def test_aria_skills_all_correct_feature_dim():
+def test_kaine_skills_all_correct_feature_dim():
     ws = build_world_state()
-    aria = ws.characters["aria"]
-    for skill in available_skills(aria):
+    kaine = ws.characters["kaine"]
+    for skill in available_skills(kaine):
         vec = skill.features.as_vector()
         assert len(vec) == SKILL_FEATURE_DIM, (
             f"Skill '{skill.skill_id}' has vector dim {len(vec)}, expected {SKILL_FEATURE_DIM}"

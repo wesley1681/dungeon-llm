@@ -203,10 +203,10 @@ def run_game() -> None:
 
         elif isinstance(event, ExplorationPrompt):
             print()  # newline after GM stream
-            aria       = event.aria
-            inv        = "、".join(aria.inventory)      if aria.inventory      else "無"
-            status_str = "、".join(fx.name for fx in aria.status_effects) if aria.status_effects else "無"
-            print(f"\n【凱恩｜HP {aria.hp}/{aria.max_hp} AC {aria.ac}"
+            kaine       = event.kaine
+            inv        = "、".join(kaine.inventory)      if kaine.inventory      else "無"
+            status_str = "、".join(fx.name for fx in kaine.status_effects) if kaine.status_effects else "無"
+            print(f"\n【凱恩｜HP {kaine.hp}/{kaine.max_hp} AC {kaine.ac}"
                   f"｜道具：{inv}｜狀態：{status_str}】", end="")
             while True:
                 human_input = _read_player_input()
@@ -214,29 +214,29 @@ def run_game() -> None:
                     continue
                 if human_input.lower() == "status":
                     print_status(world_state)
-                    print(f"\n【凱恩｜HP {aria.hp}/{aria.max_hp}】", end="")
+                    print(f"\n【凱恩｜HP {kaine.hp}/{kaine.max_hp}】", end="")
                     continue
                 break
             session.submit_player_input(human_input)
             _seen.clear()
 
         elif isinstance(event, CombatPrompt):
-            aria       = event.aria
-            inv        = "、".join(aria.inventory)      if aria.inventory      else "無"
-            status_str = "、".join(fx.name for fx in aria.status_effects) if aria.status_effects else "無"
+            kaine       = event.kaine
+            inv        = "、".join(kaine.inventory)      if kaine.inventory      else "無"
+            status_str = "、".join(fx.name for fx in kaine.status_effects) if kaine.status_effects else "無"
             if event.info_text:
                 print(f"\n{event.info_text}")
             else:
                 enemy_str = "、".join(f"{n}（{c}）" for c, n in event.enemies.items())
                 print(f"\n  敵人：{enemy_str}")
-            print(f"  【凱恩｜HP {aria.hp}/{aria.max_hp} AC {aria.ac}"
+            print(f"  【凱恩｜HP {kaine.hp}/{kaine.max_hp} AC {kaine.ac}"
                   f"｜{inv}｜狀態：{status_str}】", end="")
             human_input = _read_player_input()
             session.submit_player_input(human_input)
 
         elif isinstance(event, ConversationPrompt):
-            aria   = event.aria
-            prompt = (f"\n【凱恩｜HP {aria.hp}/{aria.max_hp}】"
+            kaine   = event.kaine
+            prompt = (f"\n【凱恩｜HP {kaine.hp}/{kaine.max_hp}】"
                       f"【{event.npc_name} 態度：{event.attitude_label}】"
                       f"（輸入「離開」結束對話）")
             print(prompt, end="")

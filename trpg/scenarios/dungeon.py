@@ -58,7 +58,7 @@ CIVILIAN_TACTICS_COMBAT = """## 戰鬥行為原則（戰鬥中 sub-action 決策
 
 def build_world_state() -> WorldState:
     # ── 玩家角色 ────────────────────────────────────────────────────────────────
-    aria = Character(
+    kaine = Character(
         name="凱恩", race="人類", class_="盜賊", level=3,
         stats=Stats(STR=14, DEX=16, CON=12, INT=14, WIS=12, CHA=10),
         hp=22, max_hp=22, ac=14,
@@ -86,7 +86,7 @@ def build_world_state() -> WorldState:
         ],
         is_npc=False,
     )
-    aria.archetype_id = ""   # Multi-class test character; use "" so all
+    kaine.archetype_id = ""   # Multi-class test character; use "" so all
                               # base-class (archetype_id="") abilities are included.
 
     thor = Character(
@@ -265,13 +265,13 @@ def build_world_state() -> WorldState:
                 Consumable("急救包",   1, "heal", "1d4+2"),
             ],
             "attitude_delta": 2,        # 戒備(1) → 友好(3)，直接越過 reveal_threshold
-            "recipient_id":   "aria",
+            "recipient_id":   "kaine",
         },
     )
 
     return WorldState(
         characters={
-            "aria":          aria,
+            "kaine":          kaine,
             "thor":          thor,
             "civilian":      civilian,
             "goblin_1":      goblin_1,

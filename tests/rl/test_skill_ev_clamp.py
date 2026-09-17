@@ -36,11 +36,44 @@ def _trained_identities():
     return sorted(set(ids))
 
 
+def _make_owner(idn):
+    from trpg.scenarios.archetypes import make_character
+    from trpg.scenarios.monsters import make_monster, MONSTER_DEFS
+    if idn in MONSTER_DEFS:
+        return make_monster(idn)
+    return make_character(idn, level=20)
+
+
+def _materialized_evs():
+    """{skill_id: materialized expected_damage} via each ability's roster owner.
+
+    expected_damage is now DERIVED on materialize (dice → EV), not stored on the
+    static features, so the gap/boss invariants must be measured on the
+    materialized value the obs actually sees. Weapon-riding EV needs the real
+    owner's weapon (e.g. behir's jaw for swallow), so instantiate real owners."""
+    out = {}
+    for idn in list(STANDARD_ARCHETYPES) + list(MONSTER_DEFS_KEYS):
+        try:
+            ch = _make_owner(idn)
+        except Exception:
+            continue
+        for sk in available_skills(ch, None):
+            # keep the max seen (a boss jaw beats a fallback weapon)
+            ev = float(sk.features.expected_damage)
+            if ev > out.get(sk.skill_id, -1.0):
+                out[sk.skill_id] = ev
+    return out
+
+
+from trpg.scenarios.monsters import MONSTER_DEFS as _MDEFS  # noqa: E402
+MONSTER_DEFS_KEYS = list(_MDEFS.keys())
+
+
 def test_cap_sits_in_the_ev_gap():
     # CAP must be above every trained-kit EV (so clamping is a no-op there) and
     # below the lowest OOD boss ultra (so those DO get reined in). The data-proven
-    # gap is (66, 85.5).
-    evs = sorted(ab.features.expected_damage for ab in ABILITY_REGISTRY.values())
+    # gap is (66, 85.5). Measured on the MATERIALIZED EV the obs sees.
+    evs = sorted(_materialized_evs().values())
     below = max(e for e in evs if e <= SKILL_EV_OBS_CAP)
     above = min(e for e in evs if e > SKILL_EV_OBS_CAP)
     assert below <= 66.0, f"something ≤CAP has EV {below} > 66 — gap moved"
@@ -53,10 +86,14 @@ def test_clamp_is_noop_on_every_trained_identity():
     # the obs clamp never fires on a real scenario = bit-exact, retrain-free.
     over = []
     for idn in _trained_identities():
-        for sid in _kit_ids(idn):
-            ab = ABILITY_REGISTRY.get(sid)
-            if ab and ab.features.expected_damage > SKILL_EV_OBS_CAP:
-                over.append((idn, sid, ab.features.expected_damage))
+        try:
+            ch = _make_owner(idn)
+        except Exception:
+            continue
+        for sk in available_skills(ch, None):
+            ev = float(sk.features.expected_damage)
+            if ev > SKILL_EV_OBS_CAP:
+                over.append((idn, sk.skill_id, ev))
     assert not over, (
         "trained identities carry >CAP skills — clamp would alter their obs "
         f"(not bit-exact): {over}")
@@ -65,8 +102,8 @@ def test_clamp_is_noop_on_every_trained_identity():
 def test_only_boss_ultras_exceed_cap():
     # Documents the exact OOD boundary the clamp reins in. If a NEW high-EV
     # ability is added, this test forces a conscious decision about the cap.
-    over = {sid for sid, ab in ABILITY_REGISTRY.items()
-            if ab.features.expected_damage > SKILL_EV_OBS_CAP}
+    over = {sid for sid, ev in _materialized_evs().items()
+            if ev > SKILL_EV_OBS_CAP}
     assert over == {"swallow", "fire_breath_ancient",
                     "kraken_swallow", "tarrasque_swallow"}, over
 
@@ -87,7 +124,9 @@ def test_grafted_ultra_ev_is_clamped_in_obs():
     assert col.size, "agent has no skills?"
     assert float(col.max()) <= SKILL_EV_OBS_CAP + 1e-4, (
         f"a skill row exceeded CAP in obs: max={col.max()}")
-    # and the swallow really is present pre-clamp (EV 204 > CAP) so the clamp
-    # genuinely fired, not a vacuous pass.
-    swallow_ev = ABILITY_REGISTRY["tarrasque_swallow"].features.expected_damage
-    assert swallow_ev > SKILL_EV_OBS_CAP
+    # and the swallow really is present pre-clamp (materialized EV > CAP) so the
+    # clamp genuinely fired, not a vacuous pass. Read the DERIVED EV the grafted
+    # agent actually carries (materialize, not the now-computed-only features).
+    sw = next(s for s in available_skills(env.ws.characters[aid], env.ws)
+              if s.skill_id == "tarrasque_swallow")
+    assert sw.features.expected_damage > SKILL_EV_OBS_CAP

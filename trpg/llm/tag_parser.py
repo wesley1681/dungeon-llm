@@ -41,8 +41,8 @@ def parse_and_resolve(text: str, world_state: WorldState,
 
 
 # Tags that must only fire in the narrative section (after ---), never from 機制 planning section.
-# Only ROLL (and STATUS) are executed in the plan phase so the GM knows the result before writing.
-_NARRATIVE_ONLY_TAGS = {"INITIATIVE", "ATTACK", "DAMAGE", "TRAVEL", "PICKUP", "HEAL", "CONSUME"}
+# Only STATUS is executed in the plan phase so the GM knows the result before writing.
+_NARRATIVE_ONLY_TAGS = {"INITIATIVE", "ATTACK", "DAMAGE", "TRAVEL", "PICKUP", "CONSUME"}
 
 
 _ERROR_PREFIXES = ("無效", "找不到", "標籤解析錯誤", "未知標籤")
@@ -66,7 +66,7 @@ def execute_all_tags(text: str, world_state: WorldState,
     seen_once: set[str] = set()   # TRAVEL / INITIATIVE / TALK / ATTACK_NPC / FLEE fire once per call
     for m in re.finditer(r"\[([A-Z_]+):\s*([^\]]+)\]", text):
         tag = m.group(1)
-        if tag in {"TRAVEL", "INITIATIVE", "TALK", "ATTACK_NPC", "FLEE", "QUEST_ACCEPT", "QUEST_TURNIN", "RECRUIT"} and tag in seen_once:
+        if tag in {"TRAVEL", "INITIATIVE", "TALK", "ATTACK_NPC", "FLEE", "QUEST_ACCEPT", "QUEST_COMPLETE", "QUEST_TURNIN", "RECRUIT"} and tag in seen_once:
             continue
         try:
             result = _dispatch(tag, m.group(2).strip(), world_state)
@@ -78,13 +78,13 @@ def execute_all_tags(text: str, world_state: WorldState,
             ok.append(result)
             if log_to_narrative:
                 world_state.log_event("system", result)
-            if tag in {"TRAVEL", "INITIATIVE", "TALK", "ATTACK_NPC", "FLEE", "QUEST_ACCEPT", "QUEST_TURNIN", "RECRUIT"}:
+            if tag in {"TRAVEL", "INITIATIVE", "TALK", "ATTACK_NPC", "FLEE", "QUEST_ACCEPT", "QUEST_COMPLETE", "QUEST_TURNIN", "RECRUIT"}:
                 seen_once.add(tag)
     return ok, errors
 
 
 def parse_pre_narrative(text: str, world_state: WorldState) -> tuple[list[str], list[str], set[str]]:
-    """Execute plan-phase tags (ROLL, STATUS) from the 機制 section.
+    """Execute plan-phase tags (STATUS) from the 機制 section.
 
     Only tags NOT in _NARRATIVE_ONLY_TAGS are executed here so the GM can receive
     actual dice results before writing the narrative (Option C two-pass generation).
@@ -270,7 +270,7 @@ def _dispatch(tag: str, args: str, ws: WorldState) -> str:
         if ws.combat and ws.combat.active:
             return "戰鬥中無法移動"
         direction = args.lower().strip()
-        # Tolerate "[TRAVEL: aria east]" — strip leading character ID if present
+        # Tolerate "[TRAVEL: kaine east]" — strip leading character ID if present
         _valid_dirs = {"north", "south", "east", "west"}
         parts = direction.split()
         if len(parts) == 2 and parts[0] not in _valid_dirs and parts[1] in _valid_dirs:
@@ -456,17 +456,6 @@ def _dispatch(tag: str, args: str, ws: WorldState) -> str:
         damage = combat.apply_damage(target, dice_str)
         return f"{target.name} 受到 {damage} 點傷害，剩餘 HP：{target.hp}/{target.max_hp}"
 
-    if tag == "HEAL":
-        parts = args.split()
-        if len(parts) != 2:
-            return f"無效 HEAL 格式：{args}"
-        char_id, dice_str = parts
-        char = _find_char(char_id, ws)
-        if not char:
-            return f"找不到角色：{char_id}"
-        healed = combat.apply_heal(char, dice_str)
-        return f"{char.name} 恢復 {healed} HP，現在 HP：{char.hp}/{char.max_hp}"
-
     if tag == "CONSUME":
         parts = args.split(maxsplit=1)
         if len(parts) != 2:
@@ -475,38 +464,17 @@ def _dispatch(tag: str, args: str, ws: WorldState) -> str:
         char = _find_char(char_id, ws)
         if not char:
             return f"找不到角色：{char_id}"
-        if not char.consume(item_name):
+        item = char.get_consumable(item_name)
+        if not item or item.quantity <= 0:
             return f"{char.name} 沒有 {item_name} 可使用"
-        return f"{char.name} 消耗了 {item_name} 1 個"
-
-    if tag == "ROLL":
-        _DEFAULT_DC = 12
-        parts = args.split()
-        # Accept 4-token form "[ROLL: aria DEX Investigation DC14]" — drop skill description
-        if len(parts) == 4:
-            parts = [parts[0], parts[1], parts[3]]
-        # Tolerate missing DC: "[ROLL: aria WIS]" → use default DC
-        if len(parts) == 2:
-            parts = [parts[0], parts[1], f"DC{_DEFAULT_DC}"]
-        if len(parts) != 3:
-            return f"無效 ROLL 格式（無法解析：{args}）"
-        char_id, stat, dc_str = parts
-        # Tolerate "INT/WIS" style — take the first stat only
-        stat = stat.split("/")[0]
-        char = _find_char(char_id, ws)
-        if not char:
-            return f"找不到角色：{char_id}"
-        dc_clean = dc_str.upper().replace("DC", "")
-        # Tolerate placeholder like "DCXX" — fall back to default DC
-        if not dc_clean.lstrip("-").isdigit():
-            dc = _DEFAULT_DC
-            dc_note = f"（DC佔位符，使用預設DC{_DEFAULT_DC}）"
-        else:
-            dc = int(dc_clean)
-            dc_note = ""
-        success, total = combat.make_saving_throw(char, stat.upper(), dc)
-        result = "成功" if success else "失敗"
-        return f"{char.name} {stat.upper()} 檢定 {total} vs DC {dc}{dc_note}：{result}"
+        char.consume(item_name)
+        msg = f"{char.name} 消耗了 {item_name} 1 個"
+        # 效果由引擎依道具資料自動結算（與戰鬥中 USE_ITEM 同源，combat.py:2551），
+        # 不再依賴 LLM 另開 HEAL 標籤。
+        if item.effect_type == "heal" and item.effect_value:
+            healed = combat.apply_heal(char, item.effect_value)
+            msg += f"，恢復 {healed} HP，現在 HP：{char.hp}/{char.max_hp}"
+        return msg
 
     if tag == "STATUS":
         parts = args.split()
@@ -642,6 +610,20 @@ def _dispatch(tag: str, args: str, ws: WorldState) -> str:
             return f"任務「{quest.title}」已完成"
         quest.status = "active"
         return f"接受任務：{quest.title}"
+
+    if tag == "QUEST_COMPLETE":
+        # Narrative completion: the quest objective was fulfilled through a
+        # conversation outcome (judged by dialogue_flow), not a mechanical
+        # objective counter. Alternative path to status="completed" alongside
+        # quests.check_quest_progress. Turn-in to the giver still happens normally.
+        qid = args.strip().split()[0]
+        quest = ws.quests.get(qid)
+        if not quest:
+            return f"找不到任務：{qid}"
+        if quest.status != "active":
+            return f"任務「{quest.title}」目前不是進行中（{quest.status}），無法標記完成"
+        quest.status = "completed"
+        return f"任務目標達成：{quest.title}"
 
     if tag == "QUEST_TURNIN":
         qid = args.strip().split()[0]

@@ -21,15 +21,19 @@ class _StubTagAgent:
 
 
 class _StubNpcAgent:
-    """Only the attributes _run_conversation reads before we leave."""
+    """Only the attributes _run_conversation reads before we leave.
+    attitude/char_id are read by _mark_quests_offered, which now runs right after
+    the NPC opening (before the loop) on every conversation."""
     attitude_label = "友善"
+    attitude = 3            # 友善 — matches attitude_label
+    char_id = "civilian"
     recruit_decision = ""
     pending_action = ""
 
 
 def _build_session():
     """A session with every LLM-calling seam stubbed. Only the human controller
-    (aria) is real — it reads from the player-input queue."""
+    (kaine) is real — it reads from the player-input queue."""
     ws = build_world_state()
     session = GameSession(
         world_state=ws,
@@ -42,7 +46,7 @@ def _build_session():
     # (take_conversation_turn -> silent, take_npc_opening/response -> "").
     session.controllers["thor"] = ActorController()
     session.controllers["civilian"] = ActorController()
-    assert isinstance(session.controllers["aria"], HumanController)
+    assert isinstance(session.controllers["kaine"], HumanController)
     return session, ws
 
 

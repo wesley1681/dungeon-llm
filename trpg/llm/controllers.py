@@ -63,11 +63,11 @@ class HumanController(ActorController):
                               prior_remarks: dict[str, str] | None = None
                               ) -> ExplorationOutput:
         from ..game import ExplorationPrompt
-        self.emit_event(ExplorationPrompt(
-            aria=char, gm_text=gm_text,
-            prior_remarks=dict(prior_remarks or {}),
-        ))
         while True:
+            self.emit_event(ExplorationPrompt(
+                kaine=char, gm_text=gm_text,
+                prior_remarks=dict(prior_remarks or {}),
+            ))
             raw = self.get_input()
             if raw is None:
                 return ExplorationOutput(quit=True)
@@ -98,7 +98,7 @@ class HumanController(ActorController):
                                ) -> ConversationOutput:
         from ..game import ConversationPrompt
         self.emit_event(ConversationPrompt(
-            npc_name=npc_char.name, aria=char,
+            npc_name=npc_char.name, kaine=char,
             attitude_label=attitude_label,
         ))
         while True:
@@ -165,7 +165,6 @@ class LLMNpcController(ActorController):
         from ..game import StreamChunk
         nudge = (f"## 現在請\n以 {char.name} 的身份，根據以上歷史和當前態度，"
                  "用第一人稱繁體中文簡短回應走近的冒險者（開場第一句）。")
-        self.agent._skip_marker = True
         return self.agent.generate(
             nudge=nudge,
             on_chunk=lambda c, thinking=False: self.emit_event(

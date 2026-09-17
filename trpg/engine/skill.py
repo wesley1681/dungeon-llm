@@ -25,6 +25,7 @@ import numpy as np
 
 from .vec2 import Vec2
 from .damage import DAMAGE_TYPES, DAMAGE_TYPE_INDEX, N_DAMAGE_TYPES
+from .dice import dice_ev as _dice_ev, cantrip_multiplier as _cantrip_mult
 
 
 # ── Schema enums (orderings are frozen — append-only) ────────────────────────
@@ -111,14 +112,9 @@ WEAPON_DTYPE = "@weapon"
 
 
 def _cantrip_multiplier(caster_level: int) -> float:
-    """5e cantrip damage scales at levels 5, 11, 17."""
-    if caster_level >= 17:
-        return 4.0
-    if caster_level >= 11:
-        return 3.0
-    if caster_level >= 5:
-        return 2.0
-    return 1.0
+    """5e cantrip damage scales at levels 5, 11, 17. Delegates to the shared
+    dice.cantrip_multiplier so the engine roll and the obs EV use one table."""
+    return float(_cantrip_mult(caster_level))
 
 
 # ── SkillFeatures ────────────────────────────────────────────────────────────
@@ -257,46 +253,48 @@ class SkillFeatures:
         # Attack bonus vs AC (weapon attacks use STR by default)
         f.attack_vs_ac = float(char.stats.modifier("STR") + char.proficiency_bonus)
 
-        # Remaining uses as a fraction [0.0, 1.0] for abilities with a pool.
+        ab = None
         if skill_id:
             from .abilities import ABILITY_REGISTRY
             ab = ABILITY_REGISTRY.get(skill_id)
-            if ab and ab.max_uses > 0:
-                current = char.ability_uses.get(skill_id, ab.max_uses)
-                f.remaining_uses = float(current) / ab.max_uses
+
+        # Remaining uses as a fraction [0.0, 1.0] for abilities with a pool.
+        if ab and ab.max_uses > 0:
+            current = char.ability_uses.get(skill_id, ab.max_uses)
+            f.remaining_uses = float(current) / ab.max_uses
+
+        # Build the ability's action ONCE with a probe target — the single
+        # source for DERIVED expected_damage / damage_types / expected_healing,
+        # so none of them can drift from the dice the engine actually rolls.
+        # Weapon skills (no registry Ability) keep from_weapon's derived values.
+        # NOTE: weapon-riding values (e.g. divine smite = swing + radiant rider)
+        # now depend on the wielded weapon — correct, and consistent with how
+        # save_dc / attack_vs_ac already materialize per character. Subsumes the
+        # old WEAPON_DTYPE sentinel resolution (the action carries the real
+        # weapon type) and the +3-placeholder healing adjustment (the HEAL dice
+        # already carry the live spellcasting modifier).
+        if ab is not None and ab.builder is not None:
+            probe = ab.build_action(char.name, "__ev_probe__", Vec2(0.0, 0.0),
+                                    char=char)
+            base_ed = action_expected_damage(probe, char)
+            if base_ed > 0:
+                f.expected_damage = base_ed
+            shares = action_damage_shares(probe, char)
+            if shares:
+                f.damage_types = shares
+            heal = action_expected_healing(probe, char)
+            if heal > 0:
+                f.expected_healing = heal
 
         # Cantrip damage scaling: cost_slot_level == 0.0 identifies cantrips —
-        # EXCEPT slot-free monster naturals (breath / swallow / eye rays),
-        # which pin Ability.scales_as_cantrip=False. Without the gate the
-        # dragon's breath EV was over-reported ×2 at nat10 (policy/descriptor
-        # only; the engine always rolled the flat dice). Default stays True so
-        # every pre-Wave-2 ability materializes bit-identically.
+        # EXCEPT slot-free monster naturals (breath / swallow / eye rays), which
+        # pin Ability.scales_as_cantrip=False. Scales the DERIVED EV (bit-exact
+        # with the old hand-typed value for every cantrip, which is flat-mod-free
+        # so ×mult equals _roll_scaled_cantrip's dice-count scaling).
         mult = _cantrip_multiplier(char.level)
-        if mult > 1.0 and self.cost_slot_level == 0.0 and self.expected_damage > 0:
-            scales = True
-            if skill_id:
-                from .abilities import ABILITY_REGISTRY as _REG
-                ab = _REG.get(skill_id)
-                if ab is not None and not ab.scales_as_cantrip:
-                    scales = False
-            if scales:
-                f.expected_damage = self.expected_damage * mult
-
-        # Expected healing: templates embed a +3 placeholder spellcasting mod.
-        # Replace with the character's actual spellcasting modifier.
-        _PLACEHOLDER_MOD = 3.0
-        if self.expected_healing > 0 and char.spellcasting_ability:
-            actual_spell_mod = float(char.stats.modifier(char.spellcasting_ability))
-            f.expected_healing = self.expected_healing + (actual_spell_mod - _PLACEHOLDER_MOD)
-
-        # Resolve the WEAPON_DTYPE sentinel against the live wielder. Uses
-        # get_weapon("") — the same default-weapon resolution the ATTACK
-        # handler falls back to (test_skill_dtype cross-checks per carrier).
-        if any(tok == WEAPON_DTYPE for tok, _ in self.iter_damage_types()):
-            wdt = char.get_weapon("").damage_type
-            f.damage_types = tuple(
-                (wdt if tok == WEAPON_DTYPE else tok, share)
-                for tok, share in self.iter_damage_types())
+        if (mult > 1.0 and self.cost_slot_level == 0.0 and f.expected_damage > 0
+                and (ab is None or ab.scales_as_cantrip)):
+            f.expected_damage = f.expected_damage * mult
 
         return f
 
@@ -347,6 +345,153 @@ def action_damage_types(action: dict | None, actor) -> set[str]:
     return out
 
 
+# Expected number of periodic ticks a restrain/swallow rider deals before the
+# victim escapes or the source dies — the horizon the catalog's hand-computed
+# swallow EV baked in (bite + 3×tick). Named so that EV stays *computed* from
+# dice × an explicit horizon rather than a magic constant.
+TICK_DAMAGE_HORIZON = 3
+
+
+def _spell_attack_mod(action: dict, char) -> float:
+    """Spellcasting-ability modifier the engine adds to a spell-attack's damage
+    when add_spell_mod is set (default True) — mirrors combat._resolve_spell_
+    attack_roll (raw = base + spell_mod). Cantrips/rays that pin
+    add_spell_mod=False add nothing."""
+    if not action.get("add_spell_mod", True):
+        return 0.0
+    sa = getattr(char, "spellcasting_ability", None)
+    return float(char.stats.modifier(sa)) if sa else 0.0
+
+
+def _weapon_damage_mod(weapon, char) -> int:
+    """Ability modifier added to a weapon's damage — mirrors from_weapon /
+    combat: STR for melee, DEX for ranged, max(STR,DEX) for finesse."""
+    is_ranged = getattr(weapon, "range_type", "") == "遠程"
+    is_finesse = "精巧" in getattr(weapon, "properties", ())
+    if is_finesse:
+        return max(char.stats.modifier("STR"), char.stats.modifier("DEX"))
+    if is_ranged:
+        return char.stats.modifier("DEX")
+    return char.stats.modifier("STR")
+
+
+def _damage_packets(action: dict, actor) -> "list[tuple[str, float]]":
+    """Every (damage_type, expected_value) packet a BUILT action deals — the
+    single structural source for both action_expected_damage (sum the EVs) and
+    action_damage_shares (normalise the EVs). Mirrors the exact dice the engine
+    rolls: weapon base+mod, weapon on_hit rider, action-level rider, divine
+    smite, spell / spell-attack / multi-ray / auto-damage dice, eye-ray table,
+    restrain/swallow ticks, and conferred aura/proc damage. EV is UNSCALED
+    (cantrip level-scaling is layered on later by materialize)."""
+    t = action.get("type")
+    out: list[tuple[str, float]] = []
+    if t in ("ATTACK", "MULTI_ATTACK"):
+        w = actor.get_weapon(action.get("weapon", ""))
+        if w is not None:
+            base = max(1.0, _dice_ev(w.damage_dice) + _weapon_damage_mod(w, actor))
+            if getattr(w, "damage_type", None):
+                out.append((w.damage_type, base))
+            rider = getattr(w, "on_hit", None) or {}
+            rev = _dice_ev(rider.get("damage_dice", ""))
+            if rev > 0 and rider.get("damage_type"):
+                out.append((rider["damage_type"], rev))
+        rev = _dice_ev(action.get("rider_damage_dice", ""))
+        if rev > 0 and action.get("rider_damage_type"):
+            out.append((action["rider_damage_type"], rev))
+        slot = int(action.get("divine_smite_slot", 0) or 0)
+        if slot > 0:
+            out.append(("光耀", _dice_ev(f"{min(5, 1 + slot)}d8")))
+        md = action.get("rider_metadata") or {}
+        if md.get("tick_damage_dice") and md.get("tick_damage_type"):
+            out.append((md["tick_damage_type"],
+                        TICK_DAMAGE_HORIZON * _dice_ev(md["tick_damage_dice"])))
+    elif t == "SPELL":
+        from .spells import SPELLS
+        sp = SPELLS.get(action.get("spell_name", ""))
+        ev = _dice_ev(getattr(sp, "damage_dice", "")) if sp is not None else 0.0
+        if ev > 0 and getattr(sp, "damage_type", ""):
+            out.append((sp.damage_type, ev))
+    elif t == "SPELL_ATTACK":
+        ev = _dice_ev(action.get("damage_dice", "")) + _spell_attack_mod(action, actor)
+        if ev > 0 and action.get("damage_type"):
+            out.append((action["damage_type"], ev))
+    elif t == "MULTI_SPELL_ATTACK":
+        rays = action.get("ray_targets") or []
+        ev = len(rays) * (_dice_ev(action.get("damage_dice", ""))
+                          + _spell_attack_mod(action, actor))
+        if ev > 0 and action.get("damage_type"):
+            out.append((action["damage_type"], ev))
+    elif t == "AUTO_DAMAGE":
+        darts = sum(int(tg.get("darts", 1)) for tg in (action.get("targets") or []))
+        ev = (darts or 1) * _dice_ev(action.get("damage_per", ""))
+        if ev > 0 and action.get("damage_type"):
+            out.append((action["damage_type"], ev))
+    elif t == "EYE_RAYS":
+        table = action.get("table") or ()
+        n = int(action.get("n_rays", 1))
+        by_type: dict[str, float] = {}
+        for s in table:
+            dt, dd = s.get("damage_type"), s.get("damage_dice")
+            if dt and dd:
+                by_type[dt] = by_type.get(dt, 0.0) + _dice_ev(dd) / len(table)
+        out.extend((dt, ev * n) for dt, ev in by_type.items())
+    # Conferred / aura damage dealt later by STATUS machinery (spirit-guardians
+    # aura, hunter's-mark), keyed by skill_id — see CONFERRED_DAMAGE_DICE.
+    from .abilities import CONFERRED_DAMAGE_DICE
+    conf = CONFERRED_DAMAGE_DICE.get(action.get("skill_id", ""))
+    if conf:
+        dice, dtype = conf
+        out.append((dtype, _dice_ev(dice)))
+    return out
+
+
+def action_expected_damage(action: dict | None, actor) -> float:
+    """Ground-truth expected damage of a BUILT action dict — sum of every
+    (type, EV) packet from _damage_packets. This is what expected_damage is
+    DERIVED from so the RL number can never drift from the dice the engine
+    rolls. Returns 0.0 for non-damaging actions."""
+    if not action:
+        return 0.0
+    return sum(ev for _, ev in _damage_packets(action, actor))
+
+
+def action_damage_shares(action: dict | None, actor) -> tuple:
+    """EV-weighted soft one-hot of a BUILT action's damage types — the
+    SkillFeatures.damage_types tuple ((type, share), …) DERIVED from the real
+    per-packet EVs (so a weapon-riding smite reads as its true weapon+radiant
+    split, not a hand-declared single type). Shares sum to 1 for a damaging
+    action; () for a non-damaging one. Same packet source as expected_damage,
+    so the two can never disagree."""
+    if not action:
+        return ()
+    packets = _damage_packets(action, actor)
+    by_type: dict[str, float] = {}
+    for dt, ev in packets:
+        by_type[dt] = by_type.get(dt, 0.0) + ev
+    total = sum(by_type.values())
+    if total <= 0:
+        return ()
+    return tuple((dt, ev / total) for dt, ev in by_type.items())
+
+
+def action_expected_healing(action: dict | None, actor) -> float:
+    """Ground-truth expected healing of a BUILT action — DERIVED from the dice
+    or pool the engine actually restores, never a hand-typed constant:
+    HEAL / MULTI_HEAL dice → dice.dice_ev (already carries the live spell mod);
+    a pool MULTI_HEAL → its pool total; LAY_ON_HANDS → its per-use amount.
+    Returns 0.0 for non-healing actions."""
+    if not action:
+        return 0.0
+    t = action.get("type")
+    if t in ("HEAL", "MULTI_HEAL"):
+        if action.get("dice"):
+            return _dice_ev(action["dice"])
+        return float(action.get("pool", 0.0) or 0.0)
+    if t == "LAY_ON_HANDS":
+        return float(action.get("amount", 0.0) or 0.0)
+    return 0.0
+
+
 # ── Skill (features + action builder) ────────────────────────────────────────
 
 ActionBuilder = Callable[[str, str | None, "tuple[float, float] | None"], dict | None]
@@ -377,19 +522,10 @@ class Skill:
 
 # ── Factory helpers ──────────────────────────────────────────────────────────
 
-_DICE_RE = re.compile(r"(\d+)d(\d+)\s*([+-]\s*\d+)?")
-
-
 def _expected_dice(dice_str: str) -> float:
-    """Expected value of an XdY[+Z] roll. Returns 0.0 on empty / unparseable."""
-    if not dice_str:
-        return 0.0
-    m = _DICE_RE.match(dice_str.replace(" ", ""))
-    if not m:
-        return 0.0
-    n, sides = int(m.group(1)), int(m.group(2))
-    flat = int((m.group(3) or "0").replace(" ", ""))
-    return n * (sides + 1) / 2.0 + flat
+    """Expected value of an XdY[+Z] roll. Returns 0.0 on empty / unparseable.
+    Thin alias for the canonical dice.dice_ev — kept for existing callers."""
+    return _dice_ev(dice_str)
 
 
 def _save_stat_index(stat: str) -> int:

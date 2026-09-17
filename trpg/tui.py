@@ -61,7 +61,7 @@ class TRPGApp(App):
         border: tall yellow;
     }
 
-    #aria-panel {
+    #kaine-panel {
         width: 1fr;
         border: tall green;
     }
@@ -79,9 +79,9 @@ class TRPGApp(App):
         yield RichLog(id="gm-panel", markup=True, wrap=True, highlight=False)
         with Horizontal(id="bottom-row"):
             yield RichLog(id="thor-panel", markup=True, wrap=True, highlight=False)
-            yield RichLog(id="aria-panel", markup=True, wrap=True, highlight=False)
+            yield RichLog(id="kaine-panel", markup=True, wrap=True, highlight=False)
         yield Input(
-            placeholder="輸入你（艾里亞）的行動，按 Enter 確認… (quit 退出 / status 查看狀態)",
+            placeholder="輸入你（凱恩）的行動，按 Enter 確認… (quit 退出 / status 查看狀態)",
             id="player-input",
             disabled=True,
         )
@@ -92,11 +92,11 @@ class TRPGApp(App):
 
         self.gm_log = self.query_one("#gm-panel", RichLog)
         self.thor_log = self.query_one("#thor-panel", RichLog)
-        self.aria_log = self.query_one("#aria-panel", RichLog)
+        self.kaine_log = self.query_one("#kaine-panel", RichLog)
 
         self.gm_log.border_title = "GM"
         self.thor_log.border_title = "索爾（AI 玩家）"
-        self.aria_log.border_title = "你（艾里亞）"
+        self.kaine_log.border_title = "你（凱恩）"
 
         self.world_state = build_world_state()
         self.gm = GMAgent(
@@ -118,7 +118,7 @@ class TRPGApp(App):
         self._input_value = ""
         self.player_actions = []
 
-        self.aria_log.write(f"[bold]{OPENING_SCENE}[/bold]")
+        self.kaine_log.write(f"[bold]{OPENING_SCENE}[/bold]")
         self.run_game_loop()
 
     # ── Input handling ────────────────────────────────────────────────────
@@ -210,18 +210,18 @@ class TRPGApp(App):
             thor_buf.flush()
             self.world_state.event_log.append(f"索爾：{thor_response}")
 
-            # 5. Aria sees GM narration + Thor response ───────────────────
-            self.call_from_thread(self.aria_log.write, f"\n[cyan]【GM】[/cyan] {gm_text}")
+            # 5. 凱恩 sees GM narration + Thor response ───────────────────
+            self.call_from_thread(self.kaine_log.write, f"\n[cyan]【GM】[/cyan] {gm_text}")
             self.call_from_thread(
-                self.aria_log.write,
+                self.kaine_log.write,
                 f"[yellow]【索爾】[/yellow] {thor_response}",
             )
 
-            aria = self.world_state.characters["aria"]
-            status_str = "、".join(fx.name for fx in aria.status_effects) if aria.status_effects else "無"
+            kaine = self.world_state.characters["kaine"]
+            status_str = "、".join(fx.name for fx in kaine.status_effects) if kaine.status_effects else "無"
             self.call_from_thread(
-                self.aria_log.write,
-                f"\n[bold green]【艾里亞｜HP {aria.hp}/{aria.max_hp} AC {aria.ac}｜狀態：{status_str}】[/bold green]",
+                self.kaine_log.write,
+                f"\n[bold green]【凱恩｜HP {kaine.hp}/{kaine.max_hp} AC {kaine.ac}｜狀態：{status_str}】[/bold green]",
             )
 
             # 6. Wait for player input ────────────────────────────────────
@@ -232,23 +232,23 @@ class TRPGApp(App):
                 return
 
             if human_input.lower() == "status":
-                inv = "、".join(aria.inventory) if aria.inventory else "無"
+                inv = "、".join(kaine.inventory) if kaine.inventory else "無"
                 self.call_from_thread(
-                    self.aria_log.write,
-                    f"[bold]HP {aria.hp}/{aria.max_hp}  AC {aria.ac}[/bold]\n道具：{inv}\n狀態：{status_str}",
+                    self.kaine_log.write,
+                    f"[bold]HP {kaine.hp}/{kaine.max_hp}  AC {kaine.ac}[/bold]\n道具：{inv}\n狀態：{status_str}",
                 )
                 self.player_actions = []
                 continue
 
             self.call_from_thread(
-                self.aria_log.write,
+                self.kaine_log.write,
                 f"[bold green]{human_input}[/bold green]",
             )
-            self.world_state.event_log.append(f"艾里亞：{human_input}")
+            self.world_state.event_log.append(f"凱恩：{human_input}")
 
             self.player_actions = [
                 f"索爾：{thor_response}",
-                f"艾里亞：{human_input}",
+                f"凱恩：{human_input}",
             ]
 
 

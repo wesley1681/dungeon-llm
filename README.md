@@ -1,221 +1,344 @@
 # TRPG LLM Engine
 
-本地 LLM 驅動的 D&D 5e 文字 TRPG，使用 Ollama 管理模型，Gradio 提供網頁介面。
+本機／API LLM 驅動的 D&D 5e 文字 TRPG。遊戲包含探索、NPC 多輪對話、任務、格狀戰鬥，以及由訓練模型或規則策略控制的非玩家角色。
 
-## 需求
+## 最快啟動：桌面版
 
-- Python 3.11+（建議使用專案內 `gemma-env` 虛擬環境）
-- [Ollama](https://ollama.com) 服務在背景執行
-- 推薦模型：`gemma4:26b`
+`start_llama_server.ps1` 已設定使用本機模型 `gemma4-hauhau-q4`。請開啟兩個 PowerShell 視窗，兩個視窗都先切換到本專案根目錄。
 
-## 快速開始
+### 1. 在第一個 PowerShell 視窗啟動模型伺服器
 
-```bash
-# 1. 安裝 Ollama 並下載模型
+```powershell
+powershell -ExecutionPolicy Bypass -File .\start_llama_server.ps1
+```
+
+等待畫面顯示伺服器正在監聽 `http://127.0.0.1:8090`。遊戲運行期間不要關閉這個視窗。
+
+### 2. 在第二個 PowerShell 視窗啟動桌面版
+
+```powershell
+.\gemma-env\Scripts\python.exe -m trpg.desktop
+```
+
+以上就是使用預設本機模型啟動桌面版的完整流程。README 中的 Python 命令一律明確使用專案的 `gemma-env`，不需要另外啟用虛擬環境。
+
+## 其他操作介面
+
+先依使用的後端啟動模型服務，再執行下列其中一個命令：
+
+| 介面 | 啟動命令 | 說明 |
+|------|----------|------|
+| 桌面版 | `.\gemma-env\Scripts\python.exe -m trpg.desktop` | Tkinter 視窗、戰場圖與技能按鈕 |
+| 網頁版 | `.\gemma-env\Scripts\python.exe -m trpg` | Gradio 三欄介面，開啟 `http://127.0.0.1:7860` |
+| 終端機版 | `.\gemma-env\Scripts\python.exe -m trpg --mode terminal` | 純文字操作 |
+| Claude 測試模式 | `.\gemma-env\Scripts\python.exe -m trpg --mode claude` | 透過 `claude_response.txt` 提供玩家輸入 |
+
+桌面版是獨立入口，不支援 `--mode desktop` 或 `start.bat desktop`。
+
+## 執行需求
+
+- Windows 與 PowerShell
+- 專案內已建立的 `gemma-env`，或具備相同套件的 Python 3.11+
+- 執行期套件：`requests`、`gradio`、`Pillow`、`torch`
+- 桌面版需要 Python 的 Tk 支援
+- 下列其中一種 LLM 後端：
+  - Ollama
+  - OpenAI 相容的本機 `llama-server`
+  - DeepSeek API
+
+## 選擇 LLM 後端
+
+所有介面都從專案根目錄的 `_server_config.json` 讀取 LLM 後端、位址與模型。這個檔案由 `start_llama_server.ps1` 產生，且已被 `.gitignore` 排除。
+
+模型的唯一選擇點是 `start_llama_server.ps1` 開頭的：
+
+```powershell
+$selectedModel = "gemma4-hauhau-q4"
+```
+
+支援三種寫法：
+
+| 寫法 | 範例 | 行為 |
+|------|------|------|
+| 本機 GGUF 別名或路徑 | `gemma4-hauhau-q4` | 寫入 llama.cpp 設定，並在 `127.0.0.1:8090` 啟動 `llama-server` |
+| `ollama:<模型>` | `ollama:gemma4:26b` | 寫入 Ollama `localhost:11434` 設定後結束腳本 |
+| `deepseek:<模型>` | `deepseek:deepseek-v4-flash` | 寫入 DeepSeek API 設定後結束腳本 |
+
+每次切換模型或後端後都要執行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\start_llama_server.ps1
+```
+
+### 本機 GGUF
+
+本機 GGUF 模式會由 `start_llama_server.ps1` 啟動 `llama-server`，因此執行腳本的 PowerShell 視窗必須保持開啟。腳本包含下列模型別名：
+
+- `qwen3.6-mtp-q4`
+- `qwen3-30b`
+- `gemma4-google-q4`
+- `gemma4-huihui-q4`
+- `gemma4-hauhau-q4`
+
+`llama-server.exe` 與 GGUF 使用本機絕對路徑。若專案移到另一台電腦，必須同步修改腳本內的 `$exe` 與 `$modelPaths`。
+
+## 使用 Ollama
+
+先安裝 Ollama 並下載模型，例如：
+
+```powershell
 ollama pull gemma4:26b
-
-# 2. 雙擊 start.bat（推薦，會自動帶上必要環境變數重啟 Ollama 並啟動遊戲）
-start.bat            # 預設網頁版
-start.bat terminal   # 終端機版（你親自玩）
-start.bat claude     # Claude 測試模式（由 Claude Code 代玩）
 ```
 
-不想用 bat 也可以直接呼叫：
+將 `start_llama_server.ps1` 的模型改成：
 
-```bash
-python -m trpg                  # 網頁版（預設）
-python -m trpg --mode web       # 同上
-python -m trpg --mode terminal  # 終端機版
-python -m trpg --mode claude    # Claude 測試模式
+```powershell
+$selectedModel = "ollama:gemma4:26b"
 ```
 
-網頁版啟動後開啟 `http://localhost:7860`。
+執行一次設定腳本；Ollama 模式只會產生 `_server_config.json`，不會啟動服務：
 
-## 啟動模式
+```powershell
+powershell -ExecutionPolicy Bypass -File .\start_llama_server.ps1
+```
 
-| 模式 | 用途 |
+接著可使用 `start.bat`。它會以 `GGML_FLASH_ATTENTION=0` 重啟 Ollama、等待服務就緒，然後啟動指定介面：
+
+```powershell
+.\start.bat            # 網頁版
+.\start.bat terminal   # 終端機版
+.\start.bat claude     # Claude 測試模式
+```
+
+若要使用桌面版，請先確認 Ollama 已在背景運行，再直接執行：
+
+```powershell
+.\gemma-env\Scripts\python.exe -m trpg.desktop
+```
+
+`start.bat` 內的 Ollama 與 Python 使用本機路徑；換電腦時需修改 `OLLAMA` 與 `PYTHON`。
+
+## 使用 DeepSeek API
+
+將 `start_llama_server.ps1` 改成所需模型，例如：
+
+```powershell
+$selectedModel = "deepseek:deepseek-v4-flash"
+```
+
+執行設定腳本：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\start_llama_server.ps1
+```
+
+在專案根目錄的 `_deepseek_config.json` 填入 API key：
+
+```json
+{
+  "api_key": "你的 API key",
+  "base_url": "https://api.deepseek.com",
+  "model": "deepseek-v4-flash"
+}
+```
+
+若檔案不存在，第一次啟動遊戲時會自動建立空白範本並停止，填入 key 後再次啟動即可。模型與 API 位址取自 `_server_config.json`；`_deepseek_config.json` 只提供 API key。兩個檔案都不會被 Git 追蹤。
+
+DeepSeek 不需要 `start.bat`，直接啟動所需介面即可：
+
+```powershell
+.\gemma-env\Scripts\python.exe -m trpg.desktop
+# 或
+.\gemma-env\Scripts\python.exe -m trpg
+```
+
+## 強化學習戰鬥模型
+
+本專案將語言互動與戰鬥決策分成兩套系統：探索、NPC 對話與 GM 敘事由 Local／API LLM 負責；進入戰鬥後，凱恩以外的隊友與敵人預設由獨立訓練的強化學習模型控制，不需要在每個戰鬥回合呼叫 LLM。凱恩仍由玩家操作，所有角色的行動最後都交給同一套 D&D 規則引擎驗證與結算。
+
+目前的戰鬥模型是以 PyTorch 自行實作的 PPO Actor-Critic。訓練對局混合規則式專家與近期模型快照的自我對弈，並使用線上更新的 `StrengthModel` 估計不同職業、等級、怪物及隊伍人數的相對強度，安排以勢均力敵為主、另含部分刻意優勢或劣勢的對局。
+
+模型的主要輸入包括：
+
+- 自己、隊友與敵人的生命、位置、狀態、屬性、抗性及剩餘行動資源。
+- 各角色的技能組，以及技能的傷害類型、射程、目標類型和資源消耗等特徵。
+- 30×30 戰場中的地形、角色分布、距離、視線、武器可及範圍與近戰威脅。
+
+網路使用 Transformer 編碼技能與各角色的技能組，使用 MLP 編碼實體狀態、行動資源及 Critic value；空間部分直接使用預先計算的戰場特徵，而不是 CNN。現行 v05 架構是一個由所有非玩家戰鬥角色共用的模型，且不直接依賴職業 ID，而是從角色持有的技能和當前狀態推斷其戰鬥能力，因此同一顆模型可以操作不同職業與怪物。
+
+模型採分層方式產生結構化行動：
+
+```text
+是否結束回合 → 選擇技能 → 選擇角色目標或戰場位置
+```
+
+推論時會先遮蔽資源不足、超出距離、沒有視線或目標無效的選項，再以 greedy argmax 選擇行動。如果訓練模型檔案不存在，遊戲會自動退回規則式 `HeuristicCombatPolicy`，不會因此無法啟動。
+
+### 訓練目前的 v05 模型
+
+目前唯一正式訓練入口是 `scripts/exp_matchup_train.py`。它訓練 v05 `codeword-noarch-enemyskill`，先以規則式專家提供穩定對手，再依模型相對於專家的實力自動提高近期 checkpoint 自我對弈的比例；不是在「只模仿專家」與「只跟自己打」之間二選一。
+
+先執行不寫入 checkpoint 的管線檢查：
+
+```powershell
+.\gemma-env\Scripts\python.exe scripts\exp_matchup_train.py --smoke
+```
+
+從目前遊戲使用的模型開一個新的 warm-start 訓練 run：
+
+```powershell
+.\gemma-env\Scripts\python.exe scripts\exp_matchup_train.py `
+  --init_from models\general_selfplay\mt_u0300.pt `
+  --out_dir models\runs\general_v05_run1 `
+  --updates 80 --steps 2048 `
+  --workers 4 --threads 4 --device auto `
+  --sizes "1,2,3" --max_size_gap 1 --tail_gap 2 `
+  --p_monster 0.30 --p_boss 0.10 `
+  --eval_every 5 --k_refresh 5 --pool_size 5
+```
+
+請使用新的 `--out_dir`，不要直接覆寫目前遊戲使用的 checkpoint。完整的訓練策略、reward、參數、checkpoint、驗收與部署方式見 [`docs/COMBAT_MODEL_TRAINING.md`](docs/COMBAT_MODEL_TRAINING.md)。其餘訓練腳本是歷史／研究用途，不是目前正式入口。
+
+## 遊戲操作
+
+探索與對話時可直接輸入自然語言，例如「往北走」、「搜索房間」、「撿起治療藥水」或「和老柯談談」。TagAgent 會把需要修改遊戲狀態的意圖轉成規則標籤，引擎結算後再由 GM 產生敘事。
+
+戰鬥時：
+
+- 網頁版與桌面版會顯示戰場、可用技能和目標控制，也可直接輸入文字。
+- 終端機版會列出位置、距離、武器與剩餘行動資源。
+- 輸入 `結束` 或 `end` 可結束自己的戰鬥回合。
+
+通用命令：
+
+| 命令 | 用途 |
 |------|------|
-| `web` | Gradio 網頁介面，預設 |
-| `terminal` | 純文字終端機 |
-| `claude` | 由 Claude Code 透過檔案 IPC 操作凱恩的回合進行自動測試（見下方） |
+| `短休` / `short rest` | 在探索階段短休 |
+| `長休` / `long rest` | 在探索階段長休 |
+| `/旁白 on` | 開啟 GM 探索敘事與戰鬥風味文字 |
+| `/旁白 off` | 關閉旁白；機制仍照常結算 |
+| `/旁白` | 切換旁白狀態 |
+| `離開` | 結束正在進行的 NPC 對話 |
+| `quit` | 結束遊戲；終端機／探索輸入使用 |
+| `status` | 顯示完整隊伍狀態；僅終端機介面特別處理 |
 
-### Claude 測試模式
+桌面版每次啟動會覆寫根目錄的 `desktop_game_log.txt`，其中記錄戰鬥名單、位置、策略和每次行動，適合用來診斷戰鬥問題。
 
-`claude` 模式下，凱恩（玩家角色）的輸入改由 Claude Code 透過 `claude_response.txt` 提供：
+## Claude 測試模式
 
-1. 遊戲輪到凱恩時，stdout 印出標記 `<<<CLAUDE_TURN>>>` 並輪詢 `claude_response.txt`
-2. Claude Code 透過 `Monitor` 工具讀取遊戲輸出，將行動寫入 `claude_response.txt`
-3. 遊戲讀檔後刪除該檔，繼續流程
+`claude` 模式把凱恩的玩家輸入改成檔案 IPC：
 
-用途：跑遊戲流程驗證、找格式錯誤、觀察 GM/Arbiter 對各種行動的反應。
+1. 輪到凱恩時，stdout 印出 `<<<CLAUDE_TURN>>>`。
+2. 遊戲等待專案根目錄的 `claude_response.txt`。
+3. 外部工具將單次行動寫入該檔案。
+4. 遊戲讀取並刪除檔案後繼續。
 
-## 設定
+這個模式主要用於自動跑流程、重現錯誤和觀察各代理的輸出，不是一般玩家介面。
 
-主要設定在 `trpg/cli.py`：
+## 主要設定位置
 
-| 變數 | 說明 |
+| 設定 | 位置 |
 |------|------|
-| `MODEL` | Ollama 模型名稱 |
-| `BACKEND` | `"ollama"` 或 `"llamacpp"` |
-| `GM_THINK` | 是否啟用 GM 思考模式（gemma4 支援） |
-| `GM_OPTIONS` | 溫度、token 上限等參數 |
-| `TAG_OPTIONS` | TagAgent 的模型參數（低溫、小輸出） |
-| `THOR_OPTIONS` | AI 玩家（索爾）的模型參數 |
-| `DEBUG_ARBITER` | 顯示戰鬥判定器的 JSON 輸出 |
-| `CLAUDE_TEST` | Claude 測試模式開關（一般由 `--mode claude` 自動設定） |
+| LLM 來源與模型 | `start_llama_server.ps1` 的 `$selectedModel` |
+| 實際執行期後端設定 | `_server_config.json`，由腳本產生，請勿手動維護 |
+| DeepSeek API key | `_deepseek_config.json` |
+| GM、TagAgent、索爾的溫度與 token 上限 | `trpg/cli.py` 的 `GM_OPTIONS`、`TAG_OPTIONS`、`THOR_OPTIONS` |
+| 思考模式 | `trpg/cli.py` 的 `GM_THINK`、`THOR_THINK` |
+| 顯示戰鬥結構化動作 | `trpg/cli.py` 的 `DEBUG_COMBAT_ACTION` |
+| 非玩家角色的戰鬥模型 | `trpg/rl/combat_model.py` 的 `DEFAULT_COMBAT_MODEL` |
+| 場景、角色與 NPC agent | `trpg/scenarios/dungeon.py` |
+
+若 `models/general_selfplay/mt_u0300.pt` 不存在，遊戲不會因此無法啟動，而會讓非玩家角色退回規則式 `HeuristicCombatPolicy`。
 
 ## 架構
 
-```
-玩家輸入
-    ↓
-cli.py / web.py          ← 入口（純 I/O，無遊戲邏輯）
-    ↓ submit_player_input()
-game.py (GameSession)    ← 遊戲核心，跑在獨立 thread
-    ↓
-tag_agent.py             ← 規則裁判：根據玩家行動決定執行哪些標籤
-    ↓ execute_all_tags()
-tag_parser.py            ← 標籤執行引擎：修改 world_state
-    ↓ tag_results
-gm_agent.py              ← 說書人：根據機制結算撰寫純敘事
-    ↓ events
-cli.py / web.py          ← 渲染輸出給玩家
+```text
+desktop.py / web.py / cli.py
+            │ 玩家輸入與事件顯示
+            ▼
+        GameSession                 遊戲主迴圈，執行於背景 thread
+        ├─ controllers.py           玩家、LLM 隊友與 NPC 的探索／對話回合
+        ├─ tag_agent.py             將探索意圖分類成規則標籤
+        ├─ tag_parser.py            驗證並執行標籤，修改 WorldState
+        ├─ dialogue_flow.py         對話檢定、事件、任務與招募判斷
+        ├─ gm_agent.py              探索敘事與戰鬥風味文字
+        └─ CombatPolicy
+           ├─ HumanInputPolicy      凱恩的戰鬥輸入
+           └─ PPO NeuralPolicy / Heuristic
+                                    隊友與敵人的戰鬥決策
+                     │
+                     ▼
+             engine/combat.py      純機制驗證與結算
 ```
 
-### 職責分工
+重要元件：
 
 | 元件 | 職責 |
 |------|------|
-| `game.py` | 遊戲主邏輯：探索循環、戰鬥循環、呼叫所有 AI 代理 |
-| `cli.py` | 終端機 I/O：事件 → print，input() → submit |
-| `web.py` | Gradio I/O：事件 → yield UI 更新，on_submit → submit |
-| `tag_agent.py` | 讀玩家行動 → 決定標籤（無歷史、低溫度） |
-| `tag_parser.py` | 執行標籤 → 修改世界狀態 |
-| `gm_agent.py` | 收到機制結算 → 寫敘事（不再寫任何標籤） |
-| `player_agent.py` | 索爾（AI 玩家）回應 |
-| `arbiter.py` | 解析戰鬥行動文字成結構化指令 |
+| `trpg/llm/config.py` | 讀取 `_server_config.json`，統一解析 Ollama、llama.cpp 或 DeepSeek |
+| `trpg/bootstrap.py` | 為網頁版與桌面版建立相同的 `GameSession` |
+| `trpg/game.py` | 探索、對話、戰鬥、任務與事件佇列的核心流程 |
+| `trpg/engine/world_state.py` | 世界狀態的單一真相來源 |
+| `trpg/web_combat.py` | 網頁版與桌面版共用的戰場繪製及戰鬥命令合成 |
+| `trpg/llm/backend.py` | Ollama `/api/chat` 與 OpenAI 相容 `/v1/chat/completions` 的通訊層 |
 
-## 規則標籤
+探索階段由 TagAgent 直接產生的主要機制包括：移動、拾取、給予物品、使用消耗品、解鎖、搜索、與 NPC 對話，以及攻擊非敵對 NPC。戰鬥不走探索標籤，而是由 `CombatPolicy` 產生結構化行動後交給戰鬥引擎執行。
 
-玩家輸入後，`tag_agent.py` 根據行動意圖決定要執行哪些標籤，再由 `tag_parser.py` 實際執行並修改遊戲狀態。GM 只負責敘事，不再寫標籤。
+## 常見錯誤
 
-### 探索標籤（由 TagAgent 決定）
+### 網頁已開啟，但終端顯示無法連線 `127.0.0.1:8090`
 
-| 標籤 | 用途 |
-|------|------|
-| `[TRAVEL: <方向>]` | 玩家移動到相鄰房間，自動觸發戰鬥（若房間有敵人） |
-| `[ROLL: <角色ID> <屬性> DC<數字>]` | 技能或豁免檢定，例 `[ROLL: aria WIS DC12]` |
-| `[PICKUP: <角色ID> <物品名>]` | 從當前房間拾取物品 |
-| `[UNLOCK: <角色ID> <物件名> <屬性>]` | 解鎖有鎖的物件（DEX=撬鎖，STR=蠻力，DC+3） |
-| `[CONSUME: <角色ID> <道具名>]` | 消耗 1 個消耗性道具 |
-| `[HEAL: <角色ID> <骰子式>]` | 恢復 HP，通常和 CONSUME 一起使用 |
-| `[STATUS: <角色ID> +/-<效果>]` | 增加或移除狀態效果 |
+這表示 `_server_config.json` 指向 llama.cpp，但 `llama-server` 沒有運行。執行 `start_llama_server.ps1`，等待伺服器開始監聽 8090，並保持該視窗開啟。
 
-### 戰鬥標籤（由 Arbiter + 引擎處理）
+若要使用 Ollama，請把 `$selectedModel` 設為 `ollama:<模型名稱>`，執行設定腳本，再執行 `start.bat`。
 
-戰鬥中的攻擊、傷害、先攻由 `arbiter.py` 解析玩家自然語言後，透過 `engine/combat.py` 執行，不走 TagAgent 流程。
+### 顯示「無法連線 Ollama」
 
-## 模型使用建議
+確認 Ollama 正在 `localhost:11434` 運行，並確認 `_server_config.json` 的來源是 `ollama`。使用 `start.bat` 會自動重啟並等待 Ollama。
 
-**推薦：`gemma4:26b`**
+### 顯示找不到 Ollama 模型
 
-這是唯一經過完整測試、確認可以正常遊玩的模型。輸出品質明顯優於其他模型，能夠正確遵循指令格式。
-
-> 其他模型（如 qwen3、deepseek-r1 等）普遍存在不遵循指令的問題，無法保證正常遊玩體驗，不建議使用。
-
-**關於思考模式（`GM_THINK`）**
-
-建議一般情況下保持 `GM_THINK = False`。思考模式會讓每一輪 GM 回應的等待時間大幅增加，而 gemma4 在不開思考的情況下輸出品質已足夠。僅在遇到複雜劇情判斷出錯時才考慮開啟。
-
-## 已測試模型速度（RTX 5060 Ti 16GB）
-
-| 模型 | 速度 | 備註 |
-|------|------|------|
-| `gemma4:26b` | 30 tok/s | 推薦，唯一完整測試 |
-| `qwen3:14b` | 44 tok/s | 速度較快，但指令遵循差 |
-
-## 已知問題
-
-**Gemma4 + Ollama 的 Flash Attention bug**
-
-在長 context 下 Ollama 處理 Gemma4 可能掛住。解法是讓 Ollama 帶 `GGML_FLASH_ATTENTION=0` 啟動。`start.bat` 已自動處理，手動啟動則需：
+設定檔中的模型名稱必須與 `ollama list` 完全一致。缺少時執行：
 
 ```powershell
-$env:GGML_FLASH_ATTENTION=0
+ollama pull <模型名稱>
+```
+
+### 顯示找不到 `_server_config.json`
+
+先執行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\start_llama_server.ps1
+```
+
+### Gemma4 + Ollama 長 context 卡住
+
+`start.bat` 已用 `GGML_FLASH_ATTENTION=0` 啟動 Ollama。若手動啟動服務，請先設定：
+
+```powershell
+$env:GGML_FLASH_ATTENTION = "0"
 ollama serve
 ```
 
-**Context 累積**
+### GM 敘事與機制不一致
 
-GM 與索爾的對話歷史會自動滑動窗口（GM 保留 12 條訊息、索爾 8 條）以避免 prompt 過長。
-
-**GM 幻覺**
-
-Gemma4 偶爾會描述不存在的房間或復活已死的敵人。系統的 TagParser 與 Arbiter 會正確攔截非法行動（如往不存在的方向 TRAVEL），但敘事仍可能誤導玩家。已透過清理房間描述、強化系統提示緩解，無法完全根治。
+GM 文字是 LLM 敘事，`WorldState`、TagParser 與戰鬥引擎才是實際狀態。LLM 偶爾可能描述不存在的出口、物品或已死亡角色，但非法的機制行動仍會被引擎拒絕。
 
 ## 專案結構
 
-```
+```text
 trpg/
-├── __main__.py      # 統一入口（--mode 分派）
-├── game.py          # 遊戲核心邏輯（GameSession + 事件系統）
-├── cli.py           # 終端機入口（事件消費者）
-├── web.py           # Gradio 網頁入口（事件消費者）
-├── engine/
-│   ├── combat.py        # 戰鬥計算、骰子、攻擊判定
-│   ├── character.py     # 角色資料結構
-│   ├── items.py         # 武器、消耗品、Chest 定義
-│   ├── dungeon_map.py   # 地圖與房間系統
-│   └── world_state.py   # 全域遊戲狀態（單一真相）
-├── llm/
-│   ├── tag_agent.py     # 規則裁判：根據玩家行動決定標籤
-│   ├── tag_parser.py    # 標籤執行引擎
-│   ├── gm_agent.py      # GM：純敘事，不寫標籤
-│   ├── player_agent.py  # AI 玩家 Agent（索爾）
-│   ├── arbiter.py       # 戰鬥行動判定器
-│   └── backend.py       # LLM API 後端抽象層（Ollama / llama.cpp）
-├── scenarios/
-│   └── dungeon.py       # 地下城場景與角色設定
-└── debug/               # 每次 LLM 呼叫的完整 context（用於除錯）
-    ├── gm_context.json
-    ├── tag_agent_context.json
-    ├── tag_agent_output.txt
-    └── ...
+├── __main__.py          # web / terminal / claude 入口分派
+├── bootstrap.py         # web 與 desktop 共用的遊戲組裝
+├── desktop.py           # Tkinter 桌面介面
+├── web.py               # Gradio 網頁介面
+├── web_combat.py        # 共用戰場繪圖與 GUI 戰鬥命令
+├── cli.py               # 終端機與 Claude 測試介面、代理參數
+├── game.py              # GameSession 與遊戲主流程
+├── engine/              # 角色、技能、物品、地圖、狀態與戰鬥規則
+├── llm/                 # 後端、GM、TagAgent、NPC、對話流程與控制器
+├── rl/                  # 戰鬥模型、策略、觀測與訓練程式
+├── sandbox/             # 獨立戰鬥沙盒
+└── scenarios/           # 地下城、角色原型與怪物資料
 ```
-
----
-
-## 實驗性：llama-server 後端（Qwen3.6-27B TQ3_4S）
-
-> 此為測試中功能，一般使用請保持 `BACKEND = "ollama"`。
-
-使用自訂量化格式（TQ3_4S）的 27B 模型，需要另外編譯 llama.cpp-tq3。
-
-### 編譯需求
-
-- CUDA Toolkit 13.2+
-- Visual Studio 2022+
-- CMake（`pip install cmake`）
-
-### 啟動 llama-server
-
-```bat
-.\start_llamacpp.bat
-```
-
-等待出現 `server is listening on http://127.0.0.1:11435` 後，修改 `trpg/cli.py`：
-
-```python
-BACKEND = "llamacpp"
-```
-
-再執行 `python -m trpg`（網頁版）。
-
-### 實測速度（RTX 5060 Ti 16GB）
-
-| 指標 | 數值 |
-|------|------|
-| prompt 處理 | ~708 tok/s |
-| 實際生成 | ~23 tok/s |
-
-生成速度比 14B 模型慢，但模型能力更強，格式指令遵循較穩定。

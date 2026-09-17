@@ -29,7 +29,11 @@ def test_firebolt_is_a_registered_fire_cantrip():
     f = ab.features
     assert f.cost_slot_level == 0.0                  # cantrip → no slot
     assert f.cost_action == 1.0                       # costs the action
-    assert "火" in [t for t, _ in f.iter_damage_types()]
+    # damage_types is now DERIVED on materialize (empty on the static features);
+    # the materialized obs must show fire.
+    caster = ARCHETYPE_FACTORIES["evocation"](level=1)
+    mat = ab.features.materialize(caster, "firebolt")
+    assert "火" in [t for t, _ in mat.iter_damage_types()]
     spell = SPELLS[ab.display_name]
     assert spell.level == 0 and spell.scales_as_cantrip   # scales with level
     assert spell.damage_type == "火"

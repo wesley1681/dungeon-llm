@@ -20,6 +20,9 @@ models/
 
 # Docs / planning
 docs/
+!docs/
+docs/*
+!docs/COMBAT_MODEL_TRAINING.md
 
 # IDE
 .vscode/

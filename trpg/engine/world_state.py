@@ -37,12 +37,12 @@ class WorldState:
     scenario_name: str = ""
     pending_conversation: str = ""  # npc_id to enter conversation with after GM narration
     quests: dict = field(default_factory=dict)   # str → Quest
-    party_ids: list = field(default_factory=lambda: ["aria", "thor"])
+    party_ids: list = field(default_factory=lambda: ["kaine", "thor"])
     # Characters currently moving with the party (spatial). Includes the
     # active PCs AND any silent followers (e.g. RECRUIT'd civilians).
-    pc_ids: list = field(default_factory=lambda: ["thor", "aria"])
+    pc_ids: list = field(default_factory=lambda: ["thor", "kaine"])
     # Subset of party that actively takes turns — exploration / conversation /
-    # combat initiative. Order is iteration order (Thor first, Aria last so the
+    # combat initiative. Order is iteration order (Thor first, 凱恩 last so the
     # human reacts to Thor's remark). Recruited NPCs are in party_ids but
     # NOT here — they walk along silently. A future "promote" mechanism would
     # add a follower to this list.

@@ -4,7 +4,6 @@ Both cli.py (terminal) and web.py (Gradio) consume events from GameSession
 and submit player input via submit_player_input(). Neither contains game logic.
 """
 import json
-import re
 import queue
 import threading
 from dataclasses import dataclass, field
@@ -20,6 +19,7 @@ from .engine.combat_policy import CombatPolicy, HeuristicCombatPolicy, HumanInpu
 from .engine.quests import check_quest_progress, objective_progress_str
 from .engine.status import tick_status_effects
 from .llm.tag_parser import execute_all_tags, set_npc_agent_registry
+from .llm.dialogue_flow import DialogueDirector, CheckResult
 
 
 # ── Event types ───────────────────────────────────────────────────────────────
@@ -60,7 +60,7 @@ class CombatEnd:
 
 @dataclass
 class ExplorationPrompt:
-    aria: Any
+    kaine: Any
     gm_text: str
     # Other PCs' remarks this turn, keyed by display name. Empty when no
     # other PCs spoke before the human's slot (eg. solo party).
@@ -68,7 +68,7 @@ class ExplorationPrompt:
 
 @dataclass
 class CombatPrompt:
-    aria: Any
+    kaine: Any
     enemies: dict[str, str]
     info_text: str = ""   # pre-formatted position / distance / weapon range block
     ctx: Any = None       # engine CombatContext — lets a GUI front-end render the
@@ -77,7 +77,7 @@ class CombatPrompt:
 @dataclass
 class ConversationPrompt:
     npc_name: str
-    aria: Any
+    kaine: Any
     attitude_label: str = ""
 
 @dataclass
@@ -108,7 +108,7 @@ _STOP = object()
 _MAX_SUB_ACTIONS = 5
 
 
-def format_aria_combat_info(aria, ctx) -> str:
+def format_kaine_combat_info(kaine, ctx) -> str:
     """Pre-format the combat status block shown to the human player.
 
     Reads everything from a CombatContext (built by engine.combat) so the
@@ -120,7 +120,7 @@ def format_aria_combat_info(aria, ctx) -> str:
     move_left = resources.get("movement", 0.0)
 
     weapon_parts = []
-    for w in aria.weapons:
+    for w in kaine.weapons:
         if w.range_type == "近戰":
             weapon_parts.append(f"{w.name}（近戰 {w.range_normal:.1f}m）")
         else:
@@ -136,9 +136,9 @@ def format_aria_combat_info(aria, ctx) -> str:
         items = enemies_block.split("、")
         enemies_block = "\n".join(f"  - {it}" for it in items)
 
-    conc_line = f"專注：{aria.concentrating_on}\n" if aria.concentrating_on else ""
+    conc_line = f"專注：{kaine.concentrating_on}\n" if kaine.concentrating_on else ""
     return (
-        f"你的座標：({aria.position.x:.1f}, {aria.position.y:.1f})m\n"
+        f"你的座標：({kaine.position.x:.1f}, {kaine.position.y:.1f})m\n"
         f"剩餘資源：動作 {action_status}、移動 {move_left:.1f}m\n"
         f"{conc_line}"
         f"你的武器：{weapons_line}\n"
@@ -161,11 +161,21 @@ class GameSession:
         self.npc_agents  = npc_agents or {}
         set_npc_agent_registry(self.npc_agents)
 
+        # Conversation resolution pipeline (focused LLM stages: decide_check →
+        # arrange_events → judge_completion). Built from tag_agent's connection so
+        # no extra wiring through bootstrap/cli. Inert if tag_agent is a stub.
+        self.dialogue = DialogueDirector.from_agent(tag_agent, world_state)
+
         self._events    : queue.Queue = queue.Queue()
         self._player_in : queue.Queue = queue.Queue()
         self._stop_flag = threading.Event()
+        # The prompt currently waiting for a human answer.  Meta-commands such
+        # as /旁白 are handled on the UI thread and never enter _player_in, so
+        # they must repeat this prompt after reporting their status; otherwise
+        # front-ends wait forever (or leave their input widget disabled).
+        self._pending_prompt = None
 
-        # Combat decisions go through a policy per character. Aria (the human PC)
+        # Combat decisions go through a policy per character. 凱恩 (the human PC)
         # gets the human-input policy. Every other combatant — allies AND monsters
         # — defaults to `default_combat_policy` (the trained general model, a
         # shared NeuralCombatPolicy) when provided, else the scripted heuristic.
@@ -173,19 +183,19 @@ class GameSession:
         self.policies: dict[str, CombatPolicy] = dict(policies or {})
         non_human = default_combat_policy or HeuristicCombatPolicy()
         human_policy = HumanInputPolicy(
-            char_id="aria",
+            char_id="kaine",
             prompt_fn=self._combat_prompt,
             error_fn=self._combat_error,
         )
         for cid in world_state.characters:
-            if cid == "aria":
+            if cid == "kaine":
                 self.policies.setdefault(cid, human_policy)
             else:
                 self.policies.setdefault(cid, non_human)
 
         from .llm.controllers import HumanController, LLMPlayerController, LLMNpcController
         self.controllers = {
-            "aria": HumanController("aria", self._get_input, self._emit),
+            "kaine": HumanController("kaine", self._get_input, self._emit),
             "thor": LLMPlayerController(thor_agent, self._emit),
         }
         for cid, agent in self.npc_agents.items():
@@ -194,10 +204,44 @@ class GameSession:
         # TagAgent still receives raw action strings (it's stateless and doesn't read log).
         self._tag_actions: list[str] = []
 
+        # 旁白（GM narration）toggle — single source of truth. When False, the GM's
+        # exploration prose and combat flavour are skipped entirely (no LLM call);
+        # mechanics (tags, dice, damage, resource costs, ActionResult display) run
+        # unchanged and the turn passes straight to the next actor. A testing aid.
+        self.narrate = True
+
     # ── Public API ────────────────────────────────────────────────────────────
 
+    # Meta-commands that toggle 旁白 rather than becoming a game action. Defined
+    # once here so every front-end (cli / desktop / web all route raw input
+    # through submit_player_input) gets the same toggle for free.
+    _NARRATION_CMDS = {"/旁白", "/narration", "/narr", "旁白"}
+
     def submit_player_input(self, text: str) -> None:
+        if self._maybe_toggle_narration(text):
+            return          # consumed as a meta-command, not queued as an action
+        self._pending_prompt = None
         self._player_in.put(text)
+
+    def _maybe_toggle_narration(self, text: str) -> bool:
+        """Intercept the 旁白 on/off meta-command. Returns True if the input was a
+        narration command (flipped the flag, not enqueued). `/旁白 on|off` sets it
+        explicitly; a bare `/旁白` toggles. Mechanics are unaffected either way."""
+        parts = text.strip().lower().split()
+        if not parts or parts[0] not in self._NARRATION_CMDS:
+            return False
+        arg = parts[1] if len(parts) > 1 else ""
+        if arg in ("on", "開", "開啟"):
+            self.narrate = True
+        elif arg in ("off", "關", "關閉"):
+            self.narrate = False
+        else:
+            self.narrate = not self.narrate
+        self._emit(StatusMessage(
+            f"旁白已{'開啟' if self.narrate else '關閉'}（機制照常運作）"))
+        if self._pending_prompt is not None:
+            self._emit(self._pending_prompt)
+        return True
 
     def next_event(self, block: bool = True, timeout: float | None = None):
         try:
@@ -217,6 +261,8 @@ class GameSession:
     # ── Internal helpers ──────────────────────────────────────────────────────
 
     def _emit(self, event) -> None:
+        if isinstance(event, (ExplorationPrompt, CombatPrompt, ConversationPrompt)):
+            self._pending_prompt = event
         self._events.put(event)
 
     def _get_input(self) -> str | None:
@@ -228,8 +274,8 @@ class GameSession:
     def _combat_prompt(self, actor, ctx) -> str | None:
         """HumanInputPolicy callback: emit CombatPrompt + block for input."""
         self._emit(CombatPrompt(
-            aria=actor, enemies=ctx.enemies,
-            info_text=format_aria_combat_info(actor, ctx),
+            kaine=actor, enemies=ctx.enemies,
+            info_text=format_kaine_combat_info(actor, ctx),
             ctx=ctx,
         ))
         return self._get_input()
@@ -333,7 +379,9 @@ class GameSession:
                 return False, outcome.skip_next_gm
 
         # ── GM narrative ─────────────────────────────────────────────────────
-        if skip_gm:
+        # skip_gm: transient (after conversation→combat). self.narrate: the 旁白
+        # mode toggle. Either one collapses this to an empty, unlogged narration.
+        if skip_gm or not self.narrate:
             gm_text = ""
         else:
             def _gm_chunk(c, thinking=False):
@@ -546,10 +594,11 @@ class GameSession:
 
             if result_text:
                 log.append(result_text)
-                self.gm.combat_narrate(
-                    result_text,
-                    on_chunk=lambda c, thinking=False: self._emit(StreamChunk("narrate", c)),
-                )
+                if self.narrate:   # 旁白 off → skip flavour; mechanics already emitted
+                    self.gm.combat_narrate(
+                        result_text,
+                        on_chunk=lambda c, thinking=False: self._emit(StreamChunk("narrate", c)),
+                    )
 
             if decision.ended:
                 return ""
@@ -651,6 +700,11 @@ class GameSession:
         # ── NPC opening ───────────────────────────────────────────────────────
         npc_text = npc_ctrl.take_npc_opening(npc_char)
         ws.log_event(npc_id, npc_text)
+        # The offer is usually voiced HERE (the NPC's quest-offer rule fires on its
+        # first utterance at 戒備+ attitude, which is the opening). Mark it now so the
+        # player can accept on their very first reply — otherwise accept only unlocks
+        # one exchange late (offered was previously set only after in-loop responses).
+        self._mark_quests_offered(npc_agent)
 
         while not self._stop_flag.is_set():
             # ── Each PC takes a conversation turn (LLM may go silent, human
@@ -682,27 +736,45 @@ class GameSession:
                 # the NPC isn't asked to respond to silence.
                 continue
 
-            # ── Social skill check on combined PC speech this round ───────────
+            # ── 3-stage conversation resolution (dialogue_flow) ───────────────
             combined = "\n".join(pc_lines)
-            check = self._run_social_check(combined, npc_agent, npc_id)
-            if check and check[0] == "attack":
-                ws.log_event("system", f"（冒險者 對 {npc_char.name} 發動攻擊）")
-                self._emit(StreamChunk("npc_talk",
-                    f"\n（冒險者 對 {npc_char.name} 發動攻擊）\n", actor="系統"))
-                ok, errors = execute_all_tags(f"[ATTACK_NPC: {npc_id}]", ws)
-                self._emit(TagResult(ok, errors))
-                self._check_quests()
-                outcome.skip_next_gm = True
+
+            # Stage 1: does this need a check? which / who / DC?
+            plan = self.dialogue.decide_check(combined, npc_agent, ws)
+            result = None
+            if plan.check:
+                actor = ws.characters.get(plan.actor) or ws.characters.get("kaine")
+                success, total = make_saving_throw(actor, "CHA", plan.dc)
+                result = CheckResult(plan.check, success, total, plan.dc, plan.actor)
+                note = (f"【{plan.check}檢定：{actor.name} 擲出 {total} vs DC {plan.dc}"
+                        f" → {'成功' if success else '失敗'}】")
+                ws.log_event("system", note)
+                self._emit(StreamChunk("npc_talk", f"\n{note}\n", actor="系統"))
+
+            # Stage 2: arrange events BEFORE the NPC speaks, so its reply reflects
+            # them. Non-quest (reveal/give/suggest_join/attitude/attack) + the
+            # player-input-driven quest events accept/turn-in (gated by quest state).
+            events = self.dialogue.arrange_events(combined, result, npc_agent, ws)
+            quest_evs = [e for e in events
+                         if e.get("event") in ("quest_accept", "quest_turnin")]
+            other_evs = [e for e in events if e not in quest_evs]
+            if self._apply_dialogue_events(other_evs, npc_agent, npc_char, result):
+                outcome.skip_next_gm = True   # an attack event started combat
                 outcome.triggered_combat = True
                 break
-            if check and check[0] == "social":
-                social_note = check[1]
-                ws.log_event("system", social_note)
-                self._emit(StreamChunk("npc_talk", f"\n{social_note}\n", actor="系統"))
+            self._apply_quest_events(quest_evs)   # accept / turn-in (pre-response)
 
             # ── NPC response ──────────────────────────────────────────────────
             npc_text = npc_ctrl.take_npc_response(npc_char)
             ws.log_event(npc_id, npc_text)
+
+            # After the reply: (a) mark this NPC's quests as offered so accept
+            # becomes available NEXT turn (structurally blocks same-turn accept);
+            # (b) run the dedicated completion judge over accepted quests, which
+            # needs the NPC's actual reply (e.g. "boss agreed to stop").
+            self._mark_quests_offered(npc_agent)
+            self._apply_quest_events(
+                self.dialogue.judge_completion(combined, npc_text, ws))
 
             # ── Recruit decision — handle JOIN / DECLINE ──────────────────────
             if npc_agent.recruit_decision == "join":
@@ -737,80 +809,106 @@ class GameSession:
         # TagAgent's queue was already cleared on entry (see top of method).
         return outcome
 
-    _SOCIAL_RE     = re.compile(r'\[SOCIAL:\s*(\w+)\s+<?(\w+)>?(?:\s+DC\d+)?\]', re.IGNORECASE)
-    _ATTACK_NPC_RE = re.compile(r'\[ATTACK_NPC:\s*<?(\w+)>?\]', re.IGNORECASE)
-    _QUEST_RE      = re.compile(r'\[QUEST_(ACCEPT|TURNIN):\s*<?(\w+)>?\]', re.IGNORECASE)
-    _RECRUIT_RE    = re.compile(r'\[RECRUIT:\s*<?(\w+)>?\]', re.IGNORECASE)
+    def _apply_dialogue_events(self, events: list[dict], npc_agent, npc_char,
+                               result) -> bool:
+        """Execute Stage-2 (non-quest) events from the event arranger. Returns
+        True if combat started (caller ends the conversation).
 
-    _SOCIAL_NOTES = {
-        ("intimidate", True):  "恐嚇成功（{t} vs DC{dc}）。你被迫說出你知道的秘密，但內心充滿恐懼與怨恨。",
-        ("intimidate", False): "恐嚇失敗（{t} vs DC{dc}）。對方的威嚇沒有奏效，你反而更加抵觸。",
-        ("persuade",   True):  "說服成功（{t} vs DC{dc}）。你被對方說服，願意配合他的請求。",
-        ("persuade",   False): "說服失敗（{t} vs DC{dc}）。你沒有被說服，維持原本立場。",
-        ("deceive",    True):  "欺騙成功（{t} vs DC{dc}）。你相信了對方的話，放下了部分戒心。",
-        ("deceive",    False): "欺騙失敗（{t} vs DC{dc}）。你察覺對方在說謊，感到憤怒與不信任。",
+        reveal / give / suggest_join are CONCESSIONS — only applied when a check
+        was passed this round. attitude / attack are unconditional. Concessions
+        set per-turn directives on the NPC so its reply reflects them; the actual
+        world-state mutation reuses the existing tag_parser dispatchers.
+        """
+        ws = self.world_state
+        npc_id = npc_agent.char_id
+        won = bool(result and result.success)
+        for ev in events:
+            kind = ev.get("event")
+            if kind == "attack":
+                note = f"（{npc_char.name} 與冒險者爆發衝突）"
+                ws.log_event("system", note)
+                self._emit(StreamChunk("npc_talk", f"\n{note}\n", actor="系統"))
+                ok, errors = execute_all_tags(f"[ATTACK_NPC: {npc_id}]", ws)
+                self._emit(TagResult(ok, errors))
+                self._check_quests()
+                return True
+            if kind == "attitude":
+                try:
+                    delta = int(ev.get("delta", 0) or 0)
+                except (TypeError, ValueError):
+                    delta = 0
+                if delta:
+                    old = npc_char.attitude
+                    npc_char.attitude = max(0, min(4, old + delta))
+                    if npc_char.attitude != old:
+                        note = f"（{npc_char.name} 的態度：{old} → {npc_char.attitude}）"
+                        ws.log_event("system", note)
+                        self._emit(StreamChunk("npc_talk", f"\n{note}\n", actor="系統"))
+                continue
+            # ── concessions below: only granted on a passed check ──
+            if not won:
+                continue
+            if kind == "reveal":
+                secrets = getattr(npc_agent, "_secrets", []) or []
+                said = []
+                for i in ev.get("indices", []) or []:
+                    if isinstance(i, int) and 0 <= i < len(secrets):
+                        s = secrets[i]
+                        if s not in npc_agent.revealed:
+                            npc_agent.revealed.append(s)
+                        said.append(s)
+                if said:
+                    npc_agent.pending_directives.append(
+                        "如實把以下你知道的情報告訴對方：" + "；".join(said))
+            elif kind == "give":
+                item = ev.get("item", "")
+                to = ev.get("to", "kaine")
+                if to not in ws.characters or ws.characters[to].is_npc:
+                    to = "kaine"
+                ok, errors = execute_all_tags(f"[GIVE: {npc_id} {to} {item}]", ws)
+                self._emit(TagResult(ok, errors))
+                if ok:
+                    npc_agent.pending_directives.append(
+                        f"你願意把 {item} 交給對方，說話時自然地表達這個舉動。")
+            elif kind == "suggest_join":
+                npc_agent.pending_join_decision = True
+                npc_agent.pending_directives.append(
+                    "你覺得對方說得很有道理、很有說服力，開始認真考慮是否加入他們一起冒險。")
+        return False
+
+    _QUEST_EVENT_TAGS = {
+        "quest_accept":   "QUEST_ACCEPT",
+        "quest_complete": "QUEST_COMPLETE",
+        "quest_turnin":   "QUEST_TURNIN",
     }
 
-    def _run_social_check(self, combined_input: str, npc_agent, npc_id: str = "") -> tuple | None:
-        try:
-            return self.__run_social_check(combined_input, npc_agent, npc_id)
-        except Exception as e:
-            self._emit(StatusMessage(f"（社交偵測失敗：{e}）"))
-            return None
-
-    def __run_social_check(self, combined_input: str, npc_agent, npc_id: str = "") -> tuple | None:
+    def _apply_quest_events(self, events: list[dict]) -> None:
+        """Execute quest events (accept / turn-in from stage 2, complete from the
+        dedicated completion judge). Shared applier — event→tag→dispatcher."""
         ws = self.world_state
-        tag_raw = self.tag_agent.generate_conversation_tags(combined_input, npc_id)
-
-        if self._ATTACK_NPC_RE.search(tag_raw):
-            return ("attack", None)
-
-        qm = self._QUEST_RE.search(tag_raw)
-        if qm:
-            kind = qm.group(1).upper()
-            qid  = qm.group(2)
-            ok, errors = execute_all_tags(f"[QUEST_{kind}: {qid}]", ws)
+        for ev in events:
+            tag = self._QUEST_EVENT_TAGS.get(ev.get("event"))
+            qid = ev.get("id")
+            if not tag or not qid:
+                continue
+            ok, errors = execute_all_tags(f"[{tag}: {qid}]", ws)
             self._emit(TagResult(ok, errors))
-            self._check_quests()
-            note = "；".join(ok) or "；".join(errors) or "（任務動作無回報）"
-            return ("social", f"【系統判定：{note}】")
+            for line in ok:
+                self._emit(StreamChunk("npc_talk", f"\n【{line}】\n", actor="系統"))
+        self._check_quests()
 
-        rm = self._RECRUIT_RE.search(tag_raw)
-        if rm:
-            target_id = rm.group(1)
-            ok, errors = execute_all_tags(f"[RECRUIT: {target_id}]", ws)
-            self._emit(TagResult(ok, errors))
-            note = "；".join(ok) or "；".join(errors) or "（招募動作無回報）"
-            return ("social", f"【系統判定：{note}】")
-
-        m = self._SOCIAL_RE.search(tag_raw)
-        if not m:
-            return None
-
-        social_type = m.group(1).lower()
-        char_id     = m.group(2).lower()
-        char        = ws.characters.get(char_id)
-        if not char or social_type not in ("intimidate", "persuade", "deceive"):
-            return None
-
-        dc = npc_agent.estimate_dc(social_type, combined_input)
-        success, total = make_saving_throw(char, "CHA", dc)
-
-        if social_type == "intimidate":
-            npc_agent.attitude = max(0, npc_agent.attitude - 1)
-            if success:
-                npc_agent.force_reveal = "intimidate"
-        elif social_type == "persuade":
-            if success:
-                npc_agent.force_reveal = "persuade"
-        elif social_type == "deceive":
-            if success:
-                npc_agent.force_reveal = "deceive"
-            else:
-                npc_agent.attitude = max(0, npc_agent.attitude - 1)
-
-        npc_agent._skip_marker = True
-
-        template = self._SOCIAL_NOTES.get((social_type, success), "")
-        note = template.format(t=total, dc=dc)
-        return ("social", f"【系統判定：{note}】")
+    def _mark_quests_offered(self, npc_agent) -> None:
+        """After an NPC utterance (opening OR in-loop response), flag its still-
+        inactive quests as offered so quest_accept becomes available. The NPC's
+        quest-offer prompt section requires it to voice the request when
+        attitude >= 戒備(1), so an utterance at that attitude means the offer is now
+        on the table. Called after the opening (the offer is usually voiced there)
+        and after each response (covers an NPC that warms up mid-conversation).
+        The offer and the player's accept are always separate LLM calls, so this
+        stays the structural guard against same-turn false-accept."""
+        if npc_agent.attitude < 1:
+            return
+        npc_id = npc_agent.char_id
+        for q in self.world_state.quests.values():
+            if q.giver_id == npc_id and q.status == "inactive":
+                q.offered = True

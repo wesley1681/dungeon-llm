@@ -51,18 +51,20 @@ def test_materialize_remaining_uses_unlimited_ability():
 
 
 def test_materialize_cantrip_scales_at_level_5():
-    char = _make_wizard(level=5)
+    # expected_damage is now DERIVED on materialize (no hand-typed base on
+    # features), so the L1 materialized value is the base; it should double at L5.
     ab = ABILITY_REGISTRY["sacred_flame"]
-    mat = ab.features.materialize(char, "sacred_flame")
-    # expected_damage should double at level 5
-    assert mat.expected_damage == pytest.approx(ab.features.expected_damage * 2, rel=0.01)
+    base = ab.features.materialize(_make_wizard(level=1), "sacred_flame").expected_damage
+    mat5 = ab.features.materialize(_make_wizard(level=5), "sacred_flame").expected_damage
+    assert base > 0
+    assert mat5 == pytest.approx(base * 2, rel=0.01)
 
 
 def test_materialize_cantrip_no_scale_below_5():
-    char = _make_wizard(level=3)
     ab = ABILITY_REGISTRY["sacred_flame"]
-    mat = ab.features.materialize(char, "sacred_flame")
-    assert mat.expected_damage == pytest.approx(ab.features.expected_damage, rel=0.01)
+    base = ab.features.materialize(_make_wizard(level=1), "sacred_flame").expected_damage
+    mat3 = ab.features.materialize(_make_wizard(level=3), "sacred_flame").expected_damage
+    assert mat3 == pytest.approx(base, rel=0.01)
 
 
 def test_materialize_returns_copy_not_original():

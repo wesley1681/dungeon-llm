@@ -163,7 +163,7 @@ class DesktopApp(tk.Tk):
         elif isinstance(ev, CombatPrompt):
             if ev.ctx is not None:
                 self._combat_view = web_combat.combat_view_state(
-                    ev.aria, ev.ctx, self.world_state)
+                    ev.kaine, ev.ctx, self.world_state)
             self._show_combat()
             self._prompt("combat")
             self._log("[你的回合] 等待玩家輸入")
@@ -309,7 +309,7 @@ class DesktopApp(tk.Tk):
             self.combat.pack_forget()
 
     def _redraw_battlefield(self):
-        actor_id = self._combat_view["actor_id"] if self._combat_view else "aria"
+        actor_id = self._combat_view["actor_id"] if self._combat_view else "kaine"
         img, transform = web_combat.render_battlefield(
             self.world_state, actor_id, px=_BATTLE_PX)
         self._transform = transform

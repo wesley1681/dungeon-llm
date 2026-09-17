@@ -24,7 +24,6 @@ from typing import Callable
 
 from .skill import (
     SkillFeatures, TargetType, SaveStat, STATUS_SLOTS, N_STATUS_SLOTS,
-    WEAPON_DTYPE,
 )
 
 
@@ -41,7 +40,7 @@ def _csv_targets(target, fallback=None) -> list:
     """Parse a multi-target selection into a list of entity ids.
 
     The action layer passes MULTI_* targets as a comma-separated string
-    ("aria,thor") — the magic-missile / bless convention — or already as a
+    ("kaine,thor") — the magic-missile / bless convention — or already as a
     list. Empty selection falls back to ``fallback`` (e.g. heal yourself when
     no ally is named) so a multi-target builder always yields ≥1 target."""
     if isinstance(target, str):
@@ -120,6 +119,19 @@ def _register(ab: Ability) -> Ability:
     return ab
 
 
+# Conferred / aura damage — the ONE place the (dice, damage_type) live for
+# damage dealt by STATUS machinery rather than by the casting action itself
+# (spirit-guardians aura tick, hunter's-mark on-hit proc). Both the engine roll
+# (combat.py) and the obs expected_damage / damage_types
+# (skill.action_expected_damage / action_damage_shares) read this map, keyed by
+# the ability's skill_id, so the RL numbers can never drift from the dice the
+# engine actually rolls. The catalog convention counts a single application.
+CONFERRED_DAMAGE_DICE: dict[str, tuple[str, str]] = {
+    "spirit_guardians": ("3d8", "光耀"),
+    "hunters_mark":     ("1d6", "穿刺"),
+}
+
+
 # ── Fighter (戰士) ───────────────────────────────────────────────────────────
 
 _register(Ability(
@@ -128,7 +140,6 @@ _register(Ability(
     description="bonus action 回復 1d10 + 戰士等級 HP，每短休 1 次。",
     refresh_on="short_rest", max_uses=1,
     features=SkillFeatures(
-        expected_healing=10.0,    # ~5.5 + level-3 placeholder
         cost_bonus=1.0,
         remaining_uses=1.0,
         target_type=TargetType.SELF,
@@ -163,7 +174,6 @@ _register(Ability(
     description="武器攻擊 + 命中後 STR 豁免，失敗則 prone。消耗 1 個戰技骰。",
     refresh_on="short_rest", max_uses=4,
     features=SkillFeatures(
-        expected_damage=7.5,
         attack_vs_ac=5.0,
         save_dc=14.0,
         save_stat=SaveStat.STR,
@@ -172,7 +182,6 @@ _register(Ability(
         target_type=TargetType.SINGLE_ENEMY,
         applies_status=_status_multihot("prone"),
         status_duration=1.0,
-        damage_types=(WEAPON_DTYPE,),
     ),
     engine_ready=True,
     min_level=3, builder=lambda actor, target, coord, char=None: {
@@ -193,14 +202,12 @@ _register(Ability(
     display_name="魔法飛彈",
     description="3 道力場箭自動命中所選敵人（最多 3 個），每箭 1d4+1。",
     features=SkillFeatures(
-        expected_damage=10.5,
         auto_hit=True,
         range_m=36.0,
         cost_action=1.0,
         cost_slot_level=1.0,
         target_type=TargetType.MULTI_ENEMY,
         max_targets=3,
-        damage_types=("力場",),
     ),
     engine_ready=True,
     min_level=1, builder=lambda actor, target, coord, char=None: (
@@ -351,7 +358,6 @@ _register(Ability(
     display_name="治療術",
     description="觸碰範圍治療一個盟友 1d8 + WIS 修正。",
     features=SkillFeatures(
-        expected_healing=7.5,         # 1d8 + ~3 (WIS mod)
         range_m=1.5,
         cost_action=1.0,
         cost_slot_level=1.0,
@@ -360,7 +366,13 @@ _register(Ability(
     engine_ready=True,
     min_level=1, builder=lambda actor, target, coord, char=None: {
         "type": "HEAL", "caster": actor, "target": target,
-        "dice": "1d8+3", "range_m": 1.5, "slot_level": 1,
+        # 1d8 + spellcasting modifier (was a hardcoded +3 placeholder that made
+        # the engine roll under/over-heal for non-+3 casters — mirror the live
+        # mod like healing_word / mass_cure_wounds so engine AND obs agree).
+        "dice": "1d8{:+d}".format(
+            char.stats.modifier(char.spellcasting_ability)
+            if (char and char.spellcasting_ability) else 3),
+        "range_m": 1.5, "slot_level": 1,
         "consumes": ["action"],
     },
 ))
@@ -370,13 +382,11 @@ _register(Ability(
     display_name="神聖光輝",
     description="單一目標 DEX 豁免，失敗則 1d8 光耀傷害。",
     features=SkillFeatures(
-        expected_damage=4.5,
         save_dc=13.0,
         save_stat=SaveStat.DEX,
         range_m=18.0,
         cost_action=1.0,
         target_type=TargetType.SINGLE_ENEMY,
-        damage_types=("光耀",),
     ),
     engine_ready=True,
     min_level=1, builder=lambda actor, target, coord, char=None: {
@@ -401,7 +411,7 @@ _register(Ability(
         status_duration=10.0,
     ),
     engine_ready=True,
-    min_level=1, # `target` is a comma-separated list of ally ids ("aria,thor"); the
+    min_level=1, # `target` is a comma-separated list of ally ids ("kaine,thor"); the
     # builder splits it for the engine's multi-target dispatch.
     builder=lambda actor, target, coord, char=None: {
         "type": "APPLY_MOD", "caster": actor,
@@ -452,14 +462,12 @@ _register(Ability(
     description="declared on a melee weapon attack — this attack has advantage, "
                 "and all incoming attacks have advantage until your next turn.",
     features=SkillFeatures(
-        expected_damage=7.5,           # 1d8 + STR mod (uses the long sword)
         attack_vs_ac=5.0,
         cost_action=1.0,
         target_type=TargetType.SINGLE_ENEMY,
         conferred_attack_mod=5.0,      # advantage ≈ +5 statistically
         conferred_ac_mod=-5.0,         # incoming attacks have advantage
         status_duration=1.0,
-        damage_types=(WEAPON_DTYPE,),
     ),
     engine_ready=True,
     min_level=2, builder=lambda actor, target, coord, char=None: {
@@ -490,7 +498,6 @@ _register(Ability(
     display_name="獵人印記",
     description="bonus action：標記一個敵人，每次命中 +1d6 傷害，專注，消耗 1 環。",
     features=SkillFeatures(
-        expected_damage=3.5,
         range_m=27.0,
         cost_bonus=1.0,
         cost_slot_level=1.0,
@@ -498,7 +505,6 @@ _register(Ability(
         target_type=TargetType.SINGLE_ENEMY,
         # Engine deals the +1d6 proc as 穿刺 (combat._resolve_single_attack),
         # regardless of the marked-by weapon — mirror the engine, not 5e RAW.
-        damage_types=("穿刺",),
     ),
     engine_ready=True,
     min_level=2, refresh_on="never", max_uses=0,
@@ -520,14 +526,12 @@ _register(Ability(
     description="武器攻擊。命中時消耗 1 個戰技骰（每短休 4 次），目標下次受擊有優勢"
                 "（1 回合）。簡化版：所有來源的下一個攻擊都會獲得優勢。",
     features=SkillFeatures(
-        expected_damage=7.5,
         attack_vs_ac=5.0,
         cost_action=1.0,
         remaining_uses=4.0,
         target_type=TargetType.SINGLE_ENEMY,
         applies_status=_status_multihot("distracted"),
         status_duration=1.0,
-        damage_types=(WEAPON_DTYPE,),
     ),
     engine_ready=True,
     min_level=3, refresh_on="short_rest", max_uses=4,
@@ -543,7 +547,6 @@ _register(Ability(
     display_name="威嚇攻擊",
     description="武器攻擊 + WIS 豁免，失敗則 frightened 1 回合。消耗 1 個戰技骰。",
     features=SkillFeatures(
-        expected_damage=7.5,
         attack_vs_ac=5.0,
         save_dc=14.0,
         save_stat=SaveStat.STR,
@@ -552,7 +555,6 @@ _register(Ability(
         target_type=TargetType.SINGLE_ENEMY,
         applies_status=_status_multihot("frightened"),
         status_duration=1.0,
-        damage_types=(WEAPON_DTYPE,),
     ),
     engine_ready=True,
     min_level=3, refresh_on="short_rest", max_uses=4,
@@ -583,7 +585,6 @@ _register(Ability(
     display_name="推擊攻擊",
     description="武器攻擊 + STR 豁免，失敗則推開目標 4.5m。消耗 1 個戰技骰。",
     features=SkillFeatures(
-        expected_damage=7.5,
         attack_vs_ac=5.0,
         save_dc=14.0,
         save_stat=SaveStat.STR,
@@ -640,7 +641,6 @@ _register(Ability(
     display_name="狂戰攻擊",
     description="狂暴時每回合可用額外動作進行 1 次近戰武器攻擊。",
     features=SkillFeatures(
-        expected_damage=7.5,
         attack_vs_ac=5.0,
         cost_bonus=1.0,
         target_type=TargetType.SINGLE_ENEMY,
@@ -658,12 +658,10 @@ _register(Ability(
     display_name="狂戰狂暴攻擊",
     description="狂暴時每回合可用額外動作進行 1 次近戰武器攻擊（長休後消除疲憊）。",
     features=SkillFeatures(
-        expected_damage=7.5,
         attack_vs_ac=5.0,
         cost_bonus=1.0,
         target_type=TargetType.SINGLE_ENEMY,
         status_duration=10.0,
-        damage_types=(WEAPON_DTYPE,),
     ),
     engine_ready=True,
     engine_todo="刻意簡化：疲憊（Exhaustion）不建模——5e 疲憊在 rage 結束後才施加、"
@@ -683,7 +681,6 @@ _register(Ability(
     display_name="燃燒之手",
     description="3d6 火焰 AOE，4.5m 半徑，DEX 豁免，成功半傷。",
     features=SkillFeatures(
-        expected_damage=10.5,
         save_dc=13.0,
         save_stat=SaveStat.DEX,
         range_m=4.5,
@@ -691,7 +688,6 @@ _register(Ability(
         cost_action=1.0,
         cost_slot_level=1.0,
         target_type=TargetType.POINT,
-        damage_types=("火",),
     ),
     engine_ready=True,
     min_level=1, refresh_on="never", max_uses=0,
@@ -707,14 +703,12 @@ _register(Ability(
     display_name="烈焰射線",
     description="3 道射線，每道各自進行攻擊骰，命中各造成 2d6 火焰傷害。",
     features=SkillFeatures(
-        expected_damage=21.0,
         attack_vs_ac=5.0,
         range_m=27.0,
         cost_action=1.0,
         cost_slot_level=2.0,
         target_type=TargetType.MULTI_ENEMY,
         max_targets=3,
-        damage_types=("火",),
     ),
     engine_ready=True,
     min_level=3, refresh_on="never", max_uses=0,
@@ -737,7 +731,6 @@ _register(Ability(
     display_name="火球術",
     description="8d6 火焰 AOE，6m 半徑，DEX 豁免，成功半傷。",
     features=SkillFeatures(
-        expected_damage=28.0,
         save_dc=13.0,
         save_stat=SaveStat.DEX,
         range_m=45.0,
@@ -745,7 +738,6 @@ _register(Ability(
         cost_action=1.0,
         cost_slot_level=3.0,
         target_type=TargetType.POINT,
-        damage_types=("火",),
     ),
     engine_ready=True,
     min_level=5, refresh_on="never", max_uses=0,
@@ -761,12 +753,10 @@ _register(Ability(
     display_name="火焰箭",
     description="戲法：36m 內單體法術攻擊骰，命中造成 1d10 火焰傷害（不耗法術位）。",
     features=SkillFeatures(
-        expected_damage=5.5,           # 1d10, no ability mod (a cantrip)
         attack_vs_ac=5.0,
         range_m=36.0,                  # 120 ft
         cost_action=1.0,
         target_type=TargetType.SINGLE_ENEMY,
-        damage_types=("火",),
     ),
     engine_ready=True,
     min_level=1, refresh_on="never", max_uses=0,   # cantrip: any level, unlimited
@@ -812,7 +802,6 @@ _register(Ability(
     display_name="冰風暴",
     description="4m 半徑 AOE，DEX 豁免，失敗 2d8 冰冷傷害，成功半傷。",
     features=SkillFeatures(
-        expected_damage=9.0,
         save_dc=13.0,
         save_stat=SaveStat.DEX,
         range_m=36.0,
@@ -820,7 +809,6 @@ _register(Ability(
         cost_action=1.0,
         cost_slot_level=4.0,
         target_type=TargetType.POINT,
-        damage_types=("冰",),
     ),
     engine_ready=True,
     min_level=7, refresh_on="never", max_uses=0,
@@ -862,12 +850,10 @@ _register(Ability(
     display_name="燃燒之手",
     description="3d6 火焰 AOE，4.5m 半徑，DEX 豁免，成功半傷。",
     features=SkillFeatures(
-        expected_damage=10.5,
         save_dc=13.0, save_stat=SaveStat.DEX,
         range_m=4.5, aoe_radius_m=4.5,
         cost_action=1.0, cost_slot_level=1.0,
         target_type=TargetType.POINT,
-        damage_types=("火",),
     ),
     engine_ready=True,
     min_level=1, refresh_on="never", max_uses=0,
@@ -905,12 +891,10 @@ _register(Ability(
     display_name="火球術",
     description="8d6 火焰 AOE，6m 半徑，DEX 豁免，成功半傷。",
     features=SkillFeatures(
-        expected_damage=28.0,
         save_dc=13.0, save_stat=SaveStat.DEX,
         range_m=45.0, aoe_radius_m=6.0,
         cost_action=1.0, cost_slot_level=3.0,
         target_type=TargetType.POINT,
-        damage_types=("火",),
     ),
     engine_ready=True,
     min_level=5, refresh_on="never", max_uses=0,
@@ -950,7 +934,6 @@ _register(Ability(
     display_name="治療語",
     description="bonus action 遠距治療一個盟友 1d4 + WIS 修正 HP，射程 18m。",
     features=SkillFeatures(
-        expected_healing=5.5,
         range_m=18.0,
         cost_bonus=1.0,
         cost_slot_level=1.0,
@@ -973,7 +956,6 @@ _register(Ability(
     display_name="引導光彈",
     description="攻擊骰，命中造成 4d6 光耀傷害，下一個攻擊者擲優勢。",
     features=SkillFeatures(
-        expected_damage=14.0,
         attack_vs_ac=5.0,
         range_m=36.0,
         cost_action=1.0,
@@ -1024,7 +1006,6 @@ _register(Ability(
     description="bonus action 用召喚的光能武器作法術攻擊，1d8+WIS 力場傷害。"
                 "需要 spiritual_weapon_active 狀態。",
     features=SkillFeatures(
-        expected_damage=7.5,
         attack_vs_ac=5.0,
         range_m=18.0,
         cost_bonus=1.0,
@@ -1047,7 +1028,6 @@ _register(Ability(
     display_name="引導神力：守護生命",
     description="消耗引導神力：30ft 內治療總量 5×牧師等級 HP，分配給多個目標。",
     features=SkillFeatures(
-        expected_healing=15.0,
         range_m=9.0,
         cost_action=1.0,
         target_type=TargetType.MULTI_ALLY,
@@ -1073,7 +1053,6 @@ _register(Ability(
     display_name="群體治療術",
     description="9m 內最多 6 個生物各回復 3d8 + WIS HP。",
     features=SkillFeatures(
-        expected_healing=16.5,
         range_m=9.0,
         cost_action=1.0,
         cost_slot_level=5.0,
@@ -1102,7 +1081,6 @@ _register(Ability(
     display_name="引導光彈",
     description="攻擊骰，命中造成 4d6 光耀傷害，下一個攻擊者擲優勢。",
     features=SkillFeatures(
-        expected_damage=14.0,
         attack_vs_ac=5.0,
         range_m=36.0,
         cost_action=1.0,
@@ -1173,10 +1151,8 @@ _register(Ability(
         requires_concentration=True,
         target_type=TargetType.SELF,
         status_duration=10.0,
-        expected_damage=13.5,
         # Aura ticks deal 3d8 光耀 via tick_status_effects (combat.py), not
         # via this action — dtype pinned here, asserted by test_skill_dtype.
-        damage_types=("光耀",),
     ),
     engine_ready=True,
     min_level=5, refresh_on="never", max_uses=0,
@@ -1196,7 +1172,6 @@ _register(Ability(
     description="bonus action 用召喚的光能武器作法術攻擊，1d8+WIS 力場傷害。"
                 "需要 spiritual_weapon_active 狀態。",
     features=SkillFeatures(
-        expected_damage=7.5,
         attack_vs_ac=5.0,
         range_m=18.0,
         cost_bonus=1.0,
@@ -1219,12 +1194,10 @@ _register(Ability(
     display_name="戰爭祭司攻擊",
     description="使用動作攻擊後，可額外用 bonus action 再攻擊一次，WIS 次數每長休重置。",
     features=SkillFeatures(
-        expected_damage=7.5,
         attack_vs_ac=5.0,
         cost_bonus=1.0,
         remaining_uses=3.0,
         target_type=TargetType.SINGLE_ENEMY,
-        damage_types=(WEAPON_DTYPE,),
     ),
     engine_ready=True,
     min_level=1, refresh_on="long_rest", max_uses=3,
@@ -1328,14 +1301,14 @@ _register(Ability(
     display_name="神聖打擊",
     description="命中後消耗 1 環法術位，每環 +2d8 光耀傷害（max 5d8）。",
     features=SkillFeatures(
-        expected_damage=9.0,
         attack_vs_ac=5.0,
         cost_action=1.0,
         cost_slot_level=1.0,
         target_type=TargetType.SINGLE_ENEMY,
-        # expected_damage describes the 2d8 smite rider only (the weapon swing
-        # is its own skill row) — so the row's dtype is the rider's 光耀.
-        damage_types=("光耀",),
+        # expected_damage now materializes from the FULL action (weapon swing +
+        # 2d8 光耀 smite), so it varies with the wielded weapon. The dtype stays
+        # pinned to the smite's characteristic 光耀 (a subset of the action's
+        # real types — weapon base + 光耀; test_skill_dtype checks the subset).
     ),
     engine_ready=True,
     engine_todo="傷害固定 2d8（1 環）；之後可按 slot 等級縮放。",
@@ -1352,7 +1325,6 @@ _register(Ability(
     display_name="聖療之手",
     description="觸碰治療：從 5×等級 HP 的資源池中恢復指定量。",
     features=SkillFeatures(
-        expected_healing=15.0,
         range_m=1.5,
         cost_action=1.0,
         target_type=TargetType.SINGLE_ALLY,
@@ -1422,7 +1394,6 @@ _register(Ability(
         # bonus action IS the swing. EV = weapon swing (≈7.5) + 1d6 精神 rider
         # (3.5). damage_types splits the two packets so the obs-side typed
         # resist dot product reads the true blended multiplier.
-        expected_damage=11.0,
         save_dc=13.0,
         save_stat=SaveStat.WIS,
         cost_bonus=1.0,
@@ -1431,7 +1402,6 @@ _register(Ability(
         target_type=TargetType.SINGLE_ENEMY,
         applies_status=_status_multihot("frightened"),
         status_duration=1.0,
-        damage_types=((WEAPON_DTYPE, 7.5 / 11.0), ("精神", 3.5 / 11.0)),
     ),
     engine_ready=True,
     min_level=2, refresh_on="never", max_uses=0,
@@ -1456,14 +1426,14 @@ _register(Ability(
     display_name="神聖打擊",
     description="命中後消耗法術位，每環 +2d8 光耀傷害。",
     features=SkillFeatures(
-        expected_damage=9.0,
         attack_vs_ac=5.0,
         cost_action=1.0,
         cost_slot_level=1.0,
         target_type=TargetType.SINGLE_ENEMY,
-        # expected_damage describes the 2d8 smite rider only (the weapon swing
-        # is its own skill row) — so the row's dtype is the rider's 光耀.
-        damage_types=("光耀",),
+        # expected_damage now materializes from the FULL action (weapon swing +
+        # 2d8 光耀 smite), so it varies with the wielded weapon. The dtype stays
+        # pinned to the smite's characteristic 光耀 (a subset of the action's
+        # real types — weapon base + 光耀; test_skill_dtype checks the subset).
     ),
     engine_ready=True,
     engine_todo="固定 1 環（2d8）；之後可擴展為按 slot 等級縮放。",
@@ -1530,7 +1500,6 @@ _register(Ability(
     display_name="聖療之手",
     description="觸碰治療，5×等級 HP 資源池。",
     features=SkillFeatures(
-        expected_healing=15.0,
         range_m=1.5,
         cost_action=1.0,
         target_type=TargetType.SINGLE_ALLY,
@@ -1553,14 +1522,12 @@ _register(Ability(
     display_name="火焰吐息",
     description="9m 錐形（簡化 AOE）火焰，DEX 豁免半傷；充能 5-6（recharge trait）。",
     features=SkillFeatures(
-        expected_damage=56.0,        # 16d6
         save_dc=17.0,                # 幼紅龍：8 + 熟練4 + CON5（引擎按 CON 實算）
         save_stat=SaveStat.DEX,
         range_m=9.0,
         aoe_radius_m=4.5,
         cost_action=1.0,
         target_type=TargetType.CONE,
-        damage_types=("火",),
     ),
     engine_ready=True,
     scales_as_cantrip=False,
@@ -1580,14 +1547,12 @@ _register(Ability(
     display_name="閃電吐息",
     description="6m 直線（寬 1.5m）閃電，DEX 豁免半傷；充能 5-6（recharge trait）。",
     features=SkillFeatures(
-        expected_damage=66.0,        # 12d10
         save_dc=16.0,                # 貝希爾：8 + 熟練4 + CON4（引擎按 CON 實算）
         save_stat=SaveStat.DEX,
         range_m=6.0,                 # = line_length（瞄準點需在線上）
         aoe_radius_m=0.75,           # 線寬/2 — policy 友軍檢查與描述子用
         cost_action=1.0,
         target_type=TargetType.LINE,
-        damage_types=("閃電",),
     ),
     engine_ready=True,
     scales_as_cantrip=False,
@@ -1604,7 +1569,6 @@ _register(Ability(
     display_name="閃電束",
     description="30m 直線（寬 1.5m）閃電，DEX 豁免，失敗 8d6，成功半傷。",
     features=SkillFeatures(
-        expected_damage=28.0,        # 8d6
         save_dc=15.0,                # 模板值；materialize 按施法者實算
         save_stat=SaveStat.DEX,
         range_m=30.0,
@@ -1612,7 +1576,6 @@ _register(Ability(
         cost_action=1.0,
         cost_slot_level=3.0,
         target_type=TargetType.LINE,
-        damage_types=("閃電",),
     ),
     engine_ready=True,
     min_level=5,
@@ -1656,13 +1619,11 @@ _register(Ability(
         # 引擎單回合永遠不會打出這個數字——descriptor 的 max_hit 由吐息
         # (66+) 主導，不受此慣例影響；status-dealt 的強酸份額在 dtype
         # 交叉驗證測試以 STATUS_DEALT_DTYPES 釘住（spirit_guardians 同例）。
-        expected_damage=85.5,
         range_m=3.0,                 # 巨顎觸及 10ft
         cost_action=1.0,
         target_type=TargetType.SINGLE_ENEMY,
         applies_status=_status_multihot("restrained", "blinded"),  # 吞噬的可見組件
         status_duration=10.0,
-        damage_types=(("穿刺", 22.5 / 85.5), ("強酸", 63.0 / 85.5)),
     ),
     engine_ready=True,
     scales_as_cantrip=False,
@@ -1729,11 +1690,9 @@ _register(Ability(
     display_name="巢穴：落石",
     description="巢穴動作：落石砸向最近的敵人，自動命中造成 2d6 鈍擊傷害。",
     features=SkillFeatures(
-        expected_damage=7.0,
         auto_hit=True,
         range_m=100.0,
         target_type=TargetType.SINGLE_ENEMY,
-        damage_types=("鈍擊",),
     ),
     engine_ready=True,
     min_level=1, refresh_on="never", max_uses=0,
@@ -1785,23 +1744,22 @@ _validate_ray_table()
 
 # ── 怪物天然能力（Wave 3，MONSTER_CATALOG §3 傳奇套件）────────────────────────
 
-def _breath(skill_id: str, spell_name: str, ev: float, dc: float,
-            save: "SaveStat", rng: float, radius: float, dtypes) -> None:
+def _breath(skill_id: str, spell_name: str, dc: float,
+            save: "SaveStat", rng: float, radius: float) -> None:
     """Register one breath-weapon ability riding the SPELL pipeline —
-    fire_breath (Wave 1) pattern with per-dragon numbers."""
+    fire_breath (Wave 1) pattern with per-dragon numbers. expected_damage and
+    damage_types are derived by materialize from the SPELLS entry, not passed in."""
     _register(Ability(
         skill_id=skill_id,
         display_name=spell_name,
         description=f"{rng:.0f}m 錐形（簡化 AOE），豁免半傷；充能 5-6。",
         features=SkillFeatures(
-            expected_damage=ev,
             save_dc=dc,              # 模板值；引擎按 CON 實算
             save_stat=save,
             range_m=rng,
             aoe_radius_m=radius,
             cost_action=1.0,
             target_type=TargetType.CONE,
-            damage_types=dtypes,
         ),
         engine_ready=True,
         scales_as_cantrip=False,
@@ -1814,12 +1772,12 @@ def _breath(skill_id: str, spell_name: str, ev: float, dc: float,
     ))
 
 
-_breath("cold_breath", "寒冰吐息", 54.0, 19.0, SaveStat.CON,
-        18.0, 9.0, ("冰",))                      # 成年白龍 12d8
-_breath("fire_breath_adult", "火焰吐息（成龍）", 63.0, 21.0, SaveStat.DEX,
-        18.0, 9.0, ("火",))                      # 成年紅龍 18d6
-_breath("fire_breath_ancient", "火焰吐息（古龍）", 91.0, 24.0, SaveStat.DEX,
-        27.0, 13.5, ("火",))                     # 遠古紅龍 26d6
+_breath("cold_breath", "寒冰吐息", 19.0, SaveStat.CON,
+        18.0, 9.0)                               # 成年白龍 12d8 冰
+_breath("fire_breath_adult", "火焰吐息（成龍）", 21.0, SaveStat.DEX,
+        18.0, 9.0)                               # 成年紅龍 18d6 火
+_breath("fire_breath_ancient", "火焰吐息（古龍）", 24.0, SaveStat.DEX,
+        27.0, 13.5)                              # 遠古紅龍 26d6 火
 
 _register(Ability(
     skill_id="wing_attack",
@@ -1827,7 +1785,6 @@ _register(Ability(
     description="傳奇行動（2 點）：以自身為中心 3m，DEX 豁免，失敗 2d6+8 "
                 "鈍擊並倒地，成功無事。之後龍可飛行半速（未建模）。",
     features=SkillFeatures(
-        expected_damage=15.0,        # 2d6+8
         save_dc=22.0,                # 模板值；引擎按 STR 實算（白19/紅22/古25）
         save_stat=SaveStat.DEX,
         range_m=3.0,                 # 自心 nova：敵在 3m 內才有意義
@@ -1836,7 +1793,6 @@ _register(Ability(
         target_type=TargetType.POINT,
         applies_status=_status_multihot("prone"),
         status_duration=10.0,
-        damage_types=("鈍擊",),
     ),
     engine_ready=True,
     scales_as_cantrip=False,
@@ -1855,13 +1811,11 @@ _register(Ability(
     display_name="寒冰之觸",
     description="戲法：36m 內單體 DEX 豁免，失敗 1d8 黯蝕（隨等級縮放）。",
     features=SkillFeatures(
-        expected_damage=4.5,         # 1d8；materialize 按施法者等級戲法縮放
         save_dc=15.0,                # 模板值
         save_stat=SaveStat.DEX,
         range_m=36.0,
         cost_action=1.0,
         target_type=TargetType.SINGLE_ENEMY,
-        damage_types=("黯蝕",),
     ),
     engine_ready=True,
     min_level=1,
@@ -1877,13 +1831,11 @@ _register(Ability(
     display_name="火焰箭",
     description="戲法：36m 內單體 DEX 豁免，失敗 1d10 火焰（隨等級縮放）。",
     features=SkillFeatures(
-        expected_damage=5.5,         # 1d10；materialize 按施法者等級戲法縮放
         save_dc=15.0,                # 模板值；materialize 依施法者實算
         save_stat=SaveStat.DEX,
         range_m=36.0,
         cost_action=1.0,
         target_type=TargetType.SINGLE_ENEMY,
-        damage_types=("火",),
     ),
     engine_ready=True,
     min_level=1,
@@ -1900,14 +1852,12 @@ _register(Ability(
     description="傳奇行動（3 點）：以巫妖為中心 6m 內 CON 豁免，"
                 "失敗 6d6 黯蝕，成功半傷。",
     features=SkillFeatures(
-        expected_damage=21.0,        # 6d6
         save_dc=20.0,                # 巫妖：8 + 熟練7 + INT5（引擎實算）
         save_stat=SaveStat.CON,
         range_m=6.0,                 # 自心 nova：敵在 6m 內才有意義
         aoe_radius_m=6.0,
         cost_action=1.0,
         target_type=TargetType.POINT,
-        damage_types=("黯蝕",),
     ),
     engine_ready=True,
     scales_as_cantrip=False,
@@ -1933,13 +1883,11 @@ _register(Ability(
     description="召來 3 道落雷，各自打擊 36m 內隨機可見敵人；"
                 "DEX 豁免，失敗 4d10 閃電，成功半傷。",
     features=SkillFeatures(
-        expected_damage=66.0,        # 3 × 4d10 (22)
         save_dc=22.0,                # 海妖：8 + 熟練7 + CON7（引擎實算）
         save_stat=SaveStat.DEX,
         range_m=36.0,
         cost_action=1.0,
         target_type=TargetType.MULTI_ENEMY,
-        damage_types=("閃電",),
     ),
     engine_ready=True,
     scales_as_cantrip=False,
@@ -1954,12 +1902,11 @@ _register(Ability(
 
 
 def _swallow_variant(skill_id: str, display: str, *, weapon: str,
-                     bite_ev: float, tick_dice: str, tick_ev: float,
-                     escape: str, reach: float) -> None:
+                     tick_dice: str, escape: str, reach: float) -> None:
     """Register a swallow-chain ability (behir Wave 2 pattern): single bite
     vs a restrained target → swallowed (restrained+blinded+酸 tick,
-    regurgitated on swallower death)."""
-    total = bite_ev + 3 * tick_ev   # greedy per-action估值：單咬＋3 回合體內酸
+    regurgitated on swallower death). expected_damage / damage_types are
+    derived by materialize from the bite weapon + tick_dice, not passed in."""
     _register(Ability(
         skill_id=skill_id,
         display_name=display,
@@ -1967,13 +1914,11 @@ def _swallow_variant(skill_id: str, display: str, *, weapon: str,
                     f"每回合 {tick_dice} 強酸），吞噬者死亡時吐出；"
                     "STR 豁免可掙脫。",
         features=SkillFeatures(
-            expected_damage=total,
             range_m=reach,
             cost_action=1.0,
             target_type=TargetType.SINGLE_ENEMY,
             applies_status=_status_multihot("restrained", "blinded"),
             status_duration=10.0,
-            damage_types=(("穿刺", bite_ev / total), ("強酸", 3 * tick_ev / total)),
         ),
         engine_ready=True,
         scales_as_cantrip=False,
@@ -1997,21 +1942,18 @@ def _swallow_variant(skill_id: str, display: str, *, weapon: str,
     ))
 
 
-# 海妖：咬 3d8+10 (23.5)＋體內 12d6 (42)/回合；逃脫 DC18（觸手擒抱 DC 同值）
+# 海妖：咬 3d8+10＋體內 12d6/回合；逃脫 DC18（觸手擒抱 DC 同值）
 _swallow_variant("kraken_swallow", "海妖吞噬", weapon="海妖巨口",
-                 bite_ev=23.5, tick_dice="12d6", tick_ev=42.0,
-                 escape="STR DC18", reach=1.5)
-# 泰拉斯克：咬 4d12+10 (36)＋體內 16d6 (56)/回合；逃脫 DC20
+                 tick_dice="12d6", escape="STR DC18", reach=1.5)
+# 泰拉斯克：咬 4d12+10＋體內 16d6/回合；逃脫 DC20
 _swallow_variant("tarrasque_swallow", "泰拉斯克吞噬", weapon="泰拉斯克巨顎",
-                 bite_ev=36.0, tick_dice="16d6", tick_ev=56.0,
-                 escape="STR DC20", reach=3.0)
+                 tick_dice="16d6", escape="STR DC20", reach=3.0)
 
 _register(Ability(
     skill_id="eye_ray_single",
     display_name="眼魔射線（傳奇）",
     description="傳奇行動（1 點）：自十種效果表隨機射出 1 道射線。",
     features=SkillFeatures(
-        expected_damage=13.6,        # 40.8 / 3
         save_dc=16.0,
         save_stat=SaveStat.DEX,
         range_m=36.0,
@@ -2021,7 +1963,6 @@ _register(Ability(
             "charmed", "paralyzed", "frightened", "asleep", "restrained",
             "petrified"),
         status_duration=10.0,
-        damage_types=(("黯蝕", 91.0 / 136.0), ("力場", 45.0 / 136.0)),
     ),
     engine_ready=True,
     scales_as_cantrip=False,
@@ -2041,7 +1982,6 @@ _register(Ability(
                 "隨機敵人（DC = 8 + 熟練 + INT）。",
     features=SkillFeatures(
         # 三道射線的期望總傷：傷害射線 (36+45+55)/10 × 3 = 40.8
-        expected_damage=40.8,
         save_dc=16.0,                # 眼魔：8 + 熟練5 + INT3（引擎實算）
         save_stat=SaveStat.DEX,      # 眾數豁免（4/10 道）
         range_m=36.0,
@@ -2051,7 +1991,6 @@ _register(Ability(
             "charmed", "paralyzed", "frightened", "asleep", "restrained",
             "petrified"),
         status_duration=10.0,
-        damage_types=(("黯蝕", 91.0 / 136.0), ("力場", 45.0 / 136.0)),
     ),
     engine_ready=True,
     scales_as_cantrip=False,

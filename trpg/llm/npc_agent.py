@@ -4,8 +4,7 @@ import pathlib
 from ..engine.character import Character
 from ..engine.quests import Quest, objective_progress_str
 from .backend import stream_chat
-from .log_render import render_messages, render_script
-from .social_dc_agent import SocialDcAgent
+from .log_render import render_messages
 
 _DEBUG_DIR = pathlib.Path(__file__).parent.parent / "debug"
 _DEBUG_DIR.mkdir(exist_ok=True)
@@ -38,12 +37,7 @@ _CONVERSATION_EXTRAS_TEMPLATE = """## 對話規則
 
 ## 當前態度：{attitude_label}（{attitude}/4）
 
-{pending_section}{recruit_section}{secrets_section}{quest_section}{action_section}## 態度標記（回應的最後另起一行，只能是 [+] [=] [-] 三選一，禁止加任何描述文字）
-[+] = 對方更有好感或信任
-[=] = 沒明顯變化
-[-] = 更警戒、恐懼或反感
-範例輸出結尾：「……我會跟著你們。\n[+]」（只寫符號本體，不要寫「這次互動讓你...」這類描述）
-"""
+{pending_section}{recruit_section}{secrets_section}{revealed_section}{directives_section}{quest_section}{action_section}"""
 
 _ACTION_SECTION = """## 行動選擇（你已經到達敵意，根據自己的性格決定）
 若你決定不再忍受、動手攻擊對方，在回應結尾加 <ATTACK>
@@ -58,36 +52,22 @@ _SECRETS_UNLOCKED = """## 你知道的情報（態度已足夠，對方問起時
 {secrets}
 """
 
-_FORCE_DETAILS = {
-    "intimidate": {
-        "heading": "## 對方威嚇成功（你選擇屈服）",
-        "intro":   "你害怕了，不敢再硬撐——你決定回答對方剛才提出的具體問題/要求。",
-    },
-    "persuade": {
-        "heading": "## 對方說服成功（你被打動了）",
-        "intro":   "你覺得對方說的有道理，願意配合——你決定回答對方剛才提出的具體問題/要求。",
-    },
-    "deceive": {
-        "heading": "## 對方騙過你（你完全相信他）",
-        "intro":   "你被對方的說詞騙倒，把他當成可信任的對象——你願意如實回答他剛才的問題/要求。",
-    },
-}
-
-_SECRETS_FORCE = """{heading}
-{intro}
-
-回應規則：
-- 鎖定對方在對話最後一段提出的**具體問題或要求**
-- 從下方「你知道的情報」清單中找出**所有與對方提問主題相關**的條目，都坦白告訴對方
-- 與提問主題**無關**的情報，不要主動倒出來
-- 若整個問題都超出你的知識範圍 → 誠實說「我不知道」「沒聽過」「我哪會知道這個」
-- **絕對不要**因為對方很兇／話術巧妙就編造你不知道的事
-
-{secrets}
-"""
-
 _SECRETS_LOCKED = """## 你知道的情報
 你隱約知道一些事，但現在還不夠信任對方，不願透露細節。
+"""
+
+# Sticky: knowledge the NPC has already told the player (via a won reveal check).
+# Once revealed it stays in context permanently — the NPC talks about it freely.
+_REVEALED_SECTION = """## 你已經告訴過對方的情報（已公開，對方問起時照常談論，不要否認）
+{items}
+
+"""
+
+# Per-turn directives set by the Stage-2 event arranger (dialogue_flow). These
+# tell the NPC what concession it just made this round; it still acts in-voice.
+_DIRECTIVES_SECTION = """## 本輪劇情指示（依此回應，但仍用你自己的口吻與情緒演出）
+{items}
+
 """
 
 _PENDING_REVEAL = """## 這一輪你必須親口告訴對方以下事項（劇情指示，不可省略）
@@ -122,7 +102,6 @@ _QUEST_COMPLETED = """## 對方已完成的請託
 
 """
 
-_MARKER_RE = re.compile(r'\[\s*([+\-=])\s*\]')
 _RECRUIT_RE = re.compile(r'<\s*(JOIN|DECLINE)\s*>', re.IGNORECASE)
 
 _RECRUIT_SECTION = """## 對方邀你加入冒險（重要決定）
@@ -174,14 +153,13 @@ class NpcAgent:
         self._secrets         = secrets or []
         self._reveal_threshold = reveal_threshold
         self._quests          = quests or []
-        self.force_reveal: str = ""                     # "" / "intimidate" / "persuade" / "deceive"
         self.pending_reveal: list[str] = []             # quest reward lines NPC MUST say this turn
-        self._skip_marker: bool = False                 # suppress [+/-] when social check ran this turn
+        self.revealed: list[str] = []                   # sticky: secrets already told (stay in context)
+        self.pending_directives: list[str] = []         # this-turn event instructions (Stage-2 arranger)
         self.pending_action: str = ""                   # "attack" / "flee"
         self.pending_join_decision: bool = False        # one-shot: NPC must answer join/decline this turn
         self.recruit_decision: str = ""                 # "" / "join" / "decline" — parsed from this turn's output
         self.in_party: bool = False                     # mirror of (char_id in ws.party_ids)
-        self._social_dc = SocialDcAgent(model, base_url, backend, api_key=api_key)
 
     def _quest_section(self) -> str:
         parts: list[str] = []
@@ -197,17 +175,15 @@ class NpcAgent:
 
     def _system(self) -> str:
         """Conversation-mode body: core (identity/personality/general tactics/
-        knowledge boundary) + conversation extras (dialogue rules / attitude
-        / secrets / quests / recruit / attitude marker grammar).
+        knowledge boundary) + conversation extras (dialogue rules / attitude /
+        secrets / revealed / this-turn directives / quests / recruit).
+
+        Attitude is NO LONGER self-marked by the NPC — it is driven only by the
+        dialogue_flow event arranger (好感度增減) or quest rewards.
         """
         if self._secrets:
             formatted = "\n".join(f"- {s}" for s in self._secrets)
-            if self.force_reveal in _FORCE_DETAILS:
-                d = _FORCE_DETAILS[self.force_reveal]
-                secrets_section = _SECRETS_FORCE.format(
-                    heading=d["heading"], intro=d["intro"], secrets=formatted,
-                )
-            elif self.attitude >= self._reveal_threshold:
+            if self.attitude >= self._reveal_threshold:
                 secrets_section = _SECRETS_UNLOCKED.format(secrets=formatted)
             else:
                 secrets_section = _SECRETS_LOCKED
@@ -219,6 +195,18 @@ class NpcAgent:
             pending_section = _PENDING_REVEAL.format(items=items)
         else:
             pending_section = ""
+
+        if self.revealed:
+            items = "\n".join(f"- {s}" for s in self.revealed)
+            revealed_section = _REVEALED_SECTION.format(items=items)
+        else:
+            revealed_section = ""
+
+        if self.pending_directives:
+            items = "\n".join(f"- {d}" for d in self.pending_directives)
+            directives_section = _DIRECTIVES_SECTION.format(items=items)
+        else:
+            directives_section = ""
 
         action_section = _ACTION_SECTION if self.attitude == 0 else ""
         recruit_section = _RECRUIT_SECTION if self.pending_join_decision else ""
@@ -235,6 +223,8 @@ class NpcAgent:
             pending_section=pending_section,
             recruit_section=recruit_section,
             secrets_section=secrets_section,
+            revealed_section=revealed_section,
+            directives_section=directives_section,
             quest_section=self._quest_section(),
             action_section=action_section,
         )
@@ -299,10 +289,15 @@ class NpcAgent:
             return full
 
         # ── Conversation mode: reset one-shots and parse markers ──────────────
-        self.force_reveal   = ""
-        self.pending_reveal = []
+        # Attitude is no longer self-marked by the NPC — it changes only via the
+        # dialogue_flow event arranger (好感度增減) or quest rewards. Only the two
+        # autonomy markers remain: <ATTACK>/<FLEE> (hostile NPC) and
+        # <JOIN>/<DECLINE> (recruit decision). One-shot injections consumed by
+        # _system() above are cleared here; `revealed` is sticky and kept.
+        self.pending_reveal        = []
+        self.pending_directives    = []
         self.pending_join_decision = False
-        self.recruit_decision = ""
+        self.recruit_decision      = ""
 
         # Parse and strip action marker (only meaningful when attitude == 0)
         am = _ACTION_RE.search(full)
@@ -316,19 +311,6 @@ class NpcAgent:
             self.recruit_decision = rm.group(1).lower()
             full = _RECRUIT_RE.sub("", full).strip()
 
-        # Parse and strip attitude marker (suppress if social check ran this turn).
-        matches = list(_MARKER_RE.finditer(full))
-        if matches:
-            last = matches[-1]
-            if not self._skip_marker:
-                marker = last.group(1)
-                if marker == "+" and self.char.attitude < 4:
-                    self.char.attitude += 1
-                elif marker == "-" and self.char.attitude > 0:
-                    self.char.attitude -= 1
-            self._skip_marker = False
-            full = full[:last.start()].rstrip()
-
         return full
 
     @property
@@ -338,17 +320,6 @@ class NpcAgent:
     @attitude.setter
     def attitude(self, value: int) -> None:
         self.char.attitude = value
-
-    def estimate_dc(self, social_type: str, attempt_text: str) -> int:
-        """Delegate DC estimation to SocialDcAgent with full NPC context."""
-        return self._social_dc.estimate(
-            social_type=social_type,
-            attempt_text=attempt_text,
-            personality=self._personality,
-            attitude=self.attitude,
-            attitude_label=_ATTITUDE_LABELS[self.attitude],
-            conv_log_text=render_script(self.world_state, self.char_id),
-        )
 
     @property
     def attitude_label(self) -> str:
