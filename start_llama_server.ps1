@@ -22,12 +22,13 @@ $selectedModel = "gemma4-hauhau-q4"
 $exe = if ($env:LLAMA_SERVER_EXE) {
     $env:LLAMA_SERVER_EXE
 } else {
-    Join-Path $PSScriptRoot "llama.cpp\build\bin\Release\llama-server.exe"
+    Join-Path $PSScriptRoot "..\llama.cpp-tq3\build\bin\Release\llama-server.exe"
 }
+
 $modelDir = if ($env:TRPG_LLM_MODEL_DIR) {
     $env:TRPG_LLM_MODEL_DIR
 } else {
-    Join-Path $PSScriptRoot "models\llm"
+    Join-Path $PSScriptRoot "..\llama.cpp-tq3\models\gemma4-26b"
 }
 
 $modelPaths = @{
