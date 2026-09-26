@@ -1,13 +1,8 @@
-"""Desktop (tkinter) front-end for the narrative dungeon game.
+"""Desktop (tkinter) application for the narrative dungeon game.
 
-Same GameSession event stream as web.py — the session runs on its own thread,
-this app polls next_event() on the tk main loop (an `after` loop, non-blocking)
-and renders each event. Narration flows into one scrolling transcript. When a
-fight starts a combat panel appears in place: a battlefield image (reusing
-web_combat.render_battlefield — auto-fit zoom, CJK labels, the same pixel<->metre
-transform) plus native skill buttons. Picking a skill (then a target/cell) is
-synthesised into the very command string the text box accepts (web_combat.
-command_for), so combat rides the existing input path — no new game seam.
+The GameSession runs on its own thread while this app polls its event queue from
+the Tk main loop. Narration appears in a scrolling transcript, and combat uses a
+battlefield image with native skill buttons.
 
 Run:  python -m trpg.desktop
 """
@@ -19,7 +14,7 @@ from tkinter import ttk, scrolledtext, messagebox
 
 from PIL import ImageTk
 
-from . import web_combat
+from . import desktop_combat
 from .llm import config as llm_config
 from .scenarios.dungeon import OPENING_SCENE
 from .game import (
@@ -34,7 +29,7 @@ _MELEE_FONT = ("Microsoft JhengHei", 11)
 _MONO_FONT = ("Consolas", 10)
 
 # Combat trace log (repo root, overwritten each launch). The desktop transcript
-# is in-memory only; this file is what to hand Claude when a fight misbehaves —
+# is in-memory only; this file provides the details needed to diagnose a fight —
 # it records the full roster (team / attitude / position / HP / driving policy),
 # every round, every action, so a bug ("civilian dragged into the fight", "ally
 # hides in a corner") can be diagnosed from data instead of guessed at.
@@ -162,7 +157,7 @@ class DesktopApp(tk.Tk):
             self._prompt("explore")
         elif isinstance(ev, CombatPrompt):
             if ev.ctx is not None:
-                self._combat_view = web_combat.combat_view_state(
+                self._combat_view = desktop_combat.combat_view_state(
                     ev.kaine, ev.ctx, self.world_state)
             self._show_combat()
             self._prompt("combat")
@@ -281,7 +276,7 @@ class DesktopApp(tk.Tk):
 
     def _submit(self, text: str):
         """The single funnel: typed input AND synthesised combat commands both
-        go through here, mirroring web.on_submit (echo, gate off, hand to session)."""
+        go through here (echo, gate off, then hand the command to the session)."""
         if self._awaiting is None:
             return
         self._append("你（凱恩）", text, "you")
@@ -310,7 +305,7 @@ class DesktopApp(tk.Tk):
 
     def _redraw_battlefield(self):
         actor_id = self._combat_view["actor_id"] if self._combat_view else "kaine"
-        img, transform = web_combat.render_battlefield(
+        img, transform = desktop_combat.render_battlefield(
             self.world_state, actor_id, px=_BATTLE_PX)
         self._transform = transform
         self._bf_photo = ImageTk.PhotoImage(img)
@@ -353,14 +348,14 @@ class DesktopApp(tk.Tk):
         kind = sk["target_kind"]
         cv = self._combat_view
         if kind == "none":
-            self._submit(web_combat.command_for(sk))
+            self._submit(desktop_combat.command_for(sk))
         elif kind in ("multi_enemy", "multi_ally"):
             pool = cv["enemies"] if "enemy" in kind else cv["allies"]
-            self._submit(web_combat.command_for(sk, target_id=",".join(pool.keys())))
+            self._submit(desktop_combat.command_for(sk, target_id=",".join(pool.keys())))
         elif kind in ("enemy", "ally"):
             pool = cv["enemies"] if kind == "enemy" else cv["allies"]
             if len(pool) == 1:
-                self._submit(web_combat.command_for(sk, target_id=next(iter(pool))))
+                self._submit(desktop_combat.command_for(sk, target_id=next(iter(pool))))
             else:
                 self._pending_skill = sk
                 self._aim = kind
@@ -379,14 +374,14 @@ class DesktopApp(tk.Tk):
         sk = self._pending_skill
         if self._aim == "point":
             self._cancel_aim()
-            self._submit(web_combat.command_for(sk, cell=(mx, my)))
+            self._submit(desktop_combat.command_for(sk, cell=(mx, my)))
         else:   # enemy / ally — snap to the nearest matching combatant
             pool = (self._combat_view["enemies"] if self._aim == "enemy"
                     else self._combat_view["allies"])
             tid = self._nearest(mx, my, pool)
             if tid:
                 self._cancel_aim()
-                self._submit(web_combat.command_for(sk, target_id=tid))
+                self._submit(desktop_combat.command_for(sk, target_id=tid))
             else:
                 self.aim_hint.config(text="沒點到目標，再點一次靠近目標的位置")
 

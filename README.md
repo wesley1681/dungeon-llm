@@ -40,24 +40,11 @@ powershell -ExecutionPolicy Bypass -File .\start_llama_server.ps1
 
 以上就是使用預設本機模型啟動桌面版的完整流程。README 中的 Python 命令一律明確使用專案的 `gemma-env`，不需要另外啟用虛擬環境。
 
-## 其他操作介面
-
-先依使用的後端啟動模型服務，再執行下列其中一個命令：
-
-| 介面 | 啟動命令 | 說明 |
-|------|----------|------|
-| 桌面版 | `.\gemma-env\Scripts\python.exe -m trpg.desktop` | Tkinter 視窗、戰場圖與技能按鈕 |
-| 網頁版 | `.\gemma-env\Scripts\python.exe -m trpg` | Gradio 三欄介面，開啟 `http://127.0.0.1:7860` |
-| 終端機版 | `.\gemma-env\Scripts\python.exe -m trpg --mode terminal` | 純文字操作 |
-| Claude 測試模式 | `.\gemma-env\Scripts\python.exe -m trpg --mode claude` | 透過 `claude_response.txt` 提供玩家輸入 |
-
-桌面版是獨立入口，不支援 `--mode desktop`。
-
 ## 執行需求
 
 - Windows 與 PowerShell
 - 專案內依 `requirements.txt` 建立的 `gemma-env`，或具備相同套件的 Python 3.11+
-- 執行期套件：`requests`、`gradio`、`Pillow`、`torch`
+- 執行期套件：`requests`、`Pillow`、`torch`
 - 桌面版需要 Python 的 Tk 支援
 - 下列其中一種 LLM 後端：
   - Ollama
@@ -66,7 +53,7 @@ powershell -ExecutionPolicy Bypass -File .\start_llama_server.ps1
 
 ## 選擇 LLM 後端
 
-所有介面都從專案根目錄的 `_server_config.json` 讀取 LLM 後端、位址與模型。這個檔案由 `start_llama_server.ps1` 產生，且已被 `.gitignore` 排除。
+桌面版從專案根目錄的 `_server_config.json` 讀取 LLM 後端、位址與模型。這個檔案由 `start_llama_server.ps1` 產生，且已被 `.gitignore` 排除。
 
 模型的唯一選擇點是 `start_llama_server.ps1` 開頭的：
 
@@ -140,18 +127,16 @@ $selectedModel = "ollama:gemma4:26b"
 powershell -ExecutionPolicy Bypass -File .\start_llama_server.ps1
 ```
 
-確認 Ollama 服務正在運行，再啟動所需介面：
+確認 Ollama 服務正在運行，再啟動桌面版：
 
 ```powershell
 $env:GGML_FLASH_ATTENTION = "0"  # Gemma4 長 context 有問題時使用
 ollama serve
-# 另開 PowerShell 後執行其中之一：
+# 另開 PowerShell 後執行：
 .\gemma-env\Scripts\python.exe -m trpg
-.\gemma-env\Scripts\python.exe -m trpg --mode terminal
-.\gemma-env\Scripts\python.exe -m trpg --mode claude
 ```
 
-若要使用桌面版，請先確認 Ollama 已在背景運行，再直接執行：
+也可以使用完整的桌面版模組名稱啟動：
 
 ```powershell
 .\gemma-env\Scripts\python.exe -m trpg.desktop
@@ -183,12 +168,10 @@ powershell -ExecutionPolicy Bypass -File .\start_llama_server.ps1
 
 若檔案不存在，第一次啟動遊戲時會自動建立空白範本並停止，填入 key 後再次啟動即可。模型與 API 位址取自 `_server_config.json`；`_deepseek_config.json` 只提供 API key。兩個檔案都不會被 Git 追蹤。
 
-DeepSeek 不需要本機模型服務，直接啟動所需介面即可：
+DeepSeek 不需要本機模型服務，直接啟動桌面版即可：
 
 ```powershell
 .\gemma-env\Scripts\python.exe -m trpg.desktop
-# 或
-.\gemma-env\Scripts\python.exe -m trpg
 ```
 
 ## 強化學習戰鬥模型
@@ -242,11 +225,7 @@ DeepSeek 不需要本機模型服務，直接啟動所需介面即可：
 
 探索與對話時可直接輸入自然語言，例如「往北走」、「搜索房間」、「撿起治療藥水」或「和老柯談談」。TagAgent 會把需要修改遊戲狀態的意圖轉成規則標籤，引擎結算後再由 GM 產生敘事。
 
-戰鬥時：
-
-- 網頁版與桌面版會顯示戰場、可用技能和目標控制，也可直接輸入文字。
-- 終端機版會列出位置、距離、武器與剩餘行動資源。
-- 輸入 `結束` 或 `end` 可結束自己的戰鬥回合。
+戰鬥時，桌面版會顯示戰場、可用技能和目標控制，也可直接輸入文字。輸入 `結束` 或 `end` 可結束自己的戰鬥回合。
 
 通用命令：
 
@@ -258,21 +237,9 @@ DeepSeek 不需要本機模型服務，直接啟動所需介面即可：
 | `/旁白 off` | 關閉旁白；機制仍照常結算 |
 | `/旁白` | 切換旁白狀態 |
 | `離開` | 結束正在進行的 NPC 對話 |
-| `quit` | 結束遊戲；終端機／探索輸入使用 |
-| `status` | 顯示完整隊伍狀態；僅終端機介面特別處理 |
+| `quit` | 結束遊戲 |
 
 桌面版每次啟動會覆寫根目錄的 `desktop_game_log.txt`，其中記錄戰鬥名單、位置、策略和每次行動，適合用來診斷戰鬥問題。
-
-## Claude 測試模式
-
-`claude` 模式把凱恩的玩家輸入改成檔案 IPC：
-
-1. 輪到凱恩時，stdout 印出 `<<<CLAUDE_TURN>>>`。
-2. 遊戲等待專案根目錄的 `claude_response.txt`。
-3. 外部工具將單次行動寫入該檔案。
-4. 遊戲讀取並刪除檔案後繼續。
-
-這個模式主要用於自動跑流程、重現錯誤和觀察各代理的輸出，不是一般玩家介面。
 
 ## 主要設定位置
 
@@ -281,9 +248,8 @@ DeepSeek 不需要本機模型服務，直接啟動所需介面即可：
 | LLM 來源與模型 | `start_llama_server.ps1` 的 `$selectedModel` |
 | 實際執行期後端設定 | `_server_config.json`，由腳本產生，請勿手動維護 |
 | DeepSeek API key | `_deepseek_config.json` |
-| GM、TagAgent、索爾的溫度與 token 上限 | `trpg/cli.py` 的 `GM_OPTIONS`、`TAG_OPTIONS`、`THOR_OPTIONS` |
-| 思考模式 | `trpg/cli.py` 的 `GM_THINK`、`THOR_THINK` |
-| 顯示戰鬥結構化動作 | `trpg/cli.py` 的 `DEBUG_COMBAT_ACTION` |
+| GM、TagAgent、索爾的溫度與 token 上限 | `trpg/bootstrap.py` 的 `GM_OPTIONS`、`TAG_OPTIONS`、`THOR_OPTIONS` |
+| 思考模式 | `trpg/bootstrap.py` 的 `GM_THINK`、`THOR_THINK` |
 | 非玩家角色的戰鬥模型 | `trpg/rl/combat_model.py` 的 `DEFAULT_COMBAT_MODEL` |
 | 場景、角色與 NPC agent | `trpg/scenarios/dungeon.py` |
 
@@ -292,9 +258,9 @@ DeepSeek 不需要本機模型服務，直接啟動所需介面即可：
 ## 架構
 
 ```text
-desktop.py / web.py / cli.py
-            │ 玩家輸入與事件顯示
-            ▼
+          desktop.py                玩家輸入與事件顯示
+              │
+              ▼
         GameSession                 遊戲主迴圈，執行於背景 thread
         ├─ controllers.py           玩家、LLM 隊友與 NPC 的探索／對話回合
         ├─ tag_agent.py             將探索意圖分類成規則標籤
@@ -315,17 +281,17 @@ desktop.py / web.py / cli.py
 | 元件 | 職責 |
 |------|------|
 | `trpg/llm/config.py` | 讀取 `_server_config.json`，統一解析 Ollama、llama.cpp 或 DeepSeek |
-| `trpg/bootstrap.py` | 為網頁版與桌面版建立相同的 `GameSession` |
+| `trpg/bootstrap.py` | 建立桌面版使用的 `GameSession` |
 | `trpg/game.py` | 探索、對話、戰鬥、任務與事件佇列的核心流程 |
 | `trpg/engine/world_state.py` | 世界狀態的單一真相來源 |
-| `trpg/web_combat.py` | 網頁版與桌面版共用的戰場繪製及戰鬥命令合成 |
+| `trpg/desktop_combat.py` | 桌面版的戰場繪製及戰鬥命令合成 |
 | `trpg/llm/backend.py` | Ollama `/api/chat` 與 OpenAI 相容 `/v1/chat/completions` 的通訊層 |
 
 探索階段由 TagAgent 直接產生的主要機制包括：移動、拾取、給予物品、使用消耗品、解鎖、搜索、與 NPC 對話，以及攻擊非敵對 NPC。戰鬥不走探索標籤，而是由 `CombatPolicy` 產生結構化行動後交給戰鬥引擎執行。
 
 ## 常見錯誤
 
-### 網頁已開啟，但終端顯示無法連線 `127.0.0.1:8090`
+### 桌面版顯示無法連線 `127.0.0.1:8090`
 
 這表示 `_server_config.json` 指向 llama.cpp，但 `llama-server` 沒有運行。執行 `start_llama_server.ps1`，等待伺服器開始監聽 8090，並保持該視窗開啟。
 
@@ -368,12 +334,10 @@ GM 文字是 LLM 敘事，`WorldState`、TagParser 與戰鬥引擎才是實際�
 
 ```text
 trpg/
-├── __main__.py          # web / terminal / claude 入口分派
-├── bootstrap.py         # web 與 desktop 共用的遊戲組裝
+├── __main__.py          # 桌面版入口
+├── bootstrap.py         # 桌面版遊戲組裝與代理參數
 ├── desktop.py           # Tkinter 桌面介面
-├── web.py               # Gradio 網頁介面
-├── web_combat.py        # 共用戰場繪圖與 GUI 戰鬥命令
-├── cli.py               # 終端機與 Claude 測試介面、代理參數
+├── desktop_combat.py    # 桌面版戰場繪圖與戰鬥命令
 ├── game.py              # GameSession 與遊戲主流程
 ├── engine/              # 角色、技能、物品、地圖、狀態與戰鬥規則
 ├── llm/                 # 後端、GM、TagAgent、NPC、對話流程與控制器

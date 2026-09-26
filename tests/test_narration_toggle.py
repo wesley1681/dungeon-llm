@@ -2,8 +2,8 @@
 
 When narration is off, the GM's exploration prose and combat flavour are skipped
 (no LLM call), but mechanics run unchanged and the turn passes to the next actor.
-The toggle is a meta-command intercepted in submit_player_input (the single input
-point every front-end routes through), so it works in cli / desktop / web alike.
+The toggle is a meta-command intercepted in submit_player_input, the single
+input point used by the desktop application.
 """
 from trpg.scenarios.dungeon import build_world_state, build_npc_agents
 from trpg.game import GameSession, ExplorationPrompt, StatusMessage, _STOP

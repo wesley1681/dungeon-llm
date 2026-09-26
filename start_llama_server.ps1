@@ -1,8 +1,8 @@
 # Single control point for which model trpg uses this run.
 #
 # Run this in its own terminal BEFORE starting the game (python -m trpg).
-# It always writes _server_config.json; trpg/cli.py has no backend/model constants
-# of its own and just reads whatever this script decided.
+# It always writes _server_config.json; the desktop app reads the backend and
+# model selected by this script.
 #
 # For a local GGUF model this also launches llama-server and blocks the terminal
 # (leave it running, start the game in another terminal). For "ollama:" / "deepseek:"

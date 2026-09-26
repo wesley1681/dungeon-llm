@@ -2,7 +2,7 @@
 
 trpg runs one backend for the whole session (GM/NPC/player agents all share
 it) — there is no per-message switching, and no BACKEND/MODEL constant lives
-in cli.py. The single place to pick a model is start_llama_server.ps1
+in the application modules. The single place to pick a model is start_llama_server.ps1
 (see its $selectedModel) — it always writes _server_config.json, and this
 module just reads that file and turns it into the concrete
 {backend, base_url, model, api_key} agents need. Run the ps1 script before

@@ -1,8 +1,4 @@
-"""Core game engine — all game logic lives here.
-
-Both cli.py (terminal) and web.py (Gradio) consume events from GameSession
-and submit player input via submit_player_input(). Neither contains game logic.
-"""
+"""Core game engine used by the desktop application."""
 import json
 import queue
 import threading
@@ -71,8 +67,7 @@ class CombatPrompt:
     kaine: Any
     enemies: dict[str, str]
     info_text: str = ""   # pre-formatted position / distance / weapon range block
-    ctx: Any = None       # engine CombatContext — lets a GUI front-end render the
-                          # battlefield / skills / targets (CLI ignores it, uses info_text)
+    ctx: Any = None       # engine CombatContext for battlefield/skill/target rendering
 
 @dataclass
 class ConversationPrompt:
@@ -163,7 +158,7 @@ class GameSession:
 
         # Conversation resolution pipeline (focused LLM stages: decide_check →
         # arrange_events → judge_completion). Built from tag_agent's connection so
-        # no extra wiring through bootstrap/cli. Inert if tag_agent is a stub.
+        # no extra wiring through the desktop bootstrap. Inert if tag_agent is a stub.
         self.dialogue = DialogueDirector.from_agent(tag_agent, world_state)
 
         self._events    : queue.Queue = queue.Queue()
@@ -213,8 +208,7 @@ class GameSession:
     # ── Public API ────────────────────────────────────────────────────────────
 
     # Meta-commands that toggle 旁白 rather than becoming a game action. Defined
-    # once here so every front-end (cli / desktop / web all route raw input
-    # through submit_player_input) gets the same toggle for free.
+    # once here so all desktop input routes get the same toggle for free.
     _NARRATION_CMDS = {"/旁白", "/narration", "/narr", "旁白"}
 
     def submit_player_input(self, text: str) -> None:

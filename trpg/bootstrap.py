@@ -1,15 +1,9 @@
-"""Single construction point for a ready-to-run GameSession.
+"""Build the ready-to-run GameSession used by the desktop application."""
+import os
+import sys
 
-Every front-end (web.py, desktop.py) assembles the game identically: resolve the
-LLM backend (llm_config.resolve — i.e. whatever start_llama_server.ps1 wrote),
-wire the GM / tag / player / NPC agents, attach the trained general combat model
-as the ally+monster policy, and start the session thread. Keeping it here means a
-change to HOW the game is built (a new PC, a different combat policy, another
-agent) lands in ONE place instead of once per front-end.
+import requests
 
-The reasoning-heavy constants (GM_THINK, *_OPTIONS, …) still live in cli.py — the
-one config home for those — and are imported from there.
-"""
 from .scenarios.dungeon import (
     build_world_state, build_npc_agents,
     THOR_PERSONALITY, THOR_TACTICS_GENERAL, THOR_TACTICS_COMBAT,
@@ -20,12 +14,32 @@ from .llm.player_agent import PlayerAgent
 from .llm import config as llm_config
 from .rl.combat_model import load_combat_policy
 from .game import GameSession
-from .cli import (
-    check_ollama,
-    GM_THINK, GM_SHOW_THINKING, GM_OPTIONS,
-    TAG_OPTIONS,
-    THOR_THINK, THOR_SHOW_THINKING, THOR_OPTIONS,
-)
+
+os.environ.setdefault("GGML_FLASH_ATTENTION", "0")
+
+GM_THINK = False
+GM_SHOW_THINKING = False
+GM_OPTIONS = {"temperature": 0.8, "num_predict": 2048, "repeat_penalty": 1.15}
+
+TAG_OPTIONS = {"temperature": 0.2, "num_predict": 200}
+
+THOR_THINK = False
+THOR_SHOW_THINKING = False
+THOR_OPTIONS = {"temperature": 0.9, "num_predict": 150}
+
+
+def check_ollama(model: str, base_url: str) -> None:
+    """Stop startup with a useful message if Ollama is unavailable."""
+    try:
+        response = requests.get(f"{base_url}/api/tags", timeout=5)
+        response.raise_for_status()
+        installed = [item["name"] for item in response.json().get("models", [])]
+        if model not in installed and f"{model}:latest" not in installed:
+            print(f"錯誤：找不到模型 '{model}'\n目前已安裝：{installed}")
+            sys.exit(1)
+    except requests.ConnectionError:
+        print("錯誤：無法連線 Ollama，請確認服務正在運行。")
+        sys.exit(1)
 
 
 def init_game() -> dict:
