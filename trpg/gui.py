@@ -3,19 +3,15 @@
 The GameSession runs on its own thread while this app polls its event queue from
 the Tk main loop. Narration appears in a scrolling transcript, and combat uses a
 battlefield image with native skill buttons.
-
-Run:  python -m trpg.gui
 """
 from __future__ import annotations
-import sys
 import pathlib
 import tkinter as tk
-from tkinter import ttk, scrolledtext, messagebox
+from tkinter import ttk, scrolledtext
 
 from PIL import ImageTk
 
 from . import gui_combat
-from .llm import config as llm_config
 from .scenarios.dungeon import OPENING_SCENE
 from .game import (
     TagResult, StreamChunk, ActionResult, RoundStart, CombatStart, CombatEnd,
@@ -411,28 +407,3 @@ class GameGUI(tk.Tk):
             except Exception:
                 pass
         self.destroy()
-
-
-def _fatal(msg: str):
-    root = tk.Tk()
-    root.withdraw()
-    messagebox.showerror("無法啟動", msg)
-    root.destroy()
-
-
-def main():
-    sys.stdout.reconfigure(encoding="utf-8")
-    from .bootstrap import init_game
-    try:
-        state = init_game()
-    except llm_config.BackendConfigError as e:
-        _fatal(str(e))
-        return
-    except SystemExit:
-        _fatal("後端連線失敗。請先執行 start_llama_server.ps1 選擇模型／啟動伺服器。")
-        return
-    GameGUI(state).mainloop()
-
-
-if __name__ == "__main__":
-    main()

@@ -2,9 +2,9 @@
 
 
 def main() -> None:
-    from .gui import main as gui_main
+    from .bootstrap import main as bootstrap_main
 
-    gui_main()
+    bootstrap_main()
 
 
 if __name__ == "__main__":

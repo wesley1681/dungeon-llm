@@ -1,4 +1,4 @@
-"""Build the ready-to-run GameSession used by the graphical application."""
+"""Assemble and launch the graphical TRPG application."""
 import os
 import sys
 
@@ -76,3 +76,34 @@ def init_game() -> dict:
     )
     session.start()
     return {"session": session, "world_state": world_state}
+
+
+def _fatal(message: str) -> None:
+    """Show a startup failure before the main application window exists."""
+    import tkinter as tk
+    from tkinter import messagebox
+
+    root = tk.Tk()
+    root.withdraw()
+    messagebox.showerror("無法啟動", message)
+    root.destroy()
+
+
+def main() -> None:
+    """Assemble the game and run its Tkinter event loop."""
+    from .gui import GameGUI
+
+    sys.stdout.reconfigure(encoding="utf-8")
+    try:
+        state = init_game()
+    except llm_config.BackendConfigError as exc:
+        _fatal(str(exc))
+        return
+    except SystemExit:
+        _fatal("後端連線失敗。請先執行 start_llama_server.ps1 選擇模型／啟動伺服器。")
+        return
+    GameGUI(state).mainloop()
+
+
+if __name__ == "__main__":
+    main()
