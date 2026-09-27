@@ -5,7 +5,7 @@ from ..engine.world_state import WorldState
 from .backend import stream_chat
 from .log_render import render_messages
 
-OLLAMA_URL = "http://localhost:11434"
+LOCAL_LLM_URL = "http://127.0.0.1:8090"
 _DEBUG_DIR = pathlib.Path(__file__).parent.parent / "debug"
 _DEBUG_DIR.mkdir(exist_ok=True)
 
@@ -36,7 +36,7 @@ class PlayerAgent:
                  combat_tactics: str = "",
                  think: bool = False, show_thinking: bool = False,
                  options: dict = None,
-                 base_url: str = OLLAMA_URL, backend: str = "ollama", api_key: str = None):
+                 base_url: str = LOCAL_LLM_URL, backend: str = "openai", api_key: str = None):
         self.model = model
         self.char_id = char_id
         self.character = character

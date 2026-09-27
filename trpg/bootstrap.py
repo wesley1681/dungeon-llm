@@ -2,8 +2,6 @@
 import os
 import sys
 
-import requests
-
 from .scenarios.dungeon import (
     build_world_state, build_npc_agents,
     THOR_PERSONALITY, THOR_TACTICS_GENERAL, THOR_TACTICS_COMBAT,
@@ -28,32 +26,14 @@ THOR_SHOW_THINKING = False
 THOR_OPTIONS = {"temperature": 0.9, "num_predict": 150}
 
 
-def check_ollama(model: str, base_url: str) -> None:
-    """Stop startup with a useful message if Ollama is unavailable."""
-    try:
-        response = requests.get(f"{base_url}/api/tags", timeout=5)
-        response.raise_for_status()
-        installed = [item["name"] for item in response.json().get("models", [])]
-        if model not in installed and f"{model}:latest" not in installed:
-            print(f"錯誤：找不到模型 '{model}'\n目前已安裝：{installed}")
-            sys.exit(1)
-    except requests.ConnectionError:
-        print("錯誤：無法連線 Ollama，請確認服務正在運行。")
-        sys.exit(1)
-
-
 def init_game() -> dict:
     """Resolve the backend, build + start a GameSession.
 
     Returns {"session": GameSession, "world_state": WorldState}.
-    Raises llm_config.BackendConfigError when no backend is configured, and may
-    sys.exit via check_ollama when an Ollama model is missing/unreachable.
+    Raises llm_config.BackendConfigError when no backend is configured.
     """
     cfg = llm_config.resolve()
     url, model, bk, api_key = cfg["base_url"], cfg["model"], cfg["backend"], cfg["api_key"]
-    if bk == "ollama":
-        check_ollama(model, url)
-
     world_state = build_world_state()
     session = GameSession(
         world_state=world_state,
@@ -89,7 +69,7 @@ def _fatal(message: str) -> None:
     root.destroy()
 
 
-def main() -> None:
+def _run_game() -> None:
     """Assemble the game and run its Tkinter event loop."""
     from .gui import GameGUI
 
@@ -103,6 +83,22 @@ def main() -> None:
         _fatal("後端連線失敗。請先執行 start_llama_server.ps1 選擇模型／啟動伺服器。")
         return
     GameGUI(state).mainloop()
+
+
+def main() -> None:
+    """Start the LLM backend, run the game, then stop the backend."""
+    from start_llama_server import ServerStartError, start_server, stop_server
+
+    try:
+        server_process = start_server()
+    except ServerStartError as exc:
+        _fatal(str(exc))
+        return
+
+    try:
+        _run_game()
+    finally:
+        stop_server(server_process)
 
 
 if __name__ == "__main__":

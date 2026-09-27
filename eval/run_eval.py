@@ -53,7 +53,7 @@ def load_scenario(path: pathlib.Path, mode: str) -> str:
 def run_one(prompt: str, model: str, base_url: str, options: dict) -> str:
     messages = [{"role": "user", "content": prompt}]
     return complete_chat(base_url, model, messages, options,
-                         backend="ollama", timeout=180)
+                         backend="openai", timeout=180)
 
 
 def parse_args():
@@ -62,10 +62,10 @@ def parse_args():
     p.add_argument("--mode", choices=["single", "plan"], default="single",
                    help="single = pick one sub-action; plan = full turn plan")
     p.add_argument("--n", type=int, default=5, help="Runs per scenario")
-    p.add_argument("--model", default="gemma4:26b")
+    p.add_argument("--model", default="gemma4-hauhau-q4")
     p.add_argument("--temp", type=float, default=0.85)
     p.add_argument("--num-predict", type=int, default=1024)
-    p.add_argument("--base-url", default="http://localhost:11434")
+    p.add_argument("--base-url", default="http://127.0.0.1:8090")
     p.add_argument("--scenarios", default="",
                    help="Comma-separated prefix filter, e.g. 'low,medium_02'")
     p.add_argument("--dry-run", action="store_true",

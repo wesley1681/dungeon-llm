@@ -6,8 +6,8 @@ in the application modules. The single place to pick a model is start_llama_serv
 (see its $selectedModel) — it always writes _server_config.json, and this
 module just reads that file and turns it into the concrete
 {backend, base_url, model, api_key} agents need. Run the ps1 script before
-starting the game, even when picking "ollama:..." (it writes the config file
-instantly without launching anything).
+starting the game; DeepSeek mode writes the config file without launching a
+local server.
 """
 import json
 import pathlib
@@ -23,7 +23,7 @@ DEEPSEEK_DEFAULT = {
 }
 
 # _server_config.json's "backend" value -> which wire protocol backend.py uses.
-_DISPATCH = {"ollama": "ollama", "llamacpp": "openai", "deepseek": "openai"}
+_DISPATCH = {"llamacpp": "openai", "deepseek": "openai"}
 
 
 class BackendConfigError(RuntimeError):
@@ -33,19 +33,19 @@ class BackendConfigError(RuntimeError):
 def resolve() -> dict:
     """Return {backend, base_url, model, api_key} from _server_config.json.
 
-    backend is normalized to "ollama" | "openai" (what backend.py dispatches on).
+    backend is normalized to "openai" (the protocol used by backend.py).
     """
     if not _SERVER_CONFIG_PATH.exists():
         raise BackendConfigError(
             f"找不到 {_SERVER_CONFIG_PATH.name}，請先執行 start_llama_server.ps1 選擇模型"
-            "（選 Ollama 或 DeepSeek 也要跑一次，它只會寫設定檔、不會啟動伺服器）。"
+            "（選 DeepSeek 也要跑一次，它只會寫設定檔、不會啟動伺服器）。"
         )
     cfg = json.loads(_SERVER_CONFIG_PATH.read_text(encoding="utf-8"))
     source = cfg.get("backend")
     if source not in _DISPATCH:
         raise BackendConfigError(
             f"{_SERVER_CONFIG_PATH.name} 的 backend 欄位無效：{source!r}"
-            "（合法值：ollama / llamacpp / deepseek，重跑 start_llama_server.ps1 修正）"
+            "（合法值：llamacpp / deepseek，重跑 start_llama_server.ps1 修正）"
         )
 
     api_key = None
