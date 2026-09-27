@@ -1,9 +1,9 @@
-"""Combat view helpers for the desktop application.
+"""Combat view helpers for the Tkinter graphical user interface.
 
 The narrative game's combat is fully mechanical (engine/combat.py); the human's
 turn is solicited via a `CombatPrompt` and answered with a COMMAND STRING that
 `combat_policy._parse_command` parses. This module turns the combat state into
-(a) a structured payload the desktop UI can render, (b) a battlefield image, and
+(a) a structured payload the GUI can render, (b) a battlefield image, and
 (c) synthesises the command string from a UI selection (skill + target/cell) so
 the whole thing rides the existing text-command input path (no new game seam).
 
@@ -33,7 +33,7 @@ _SMALL_FONT = _load_font(11)
 
 # ── (a) structured payload ─────────────────────────────────────────────────────
 def combat_view_state(actor, ctx, world_state) -> dict:
-    """Structured snapshot for the desktop combat view, from the acting human's
+    """Structured snapshot for the GUI combat view, from the acting human's
     perspective. `ctx` is the engine CombatContext (has enemies/allies/resources)."""
     ws = world_state
     def _row(cid, team):

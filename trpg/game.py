@@ -1,4 +1,4 @@
-"""Core game engine used by the desktop application."""
+"""Core game flow used by the graphical application."""
 import json
 import queue
 import threading
@@ -158,7 +158,7 @@ class GameSession:
 
         # Conversation resolution pipeline (focused LLM stages: decide_check →
         # arrange_events → judge_completion). Built from tag_agent's connection so
-        # no extra wiring through the desktop bootstrap. Inert if tag_agent is a stub.
+        # no extra wiring through the GUI bootstrap. Inert if tag_agent is a stub.
         self.dialogue = DialogueDirector.from_agent(tag_agent, world_state)
 
         self._events    : queue.Queue = queue.Queue()
@@ -208,7 +208,7 @@ class GameSession:
     # ── Public API ────────────────────────────────────────────────────────────
 
     # Meta-commands that toggle 旁白 rather than becoming a game action. Defined
-    # once here so all desktop input routes get the same toggle for free.
+    # once here so all GUI input routes get the same toggle for free.
     _NARRATION_CMDS = {"/旁白", "/narration", "/narr", "旁白"}
 
     def submit_player_input(self, text: str) -> None:

@@ -1,4 +1,4 @@
-"""Build the ready-to-run GameSession used by the desktop application."""
+"""Build the ready-to-run GameSession used by the graphical application."""
 import os
 import sys
 

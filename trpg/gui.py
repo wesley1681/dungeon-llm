@@ -1,10 +1,10 @@
-"""Desktop (tkinter) application for the narrative dungeon game.
+"""Tkinter graphical user interface for the narrative dungeon game.
 
 The GameSession runs on its own thread while this app polls its event queue from
 the Tk main loop. Narration appears in a scrolling transcript, and combat uses a
 battlefield image with native skill buttons.
 
-Run:  python -m trpg.desktop
+Run:  python -m trpg.gui
 """
 from __future__ import annotations
 import sys
@@ -14,7 +14,7 @@ from tkinter import ttk, scrolledtext, messagebox
 
 from PIL import ImageTk
 
-from . import desktop_combat
+from . import gui_combat
 from .llm import config as llm_config
 from .scenarios.dungeon import OPENING_SCENE
 from .game import (
@@ -28,7 +28,7 @@ _BATTLE_PX = 560       # battlefield image side (px)
 _MELEE_FONT = ("Microsoft JhengHei", 11)
 _MONO_FONT = ("Consolas", 10)
 
-# Combat trace log (repo root, overwritten each launch). The desktop transcript
+# Combat trace log (repo root, overwritten each launch). The GUI transcript
 # is in-memory only; this file provides the details needed to diagnose a fight —
 # it records the full roster (team / attitude / position / HP / driving policy),
 # every round, every action, so a bug ("civilian dragged into the fight", "ally
@@ -40,7 +40,7 @@ _LOG_PATH = pathlib.Path(__file__).resolve().parent.parent / "desktop_game_log.t
 _DEDICATED = {"end", "move", "dodge", "hide", "disengage"}
 
 
-class DesktopApp(tk.Tk):
+class GameGUI(tk.Tk):
     def __init__(self, state: dict):
         super().__init__()
         self.title("⚔ 地下城探索：失竊的護符")
@@ -157,7 +157,7 @@ class DesktopApp(tk.Tk):
             self._prompt("explore")
         elif isinstance(ev, CombatPrompt):
             if ev.ctx is not None:
-                self._combat_view = desktop_combat.combat_view_state(
+                self._combat_view = gui_combat.combat_view_state(
                     ev.kaine, ev.ctx, self.world_state)
             self._show_combat()
             self._prompt("combat")
@@ -178,7 +178,7 @@ class DesktopApp(tk.Tk):
             self._awaiting = None
 
     def _handle_stream(self, ev: StreamChunk):
-        if ev.thinking:                    # desktop view hides chain-of-thought
+        if ev.thinking:                    # GUI hides chain-of-thought
             return
         src = ev.source
         if src in ("gm", "narrate"):
@@ -305,7 +305,7 @@ class DesktopApp(tk.Tk):
 
     def _redraw_battlefield(self):
         actor_id = self._combat_view["actor_id"] if self._combat_view else "kaine"
-        img, transform = desktop_combat.render_battlefield(
+        img, transform = gui_combat.render_battlefield(
             self.world_state, actor_id, px=_BATTLE_PX)
         self._transform = transform
         self._bf_photo = ImageTk.PhotoImage(img)
@@ -348,14 +348,14 @@ class DesktopApp(tk.Tk):
         kind = sk["target_kind"]
         cv = self._combat_view
         if kind == "none":
-            self._submit(desktop_combat.command_for(sk))
+            self._submit(gui_combat.command_for(sk))
         elif kind in ("multi_enemy", "multi_ally"):
             pool = cv["enemies"] if "enemy" in kind else cv["allies"]
-            self._submit(desktop_combat.command_for(sk, target_id=",".join(pool.keys())))
+            self._submit(gui_combat.command_for(sk, target_id=",".join(pool.keys())))
         elif kind in ("enemy", "ally"):
             pool = cv["enemies"] if kind == "enemy" else cv["allies"]
             if len(pool) == 1:
-                self._submit(desktop_combat.command_for(sk, target_id=next(iter(pool))))
+                self._submit(gui_combat.command_for(sk, target_id=next(iter(pool))))
             else:
                 self._pending_skill = sk
                 self._aim = kind
@@ -374,14 +374,14 @@ class DesktopApp(tk.Tk):
         sk = self._pending_skill
         if self._aim == "point":
             self._cancel_aim()
-            self._submit(desktop_combat.command_for(sk, cell=(mx, my)))
+            self._submit(gui_combat.command_for(sk, cell=(mx, my)))
         else:   # enemy / ally — snap to the nearest matching combatant
             pool = (self._combat_view["enemies"] if self._aim == "enemy"
                     else self._combat_view["allies"])
             tid = self._nearest(mx, my, pool)
             if tid:
                 self._cancel_aim()
-                self._submit(desktop_combat.command_for(sk, target_id=tid))
+                self._submit(gui_combat.command_for(sk, target_id=tid))
             else:
                 self.aim_hint.config(text="沒點到目標，再點一次靠近目標的位置")
 
@@ -431,7 +431,7 @@ def main():
     except SystemExit:
         _fatal("後端連線失敗。請先執行 start_llama_server.ps1 選擇模型／啟動伺服器。")
         return
-    DesktopApp(state).mainloop()
+    GameGUI(state).mainloop()
 
 
 if __name__ == "__main__":

@@ -1,10 +1,10 @@
-"""Launch the desktop application with ``python -m trpg``."""
+"""Launch the graphical application with ``python -m trpg``."""
 
 
 def main() -> None:
-    from .desktop import main as desktop_main
+    from .gui import main as gui_main
 
-    desktop_main()
+    gui_main()
 
 
 if __name__ == "__main__":
