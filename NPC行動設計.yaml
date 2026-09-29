@@ -1,0 +1,404 @@
+#
+# 這份檔案目前只供設計、討論與人工維護，不會由遊戲程式讀取。
+# `id` 使用穩定的英文名稱；顯示文字、規則說明與未決事項使用中文。
+
+document:
+  version: "0.1"
+  purpose: 記錄可辨識行動的 Jev 題型、候選選項與後續遊戲行為
+  runtime_loaded: false
+
+conventions:
+  player_action_path: player_actions[{action_index}]
+  principles:
+    - Jev 只判斷玩家表達的意圖及其指向，不判斷行動是否合法或是否成功。
+    - 能以「Choice 加 none」同時判斷意圖與必要參數時，不另外建立 Noul。
+    - 同一句玩家行動可以同時命中多個不同的行動問題。
+    - Choice 一次只選一個候選；需要複數目標時必須另行設計。
+    - 遊戲程式在執行前重新驗證位置、持有關係、狀態與其他前置條件。
+  none_option:
+    id: none
+    name: 無符合選項
+    meaning: 玩家沒有表達此行動，或沒有明確指向任何有效候選。
+    future_split:
+      - id: not_applicable
+        meaning: 玩家沒有表達此行動。
+      - id: unspecified
+        meaning: 玩家表達了此行動，但沒有說明必要目標。
+
+candidate_sources:
+  room_characters:
+    description: 與行動者位於同一房間的其他角色
+    excludes:
+      - actor
+  recruitable_room_characters:
+    description: 與行動者位於同一房間、且規則允許招募的角色
+    excludes:
+      - actor
+  actor_inventory:
+    description: 行動者目前完整持有的物品
+  other_character_inventories:
+    description: 同房間其他角色目前持有的物品，並保留物品與持有者的關係
+  room_objects:
+    description: 房間內可被指向的物件
+  pickupable_room_objects:
+    description: 房間內規則允許拾取的物品
+  locked_room_objects:
+    description: 房間內目前處於上鎖狀態的物件
+  actor_unlock_tools:
+    description: 行動者持有、可能用於解鎖的鑰匙或工具
+
+actions:
+  - id: talk
+    name: 對話
+    status: draft
+    description: 明確表示要與某名角色交談
+    questions:
+      - id: target
+        type: choice
+        instructions: >-
+          `player_actions[{action_index}]` 明確表示要與哪一名角色交談？
+          若不是對話行動，或沒有明確符合的角色，選擇 `none`。
+        candidates:
+          source: room_characters
+          include_none: true
+    behavior:
+      required_answers: [target]
+      result: 開始與目標角色的對話流程
+      validations:
+        - 目標仍與行動者位於同一房間
+        - 目標目前可以交談
+
+  - id: give
+    name: 給予
+    status: draft
+    description: 將自身持有的一件完整物品交給另一名角色
+    questions:
+      - id: recipient
+        type: choice
+        instructions: >-
+          `player_actions[{action_index}]` 明確表示要將物品交給哪一名角色？
+          若不是給予行動，或沒有明確符合的接收者，選擇 `none`。
+        candidates:
+          source: room_characters
+          include_none: true
+      - id: item
+        type: choice
+        instructions: >-
+          `player_actions[{action_index}]` 明確表示要給予哪一件物品？
+          若不是給予行動，或沒有明確符合的自身物品，選擇 `none`。
+        candidates:
+          source: actor_inventory
+          include_none: true
+    behavior:
+      required_answers: [recipient, item]
+      result: 將物品從行動者背包完整轉移至接收者背包
+      validations:
+        - 接收者仍與行動者位於同一房間
+        - 行動者仍持有該物品
+        - 物品允許轉移
+    limitations:
+      - 暫時不支援部分數量贈予
+      - 暫時不支援一次給予多件物品
+
+  - id: confiscate
+    name: 沒收
+    status: draft
+    description: 強制取走另一名角色持有的特定物品
+    questions:
+      - id: target
+        type: choice
+        instructions: >-
+          `player_actions[{action_index}]` 明確表示要沒收哪一名角色的物品？
+          若不是沒收行動，或沒有明確符合的角色，選擇 `none`。
+        candidates:
+          source: room_characters
+          include_none: true
+      - id: item
+        type: choice
+        instructions: >-
+          `player_actions[{action_index}]` 明確表示要沒收哪一件物品？
+          從同房間其他角色持有的物品中選擇；若沒有明確符合的物品，選擇 `none`。
+        candidates:
+          source: other_character_inventories
+          include_none: true
+    behavior:
+      required_answers: [target, item]
+      result: 嘗試將指定物品從目標轉移給行動者
+      validations:
+        - 目標仍與行動者位於同一房間
+        - 選定物品仍由選定目標持有
+        - 依遊戲規則判定目標是否反抗及行動是否成功
+    open_questions:
+      - 沒收是否直接成功，或會先觸發交涉、檢定或戰鬥？
+
+  - id: detain
+    name: 拘留
+    status: draft
+    description: 明確表示要逮捕、限制或拘留某名角色
+    questions:
+      - id: target
+        type: choice
+        instructions: >-
+          `player_actions[{action_index}]` 明確表示要拘留哪一名角色？
+          若不是拘留行動，或沒有明確符合的角色，選擇 `none`。
+        candidates:
+          source: room_characters
+          include_none: true
+    behavior:
+      required_answers: [target]
+      result: 嘗試使目標進入被拘留或受限制狀態
+      validations:
+        - 目標仍與行動者位於同一房間
+        - 依遊戲規則判定目標是否反抗及行動是否成功
+    open_questions:
+      - 被拘留狀態對移動、對話與戰鬥有何限制？
+
+  - id: drag
+    name: 拖走
+    status: draft
+    description: 強行拖曳、搬運或帶走某名角色
+    questions:
+      - id: target
+        type: choice
+        instructions: >-
+          `player_actions[{action_index}]` 明確表示要強行帶走哪一名角色？
+          若不是拖走行動，或沒有明確符合的角色，選擇 `none`。
+        candidates:
+          source: room_characters
+          include_none: true
+    behavior:
+      required_answers: [target]
+      result: 嘗試使目標隨行動者一起移動
+      validations:
+        - 目標仍與行動者位於同一房間
+        - 依力量、狀態及反抗情形判定是否成功
+    open_questions:
+      - 是否必須先拘留、制服或使目標失去行動能力？
+      - 目的地要由同一句話判定，還是等下一次移動行動？
+
+  - id: follow
+    name: 跟隨
+    status: draft
+    description: 行動者明確表示要跟隨某名角色移動
+    questions:
+      - id: target
+        type: choice
+        instructions: >-
+          `player_actions[{action_index}]` 明確表示要跟隨哪一名角色？
+          若不是跟隨行動，或沒有明確符合的角色，選擇 `none`。
+        candidates:
+          source: room_characters
+          include_none: true
+    behavior:
+      required_answers: [target]
+      result: 建立行動者跟隨目標的移動關係
+      does_not_do:
+        - 不自動改變行動者陣營
+        - 不自動將行動者視為目標隊友
+    open_questions:
+      - 跟隨者是否參與目標遭遇的戰鬥？
+      - 哪些事件會中止跟隨狀態？
+
+  - id: recruit
+    name: 招募對方
+    status: draft
+    description: 邀請另一名角色加入行動者所屬隊伍
+    questions:
+      - id: target
+        type: choice
+        instructions: >-
+          `player_actions[{action_index}]` 明確表示要邀請哪一名角色加入自己的隊伍？
+          若不是招募行動，或沒有明確符合的角色，選擇 `none`。
+        candidates:
+          source: recruitable_room_characters
+          include_none: true
+    behavior:
+      required_answers: [target]
+      result: 嘗試使目標加入行動者隊伍並成為隊友
+      validations:
+        - 目標仍與行動者位於同一房間
+        - 目標是否同意加入
+    open_questions:
+      - 招募成功後是否立即加入玩家可控制角色列表？
+      - 招募角色是否自動參與戰鬥？
+
+  - id: join_party
+    name: 加入對方隊伍
+    status: proposed
+    description: 行動者要求加入另一名角色所屬的隊伍
+    questions:
+      - id: target
+        type: choice
+        instructions: >-
+          `player_actions[{action_index}]` 明確表示想加入哪一名角色所屬的隊伍？
+          若不是加入對方隊伍的行動，或沒有明確符合的角色，選擇 `none`。
+        candidates:
+          source: room_characters
+          include_none: true
+    behavior:
+      required_answers: [target]
+      result: 嘗試使行動者加入目標所屬隊伍
+      validations:
+        - 目標仍與行動者位於同一房間
+        - 目標或其隊伍是否同意
+    open_questions:
+      - 玩家角色是否真的允許改變所屬隊伍或陣營？
+
+  - id: travel
+    name: 移動
+    status: draft
+    description: 明確表示現在要向東、南、西或北移動
+    questions:
+      - id: direction
+        type: choice
+        instructions: >-
+          `player_actions[{action_index}]` 明確表示現在要往哪個方向移動？
+          若不是立即移動，或沒有明確方向，選擇 `none`。
+        candidates:
+          options:
+            - {id: north, name: 北}
+            - {id: south, name: 南}
+            - {id: east, name: 東}
+            - {id: west, name: 西}
+          include_none: true
+    behavior:
+      required_answers: [direction]
+      result: 嘗試沿指定方向前往相鄰地點
+      validations:
+        - 該方向存在可通行出口
+        - 行動者目前可以移動
+    limitations:
+      - 暫時只接受東、南、西、北四個方向
+
+  - id: pickup
+    name: 拾取
+    status: draft
+    description: 從周遭拾起一件物品
+    questions:
+      - id: item
+        type: choice
+        instructions: >-
+          `player_actions[{action_index}]` 明確表示要拾起哪一件周遭物品？
+          若不是拾取行動，或沒有明確符合的物品，選擇 `none`。
+        candidates:
+          source: pickupable_room_objects
+          include_none: true
+    behavior:
+      required_answers: [item]
+      result: 將物品從房間移入行動者背包
+      validations:
+        - 物品仍在房間內
+        - 物品允許被拾取
+        - 行動者有能力攜帶該物品
+    limitations:
+      - 暫時一次只拾取一件物品
+
+  - id: use
+    name: 使用
+    status: draft
+    description: 使用或消耗一件自身持有的物品
+    questions:
+      - id: item
+        type: choice
+        instructions: >-
+          `player_actions[{action_index}]` 明確表示要使用哪一件自身物品？
+          若不是使用行動，或沒有明確符合的物品，選擇 `none`。
+        candidates:
+          source: actor_inventory
+          include_none: true
+      - id: target
+        type: choice
+        required: false
+        instructions: >-
+          `player_actions[{action_index}]` 明確表示要把所使用的物品作用在哪個目標上？
+          若該物品不需要目標，或沒有明確符合的目標，選擇 `none`。
+        candidates:
+          sources:
+            - room_characters
+            - room_objects
+          include_none: true
+    behavior:
+      required_answers: [item]
+      optional_answers: [target]
+      result: 依物品規則使用或消耗物品，並在適用時作用於目標
+      validations:
+        - 行動者仍持有該物品
+        - 物品目前可以使用
+        - 選定目標符合該物品的作用條件
+
+  - id: unlock
+    name: 開鎖
+    status: draft
+    description: 解鎖或強行打開一個上鎖物件
+    questions:
+      - id: target
+        type: choice
+        instructions: >-
+          `player_actions[{action_index}]` 明確表示要解鎖哪一個物件？
+          若不是開鎖行動，或沒有明確符合的上鎖物件，選擇 `none`。
+        candidates:
+          source: locked_room_objects
+          include_none: true
+      - id: tool
+        type: choice
+        required: false
+        instructions: >-
+          `player_actions[{action_index}]` 明確表示要使用哪一件鑰匙或工具開鎖？
+          若沒有指定工具，或沒有明確符合的工具，選擇 `none`。
+        candidates:
+          source: actor_unlock_tools
+          include_none: true
+    behavior:
+      required_answers: [target]
+      optional_answers: [tool]
+      result: 嘗試解除目標的上鎖狀態
+      validations:
+        - 目標仍在房間內且仍然上鎖
+        - 選定工具適用於該目標，或規則允許徒手強行開鎖
+    open_questions:
+      - 未指定工具時，預設為徒手、撬鎖，還是要求玩家補充？
+
+  - id: search
+    name: 觀察／搜索
+    status: draft
+    description: 主動觀察、檢查、調查或搜索周遭環境
+    questions:
+      - id: requested
+        type: noul
+        instructions: >-
+          `player_actions[{action_index}]` 是否明確表示現在要主動觀察、檢查、調查或搜索周遭環境？
+          單純描述自己看見的事物、提及先前搜索或假設要搜索，皆判定為否。
+    behavior:
+      required_answers: [requested]
+      threshold_required: true
+      result: 進行環境搜索並揭露規則允許發現的資訊
+    open_questions:
+      - 是否要把房間搜索、人物搜索與特定物件檢查拆成不同問題？
+
+  - id: attack
+    name: 發起攻擊
+    status: draft
+    description: 主動對某名角色發起攻擊
+    questions:
+      - id: target
+        type: choice
+        instructions: >-
+          `player_actions[{action_index}]` 明確表示要攻擊哪一名角色？
+          若不是立即發起攻擊，或沒有明確符合的角色，選擇 `none`。
+        candidates:
+          source: room_characters
+          include_none: true
+    behavior:
+      required_answers: [target]
+      result: 對指定目標發起攻擊，並在需要時進入戰鬥流程
+      validations:
+        - 目標仍與行動者位於同一房間
+        - 行動者目前具有攻擊能力
+    open_questions:
+      - 是否需要在探索階段一併解析武器或攻擊方式？
+
+document_open_questions:
+  - "`none` 是否需要正式拆成 `not_applicable` 與 `unspecified`？"
+  - 一句話包含同類行動的多個目標時，應拆句、逐候選 Noul，還是拒絕執行？
+  - 哪些 Choice 應包含不可執行但被玩家明確提及的候選，以便回報精確錯誤？
+  - 行動問題是否只處理玩家，或同一份規格也要套用到 NPC 行動？

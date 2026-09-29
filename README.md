@@ -20,6 +20,16 @@ py -3.13 -m venv gemma-env
 
 ## 啟動
 
+### Jev 行動意圖判定
+
+探索階段的玩家行動意圖由 TypeSafe Jev 判定。啟動遊戲前設定 API key：
+
+```powershell
+$env:TYPESAFE_API_KEY = "你的 TypeSafe API key"
+```
+
+Jev 的 `state` 只包含本回合的 `player_actions`；它目前只回傳各種行動意圖的機率與門檻判定，尚未連接角色、物品、方向、合法性或遊戲機制處理。GM、NPC 與其他生成任務仍使用下方設定的本機 GGUF 或 DeepSeek。
+
 ### 本機 GGUF
 
 在 `start_llama_server.py` 設定模型：
