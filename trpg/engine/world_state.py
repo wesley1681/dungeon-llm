@@ -39,13 +39,19 @@ class WorldState:
     quests: dict = field(default_factory=dict)   # str → Quest
     party_ids: list = field(default_factory=lambda: ["kaine", "thor"])
     # Characters currently moving with the party (spatial). Includes the
-    # active PCs AND any silent followers (e.g. RECRUIT'd civilians).
+    # active PCs AND any followers. Membership here only means "moves with the
+    # party"; follow-only NPCs do not automatically enter combat.
+    combat_party_ids: list = field(default_factory=list)
+    # NPC party members that participate in combat. Active PCs are represented
+    # by pc_ids and do not need to be duplicated here.
+    follow_targets: dict = field(default_factory=dict)
+    # follower_id -> player character id. The current map moves as one party,
+    # but retaining the relationship makes FOLLOW/JOIN_PARTY explicit.
     pc_ids: list = field(default_factory=lambda: ["thor", "kaine"])
     # Subset of party that actively takes turns — exploration / conversation /
     # combat initiative. Order is iteration order (Thor first, 凱恩 last so the
-    # human reacts to Thor's remark). Recruited NPCs are in party_ids but
-    # NOT here — they walk along silently. A future "promote" mechanism would
-    # add a follower to this list.
+    # human reacts to Thor's remark). Following/joined NPCs stay out of pc_ids,
+    # so they do not gain exploration dialogue turns.
     narrative_log: list = field(default_factory=list)
     # Each entry: {"speaker": str, "text": str, "room_id": str|None, "present": list[str]}
     # speaker is a char_id, or "gm", or "system".
@@ -94,6 +100,10 @@ class WorldState:
     def is_party_ally(self, char_id: str) -> bool:
         """True for PCs and NPCs currently following the party."""
         return char_id in self.party_ids
+
+    def is_combat_ally(self, char_id: str) -> bool:
+        """True for active PCs and joined NPCs that participate in combat."""
+        return char_id in self.pc_ids or char_id in self.combat_party_ids
 
     def speaker_label(self, speaker: str) -> str:
         """Display label for a speaker key (for rendering log lines)."""

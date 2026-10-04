@@ -145,14 +145,15 @@ def _find_npc(key: str, ws: WorldState) -> tuple[str | None, object]:
 
 
 def _active_pcs_in_room(ws: WorldState, room) -> list[str]:
-    """ws.pc_ids filtered to alive members actually present in `room`.
+    """Active PCs and combat-enabled NPC party members present in `room`.
 
     Original PCs (is_npc=False) move with the party implicitly — always present
-    if alive. NPCs in pc_ids (only after a future promote-to-pc mechanism)
-    must also appear in room.npc_ids. Recruited followers (in party_ids but
-    NOT in pc_ids) are excluded — they don't roll initiative."""
+    if alive. Follow-only NPCs are excluded; joined NPCs in combat_party_ids
+    roll initiative without gaining exploration dialogue turns."""
     result: list[str] = []
-    for cid in ws.pc_ids:
+    for cid in list(ws.pc_ids) + list(ws.combat_party_ids):
+        if cid in result:
+            continue
         c = ws.characters.get(cid)
         if not c or not c.is_alive():
             continue
@@ -227,13 +228,15 @@ def _dispatch(tag: str, args: str, ws: WorldState) -> str:
 
     if tag == "UNLOCK":
         # Format: [UNLOCK: <char_id> <target_name> <stat>]
-        # stat: DEX = lockpick (original DC), STR = brute force (DC+3)
+        # stat: only DEX or STR; both use the object's original DC.
         parts = args.split(maxsplit=2)
         if len(parts) < 2:
             return f"無效 UNLOCK 格式（需要：角色ID 目標名稱 [屬性]）：{args}"
         char_id    = parts[0]
         target_name = parts[1]
         stat       = parts[2].upper() if len(parts) == 3 else "DEX"
+        if stat not in {"STR", "DEX"}:
+            return f"無效 UNLOCK 屬性（只允許 STR 或 DEX）：{stat}"
         char = _find_char(char_id, ws)
         if not char:
             return f"找不到角色：{char_id}"
@@ -252,9 +255,7 @@ def _dispatch(tag: str, args: str, ws: WorldState) -> str:
                 item.opened = True
                 names = "、".join(c.name if hasattr(c, "name") else str(c) for c in item.loot) or "空的"
                 return f"{item.name} 已解鎖，{char.name} 打開後發現：{names}"
-            # DC depends on approach
-            _DC_PENALTY = {"STR": 3}
-            dc = item.lock_dc + _DC_PENALTY.get(stat, 0)
+            dc = item.lock_dc
             success, total = combat.make_saving_throw(char, stat, dc)
             if not success:
                 return f"{char.name} 解鎖失敗（{stat} {total} vs DC{dc}）——{item.name} 依然緊閉"
@@ -413,20 +414,22 @@ def _dispatch(tag: str, args: str, ws: WorldState) -> str:
                 recipient.weapons.append(w)
                 return f"{giver.name} 把 {w.name} 交給 {recipient.name}"
 
-        # 2. Try consumables (transfer 1 unit; merge into recipient's existing stack)
-        for c in giver.consumables:
+        # 2. Try consumables (transfer the complete stack; no partial giving)
+        for c in list(giver.consumables):
             if c.name == item_name and c.quantity > 0:
-                c.quantity -= 1
+                giver.consumables.remove(c)
                 existing = recipient.get_consumable(item_name)
                 if existing:
-                    existing.quantity += 1
+                    existing.quantity += c.quantity
                 else:
-                    from ..engine.items import Consumable
-                    new_c = Consumable(c.name, 1, c.effect_type, c.effect_value)
-                    recipient.consumables.append(new_c)
-                # Clean up empty stack on giver
-                if c.quantity <= 0:
-                    giver.consumables.remove(c)
+                    recipient.consumables.append(c)
+                return f"{giver.name} 把 {item_name}×{c.quantity} 全部交給 {recipient.name}"
+
+        # 3. Try non-combat gear (whole item transfer)
+        for i, item in enumerate(giver.gear):
+            if str(item) == item_name:
+                giver.gear.pop(i)
+                recipient.gear.append(item)
                 return f"{giver.name} 把 {item_name} 交給 {recipient.name}"
 
         return f"{giver.name} 身上沒有「{item_name}」"
@@ -528,6 +531,9 @@ def _dispatch(tag: str, args: str, ws: WorldState) -> str:
         # Betrayal: attacking a follower instantly removes them from the party
         if npc_id in ws.party_ids:
             ws.party_ids.remove(npc_id)
+            if npc_id in ws.combat_party_ids:
+                ws.combat_party_ids.remove(npc_id)
+            ws.follow_targets.pop(npc_id, None)
             agent = _npc_agent_registry.get(npc_id) if _npc_agent_registry else None
             if agent is not None:
                 agent.in_party = False
@@ -547,6 +553,14 @@ def _dispatch(tag: str, args: str, ws: WorldState) -> str:
             room.npc_ids.remove(npc_id)
         if ws.combat and ws.combat.active and npc_id in ws.combat.initiative_order:
             ws.combat.initiative_order.remove(npc_id)
+        if npc_id in ws.party_ids:
+            ws.party_ids.remove(npc_id)
+        if npc_id in ws.combat_party_ids:
+            ws.combat_party_ids.remove(npc_id)
+        ws.follow_targets.pop(npc_id, None)
+        agent = _npc_agent_registry.get(npc_id) if _npc_agent_registry else None
+        if agent is not None:
+            agent.in_party = False
         return f"{char.name} 逃跑離開了"
 
     if tag == "SEARCH":

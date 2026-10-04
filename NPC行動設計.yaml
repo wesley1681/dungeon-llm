@@ -30,10 +30,8 @@ candidate_sources:
     description: 與行動者位於同一房間的其他角色
     excludes:
       - actor
-  recruitable_room_characters:
-    description: 與行動者位於同一房間、且規則允許招募的角色
-    excludes:
-      - actor
+  room_player_characters:
+    description: 與行動者位於同一房間的玩家角色
   actor_inventory:
     description: 行動者目前完整持有的物品
   other_character_inventories:
@@ -44,9 +42,6 @@ candidate_sources:
     description: 房間內規則允許拾取的物品
   locked_room_objects:
     description: 房間內目前處於上鎖狀態的物件
-  actor_unlock_tools:
-    description: 行動者持有、可能用於解鎖的鑰匙或工具
-
 actions:
   - id: talk
     name: 對話
@@ -179,7 +174,7 @@ actions:
   - id: follow
     name: 跟隨
     status: draft
-    description: 行動者明確表示要跟隨某名角色移動
+    description: 行動者明確表示要跟隨某名玩家角色移動，但不加入戰鬥
     questions:
       - id: target
         type: choice
@@ -187,62 +182,32 @@ actions:
           `player_actions[{action_index}]` 明確表示要跟隨哪一名角色？
           若不是跟隨行動，或沒有明確符合的角色，選擇 `none`。
         candidates:
-          source: room_characters
+          source: room_player_characters
           include_none: true
     behavior:
       required_answers: [target]
-      result: 建立行動者跟隨目標的移動關係
-      does_not_do:
-        - 不自動改變行動者陣營
-        - 不自動將行動者視為目標隊友
-    open_questions:
-      - 跟隨者是否參與目標遭遇的戰鬥？
-      - 哪些事件會中止跟隨狀態？
-
-  - id: recruit
-    name: 招募對方
-    status: draft
-    description: 邀請另一名角色加入行動者所屬隊伍
-    questions:
-      - id: target
-        type: choice
-        instructions: >-
-          `player_actions[{action_index}]` 明確表示要邀請哪一名角色加入自己的隊伍？
-          若不是招募行動，或沒有明確符合的角色，選擇 `none`。
-        candidates:
-          source: recruitable_room_characters
-          include_none: true
-    behavior:
-      required_answers: [target]
-      result: 嘗試使目標加入行動者隊伍並成為隊友
-      validations:
-        - 目標仍與行動者位於同一房間
-        - 目標是否同意加入
-    open_questions:
-      - 招募成功後是否立即加入玩家可控制角色列表？
-      - 招募角色是否自動參與戰鬥？
+      result: 行動者跟隨目標玩家移動
+      participates_in_combat: false
 
   - id: join_party
-    name: 加入對方隊伍
-    status: proposed
-    description: 行動者要求加入另一名角色所屬的隊伍
+    name: 加入隊伍
+    status: draft
+    description: 行動者選擇加入某名玩家角色的隊伍，跟隨其移動並參與戰鬥
     questions:
       - id: target
         type: choice
         instructions: >-
-          `player_actions[{action_index}]` 明確表示想加入哪一名角色所屬的隊伍？
-          若不是加入對方隊伍的行動，或沒有明確符合的角色，選擇 `none`。
+          `player_actions[{action_index}]` 明確表示想加入哪一名玩家角色的隊伍？
+          若不是加入隊伍的行動，或沒有明確符合的玩家角色，選擇 `none`。
         candidates:
-          source: room_characters
+          source: room_player_characters
           include_none: true
     behavior:
       required_answers: [target]
-      result: 嘗試使行動者加入目標所屬隊伍
+      result: 行動者加入目標玩家的隊伍，之後跟隨目標移動
+      participates_in_combat: true
       validations:
         - 目標仍與行動者位於同一房間
-        - 目標或其隊伍是否同意
-    open_questions:
-      - 玩家角色是否真的允許改變所屬隊伍或陣營？
 
   - id: travel
     name: 移動
@@ -329,7 +294,7 @@ actions:
   - id: unlock
     name: 開鎖
     status: draft
-    description: 解鎖或強行打開一個上鎖物件
+    description: 選擇力量或敏捷進行難度檢定，嘗試打開一個上鎖物件
     questions:
       - id: target
         type: choice
@@ -339,24 +304,28 @@ actions:
         candidates:
           source: locked_room_objects
           include_none: true
-      - id: tool
+      - id: method
         type: choice
-        required: false
+        required: true
         instructions: >-
-          `player_actions[{action_index}]` 明確表示要使用哪一件鑰匙或工具開鎖？
-          若沒有指定工具，或沒有明確符合的工具，選擇 `none`。
+          `player_actions[{action_index}]` 明確表示要使用力量還是敏捷開鎖？
+          若沒有明確指定力量或敏捷，選擇 `none`。
         candidates:
-          source: actor_unlock_tools
+          options:
+            - {id: strength, name: 使用力量開鎖}
+            - {id: dexterity, name: 使用敏捷開鎖}
           include_none: true
     behavior:
-      required_answers: [target]
-      optional_answers: [tool]
-      result: 嘗試解除目標的上鎖狀態
+      required_answers: [target, method]
+      check:
+        strength: 使用行動者的力量進行難度檢定
+        dexterity: 使用行動者的敏捷進行難度檢定
+      outcomes:
+        success: 解除目標的上鎖狀態
+        failure: 目標維持上鎖狀態
       validations:
         - 目標仍在房間內且仍然上鎖
-        - 選定工具適用於該目標，或規則允許徒手強行開鎖
-    open_questions:
-      - 未指定工具時，預設為徒手、撬鎖，還是要求玩家補充？
+      additional_consequences: none
 
   - id: search
     name: 觀察／搜索
@@ -372,8 +341,7 @@ actions:
       required_answers: [requested]
       threshold_required: true
       result: 進行環境搜索並揭露規則允許發現的資訊
-    open_questions:
-      - 是否要把房間搜索、人物搜索與特定物件檢查拆成不同問題？
+      scope: 不細分目標，統一處理整體環境觀察
 
   - id: attack
     name: 發起攻擊
@@ -391,11 +359,12 @@ actions:
     behavior:
       required_answers: [target]
       result: 對指定目標發起攻擊，並在需要時進入戰鬥流程
+      does_not_parse:
+        - 武器
+        - 攻擊方式
       validations:
         - 目標仍與行動者位於同一房間
         - 行動者目前具有攻擊能力
-    open_questions:
-      - 是否需要在探索階段一併解析武器或攻擊方式？
 
 document_open_questions:
   - "`none` 是否需要正式拆成 `not_applicable` 與 `unspecified`？"

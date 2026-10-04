@@ -148,3 +148,6 @@ trpg/
 ├── sandbox/             # 獨立戰鬥沙盒
 └── scenarios/           # 地下城、角色原型與怪物資料
 ```
+
+#Debug
+1. tag_agent_context.json : call jev時，jev看到的上下文 + 問題

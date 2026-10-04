@@ -15,6 +15,7 @@ from .engine.combat_policy import CombatPolicy, HeuristicCombatPolicy, HumanInpu
 from .engine.quests import check_quest_progress, objective_progress_str
 from .engine.status import tick_status_effects
 from .llm.tag_parser import execute_all_tags, set_npc_agent_registry
+from .llm.action_executor import execute_action_commands
 from .llm.dialogue_flow import DialogueDirector, CheckResult
 
 
@@ -196,8 +197,9 @@ class GameSession:
         for cid, agent in self.npc_agents.items():
             self.controllers[cid] = LLMNpcController(agent, self._emit)
 
-        # TagAgent still receives raw action strings (it's stateless and doesn't read log).
-        self._tag_actions: list[str] = []
+        # Each pending action retains its canonical actor id. TagAgent sends the
+        # whole batch to Jev once and returns Python-built structured commands.
+        self._tag_actions: list[dict[str, str]] = []
 
         # 旁白（GM narration）toggle — single source of truth. When False, the GM's
         # exploration prose and combat flavour are skipped entirely (no LLM call);
@@ -318,14 +320,14 @@ class GameSession:
             events.clear()
 
     def _alive_party(self) -> dict[str, str]:
-        """All alive party members (human PCs + follower NPCs).
+        """Alive party members that actually participate in combat.
 
         Used as the target pool for hostile NPC turns and for the GameOver
         wipe check at the party level.
         """
         ws = self.world_state
         return {cid: c.name for cid, c in ws.characters.items()
-                if c.is_alive() and ws.is_party_ally(cid)}
+                if c.is_alive() and ws.is_combat_ally(cid)}
 
     def _last_gm_narration(self) -> str:
         """Most recent GM narration entry — used as scene context for conversation."""
@@ -354,11 +356,22 @@ class GameSession:
         ws = self.world_state
 
         # ── TagAgent ─────────────────────────────────────────────────────────
-        tag_raw = self.tag_agent.generate_tags(
-            self._tag_actions,
-            on_chunk=lambda c, thinking=False: self._emit(StreamChunk("tag", c, thinking)),
-        )
-        ok, errors = execute_all_tags(tag_raw, ws, log_to_narrative=True)
+        def tag_chunk(c, thinking=False):
+            self._emit(StreamChunk("tag", c, thinking))
+
+        if hasattr(self.tag_agent, "generate_commands"):
+            commands = self.tag_agent.generate_commands(
+                self._tag_actions, on_chunk=tag_chunk,
+            )
+            ok, errors = execute_action_commands(
+                commands, ws, log_to_narrative=True,
+            )
+        else:
+            # Compatibility for old/stub agents used by peripheral clients.
+            tag_raw = self.tag_agent.generate_tags(
+                self._tag_actions, on_chunk=tag_chunk,
+            )
+            ok, errors = execute_all_tags(tag_raw, ws, log_to_narrative=True)
         self._emit(TagResult(ok, errors))
         self._check_quests()
 
@@ -406,10 +419,10 @@ class GameSession:
         # ── PC turns ──────────────────────────────────────────────────────────
         # Iterate ws.pc_ids in order. Each controller decides how to fill the
         # slot (LLM PC streams generated text, HumanController emits
-        # ExplorationPrompt and blocks for input). Followers — recruited NPCs
-        # in party_ids but NOT in pc_ids — are silent automatically.
+        # ExplorationPrompt and blocks for input). Following/joined NPCs in
+        # party_ids but NOT in pc_ids are silent automatically.
         prior_remarks: dict[str, str] = {}
-        tag_actions: list[str] = []
+        tag_actions: list[dict[str, str]] = []
         for cid in ws.pc_ids:
             char = ws.characters.get(cid)
             ctrl = self.controllers.get(cid)
@@ -426,7 +439,7 @@ class GameSession:
             ws.log_event(cid, output.text)
             ws.event_log.append(f"{char.name}：{output.text}")
             prior_remarks[char.name] = output.text
-            tag_actions.append(f"{char.name}：{output.text}")
+            tag_actions.append({"actor_id": cid, "text": output.text})
         self._tag_actions = tag_actions
         return False, False
 
@@ -458,6 +471,9 @@ class GameSession:
                     c = ws.characters.get(npc_id)
                     if c and c.is_npc and not c.is_alive():
                         ws.party_ids.remove(npc_id)
+                        if npc_id in ws.combat_party_ids:
+                            ws.combat_party_ids.remove(npc_id)
+                        ws.follow_targets.pop(npc_id, None)
                         agent = self.npc_agents.get(npc_id)
                         if agent is not None:
                             agent.in_party = False
@@ -548,6 +564,9 @@ class GameSession:
                 c = ws.characters.get(npc_id)
                 if c and c.is_npc and not c.is_alive():
                     ws.party_ids.remove(npc_id)
+                    if npc_id in ws.combat_party_ids:
+                        ws.combat_party_ids.remove(npc_id)
+                    ws.follow_targets.pop(npc_id, None)
                     agent = self.npc_agents.get(npc_id)
                     if agent is not None:
                         agent.in_party = False
@@ -608,6 +627,9 @@ class GameSession:
         self.world_state.log_event("system", summary)
         if cid in self.world_state.party_ids:
             self.world_state.party_ids.remove(cid)
+            if cid in self.world_state.combat_party_ids:
+                self.world_state.combat_party_ids.remove(cid)
+            self.world_state.follow_targets.pop(cid, None)
             agent = self.npc_agents.get(cid)
             if agent is not None:
                 agent.in_party = False
@@ -774,10 +796,12 @@ class GameSession:
             if npc_agent.recruit_decision == "join":
                 if npc_id not in ws.party_ids:
                     ws.party_ids.append(npc_id)
-                    npc_agent.in_party = True
-                    note = f"（{npc_char.name} 加入了隊伍）"
-                    ws.log_event("system", note)
-                    self._emit(StreamChunk("npc_talk", f"\n{note}\n", actor="系統"))
+                if npc_id not in ws.combat_party_ids:
+                    ws.combat_party_ids.append(npc_id)
+                npc_agent.in_party = True
+                note = f"（{npc_char.name} 加入了隊伍）"
+                ws.log_event("system", note)
+                self._emit(StreamChunk("npc_talk", f"\n{note}\n", actor="系統"))
             elif npc_agent.recruit_decision == "decline":
                 note = f"（{npc_char.name} 婉拒了邀請）"
                 ws.log_event("system", note)
