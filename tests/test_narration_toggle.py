@@ -35,7 +35,7 @@ def _session(gm=None):
     npc_agents = build_npc_agents(ws, model="stub", base_url="stub", backend="stub")
     session = GameSession(
         world_state=ws, gm=gm or _RecordingGM(), tag_agent=_StubTagAgent(),
-        thor_agent=object(), npc_agents=npc_agents,
+        player_agents={}, npc_agents=npc_agents,
     )
     session.controllers["thor"] = ActorController()   # silent — no LLM
     assert isinstance(session.controllers["kaine"], HumanController)

@@ -22,7 +22,7 @@ def _session():
     npc_agents = build_npc_agents(ws, model="stub", base_url="stub", backend="stub")
     session = GameSession(
         world_state=ws, gm=object(), tag_agent=_StubTagAgent(),
-        thor_agent=object(), npc_agents=npc_agents,
+        player_agents={}, npc_agents=npc_agents,
     )
     session.controllers["thor"] = ActorController()
     for cid in npc_agents:

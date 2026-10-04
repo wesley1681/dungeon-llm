@@ -39,7 +39,7 @@ def _build_session():
         world_state=ws,
         gm=object(),                        # not touched on the leave path
         tag_agent=_StubTagAgent(),
-        thor_agent=object(),                # wrapped in a controller we overwrite
+        player_agents={},
         npc_agents={"civilian": _StubNpcAgent()},  # ditto
     )
     # Silence the two LLM-driven slots: base ActorController is silent by default

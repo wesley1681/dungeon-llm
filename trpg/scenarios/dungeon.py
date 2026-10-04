@@ -4,9 +4,10 @@ from ..engine.world_state import WorldState
 from ..engine.dungeon_map import DungeonMap, Room
 from ..engine.quests import Quest
 from ..llm.npc_agent import NpcAgent
+from ..llm.player_agent import PlayerAgent
 
 OPENING_SCENE = (
-    "你們是一對受僱的冒險者，任務是從地精手中奪回小鎮鎮長的護身符。"
+    "你受僱前來冒險，任務是從地精手中奪回小鎮鎮長的護身符。"
     "線索指向鎮外廢棄的石造地下城。\n\n"
     "火把的光芒在潮濕的石壁上搖曳，眼前是一條向下延伸的台階走廊，"
     "空氣中瀰漫著霉味和隱約的腐臭氣息。某處傳來地精粗嘎的笑聲。"
@@ -50,15 +51,57 @@ CIVILIAN_TACTICS_GENERAL = """## 平常行為原則（探索、對話時適用�
 """
 
 CIVILIAN_TACTICS_COMBAT = """## 戰鬥行為原則（戰鬥中 sub-action 決策時適用）
-- 你不會打架、沒武器：**主動退到後排**（「我躲到索爾後面」），讓位置變遠離敵人
+- 你不會打架、沒武器：**主動退到隊伍後排**，讓位置遠離敵人
 - 被近戰敵人追上時：用閃避動作（「我抱頭蹲下」「我躲開」）撐到隊友幫忙
 - HP < 50% 直接 <FLEE>
 """
 
 
+def _configure_character_roster(characters: list[Character], dungeon_map: DungeonMap):
+    """Derive every runtime character index from enabled Character objects."""
+    active = [character for character in characters if character.enabled]
+    character_ids = [character.id for character in active]
+    if any(not character_id for character_id in character_ids):
+        raise ValueError("所有啟用的場景角色都必須設定 id")
+    if len(set(character_ids)) != len(character_ids):
+        raise ValueError("場景角色 id 不可重複")
+
+    for room in dungeon_map.rooms.values():
+        room.npc_ids.clear()
+
+    character_map = {character.id: character for character in active}
+    for character in active:
+        if character.controller_type == "npc" and not character.is_npc:
+            raise ValueError(f"NPC 控制角色 {character.id} 必須設定 is_npc=True")
+        if character.controller_type in {"human", "llm_player"} and character.is_npc:
+            raise ValueError(f"玩家控制角色 {character.id} 不可設定 is_npc=True")
+        if not character.starting_room_id:
+            continue
+        if character.starting_room_id not in dungeon_map.rooms:
+            raise ValueError(
+                f"角色 {character.id} 的初始房間不存在：{character.starting_room_id}"
+            )
+        if not character.is_npc:
+            raise ValueError(f"非 NPC 角色 {character.id} 不應設定 starting_room_id")
+        dungeon_map.rooms[character.starting_room_id].npc_ids.append(character.id)
+
+    pc_ids = [
+        character.id for character in sorted(
+            active, key=lambda character: character.turn_order,
+        )
+        if character.controller_type in {"human", "llm_player"}
+    ]
+    party_ids = [character.id for character in active if character.starts_in_party]
+    return character_map, pc_ids, party_ids
+
+
 def build_world_state() -> WorldState:
+    # Character is the scenario roster's single source of truth. To remove a
+    # character from the runtime, change only that character's enabled to False.
     # ── 玩家角色 ────────────────────────────────────────────────────────────────
     kaine = Character(
+        id="kaine", enabled=True, controller_type="human",
+        starts_in_party=True, turn_order=20,
         name="凱恩", race="人類", class_="盜賊", level=3,
         stats=Stats(STR=14, DEX=16, CON=12, INT=14, WIS=12, CHA=10),
         hp=22, max_hp=22, ac=14,
@@ -90,6 +133,12 @@ def build_world_state() -> WorldState:
                               # base-class (archetype_id="") abilities are included.
 
     thor = Character(
+        id="thor", enabled=True, controller_type="llm_player",
+        starts_in_party=True, turn_order=10,
+        agent_personality=THOR_PERSONALITY,
+        agent_tactics=THOR_TACTICS_GENERAL,
+        agent_combat_tactics=THOR_TACTICS_COMBAT,
+        agent_options={"temperature": 0.9, "num_predict": 150},
         name="索爾", race="人類", class_="戰士", level=3,
         stats=Stats(STR=17, DEX=12, CON=15, INT=9, WIS=10, CHA=11),
         hp=31, max_hp=31, ac=16,
@@ -105,6 +154,13 @@ def build_world_state() -> WorldState:
 
     # ── NPC（個性、初始態度由 NpcAgent 控制；attitude=0 即敵意）─────────────────
     civilian = Character(
+        id=CIVILIAN_ID, enabled=True, controller_type="npc",
+        starting_room_id="entrance",
+        agent_personality=CIVILIAN_PERSONALITY,
+        agent_tactics=CIVILIAN_TACTICS_GENERAL,
+        agent_combat_tactics=CIVILIAN_TACTICS_COMBAT,
+        agent_secrets=CIVILIAN_SECRETS,
+        agent_reveal_threshold=3,
         name="老柯", race="人類", class_="平民", level=1,
         stats=Stats(STR=9, DEX=10, CON=10, INT=11, WIS=12, CHA=11),
         hp=6, max_hp=6, ac=10,
@@ -114,6 +170,9 @@ def build_world_state() -> WorldState:
     )
 
     goblin_1 = Character(
+        id="goblin_1", enabled=True, controller_type="npc",
+        starting_room_id="guard_room",
+        agent_personality=GOBLIN_GRUNT_PERSONALITY,
         name="地精甲", race="地精", class_="—", level=1,
         stats=Stats(STR=8, DEX=14, CON=10, INT=8, WIS=8, CHA=8),
         hp=7, max_hp=7, ac=13,
@@ -123,6 +182,9 @@ def build_world_state() -> WorldState:
     )
 
     goblin_2 = Character(
+        id="goblin_2", enabled=True, controller_type="npc",
+        starting_room_id="guard_room",
+        agent_personality=GOBLIN_GRUNT_PERSONALITY,
         name="地精乙", race="地精", class_="—", level=1,
         stats=Stats(STR=8, DEX=14, CON=10, INT=8, WIS=8, CHA=8),
         hp=7, max_hp=7, ac=13,
@@ -132,6 +194,9 @@ def build_world_state() -> WorldState:
     )
 
     goblin_3 = Character(
+        id="goblin_3", enabled=True, controller_type="npc",
+        starting_room_id="boss_chamber",
+        agent_personality=GOBLIN_ARCHER_PERSONALITY,
         name="地精丙", race="地精", class_="—", level=1,
         stats=Stats(STR=8, DEX=14, CON=10, INT=8, WIS=8, CHA=8),
         hp=5, max_hp=5, ac=12,
@@ -142,6 +207,9 @@ def build_world_state() -> WorldState:
     )
 
     goblin_boss = Character(
+        id="goblin_boss", enabled=True, controller_type="npc",
+        starting_room_id="boss_chamber",
+        agent_personality=GOBLIN_BOSS_PERSONALITY,
         name="地精頭目葛茲", race="地精", class_="—", level=3,
         stats=Stats(STR=13, DEX=14, CON=12, INT=10, WIS=9, CHA=12),
         hp=21, max_hp=21, ac=15,
@@ -154,6 +222,10 @@ def build_world_state() -> WorldState:
     )
 
     goblin_shaman = Character(
+        id="goblin_shaman", enabled=True, controller_type="npc",
+        starting_room_id="guard_room",
+        agent_personality=GOBLIN_SHAMAN_PERSONALITY,
+        agent_combat_reasoning=True,
         name="地精薩滿沃克", race="地精", class_="薩滿", level=3,
         stats=Stats(STR=8, DEX=12, CON=12, INT=10, WIS=16, CHA=9),
         hp=18, max_hp=18, ac=12,
@@ -178,7 +250,6 @@ def build_world_state() -> WorldState:
                     "角落裡縮著一個衣衫凌亂的中年男子，看起來嚇得不輕。"
                 ),
                 exits={"north": "guard_room"},
-                npc_ids=["civilian"],
                 cleared=True,
                 visited=True,
             ),
@@ -191,7 +262,6 @@ def build_world_state() -> WorldState:
                     "東邊有扇半開的木門，南邊是來時的走廊。"
                 ),
                 exits={"south": "entrance", "east": "storage_room"},
-                npc_ids=["goblin_1", "goblin_2", "goblin_shaman"],
                 loot=[
                     Consumable("治療藥水", 1, "heal", "2d4+2"),
                     # 守衛室的月光草明顯可見（散落在骨堆旁）
@@ -236,7 +306,6 @@ def build_world_state() -> WorldState:
                     "這裡只有南邊一條退路。"
                 ),
                 exits={"south": "storage_room"},
-                npc_ids=["goblin_boss", "goblin_3"],
                 loot=[
                     Consumable("護符", 1, "quest", ""),
                 ],
@@ -269,21 +338,27 @@ def build_world_state() -> WorldState:
         },
     )
 
+    roster = [
+        kaine, civilian, goblin_1, goblin_2, goblin_3,
+        goblin_boss, goblin_shaman#, thor,
+    ] # 可直接刪除角色
+    characters, pc_ids, party_ids = _configure_character_roster(roster, dungeon_map)
+    scenario_quests = [moonlight_quest]
+    quests = {
+        quest.id: quest
+        for quest in scenario_quests
+        if quest.giver_id in characters
+        and (quest.reward or {}).get("recipient_id", "kaine") in characters
+    }
+
     return WorldState(
-        characters={
-            "kaine":          kaine,
-            "thor":          thor,
-            "civilian":      civilian,
-            "goblin_1":      goblin_1,
-            "goblin_2":      goblin_2,
-            "goblin_3":      goblin_3,
-            "goblin_boss":   goblin_boss,
-            "goblin_shaman": goblin_shaman,
-        },
+        characters=characters,
         scene=OPENING_SCENE,
         dungeon_map=dungeon_map,
         scenario_name="地下城探索：失竊的護符",
-        quests={moonlight_quest.id: moonlight_quest},
+        quests=quests,
+        pc_ids=pc_ids,
+        party_ids=party_ids,
     )
 
 
@@ -323,37 +398,54 @@ GOBLIN_SHAMAN_PERSONALITY = (
 
 def build_npc_agents(world_state: WorldState, model: str,
                      base_url: str, backend: str, api_key: str = None) -> dict:
-    """Build all NPC agents for this scenario. Add new NPCs here only."""
-    def _agent(cid, personality, tactics="", combat_tactics="",
-               combat_reasoning=False,
-               secrets=None, reveal=3, quests=None):
-        return NpcAgent(
+    """Build NPC agents from the enabled Characters in the world state."""
+    agents = {}
+    for char_id, character in world_state.characters.items():
+        if character.controller_type != "npc":
+            continue
+        quests = [
+            quest for quest in world_state.quests.values()
+            if quest.giver_id == char_id
+        ]
+        agents[char_id] = NpcAgent(
             model=model,
-            char_id=cid,
-            character=world_state.characters[cid],
-            personality=personality,
-            tactics=tactics,
-            combat_tactics=combat_tactics,
-            combat_reasoning=combat_reasoning,
-            secrets=secrets,
-            reveal_threshold=reveal,
+            char_id=char_id,
+            character=character,
+            personality=character.agent_personality,
+            tactics=character.agent_tactics,
+            combat_tactics=character.agent_combat_tactics,
+            combat_reasoning=character.agent_combat_reasoning,
+            secrets=list(character.agent_secrets),
+            reveal_threshold=character.agent_reveal_threshold,
             quests=quests,
             world_state=world_state,
             base_url=base_url,
             backend=backend,
             api_key=api_key,
         )
-    civilian_quests = [q for q in world_state.quests.values() if q.giver_id == CIVILIAN_ID]
-    return {
-        CIVILIAN_ID:   _agent(CIVILIAN_ID, CIVILIAN_PERSONALITY,
-                              tactics=CIVILIAN_TACTICS_GENERAL,
-                              combat_tactics=CIVILIAN_TACTICS_COMBAT,
-                              secrets=CIVILIAN_SECRETS, reveal=3,
-                              quests=civilian_quests),
-        "goblin_1":      _agent("goblin_1",      GOBLIN_GRUNT_PERSONALITY),
-        "goblin_2":      _agent("goblin_2",      GOBLIN_GRUNT_PERSONALITY),
-        "goblin_3":      _agent("goblin_3",      GOBLIN_ARCHER_PERSONALITY),
-        "goblin_boss":   _agent("goblin_boss",   GOBLIN_BOSS_PERSONALITY),
-        "goblin_shaman": _agent("goblin_shaman", GOBLIN_SHAMAN_PERSONALITY,
-                                combat_reasoning=True),
-    }
+    return agents
+
+
+def build_player_agents(world_state: WorldState, model: str,
+                        base_url: str, backend: str, api_key: str = None) -> dict:
+    """Build all LLM-controlled player agents from Character configuration."""
+    agents = {}
+    for char_id, character in world_state.characters.items():
+        if character.controller_type != "llm_player":
+            continue
+        agents[char_id] = PlayerAgent(
+            model=model,
+            char_id=char_id,
+            character=character,
+            personality=character.agent_personality,
+            tactics=character.agent_tactics,
+            combat_tactics=character.agent_combat_tactics,
+            world_state=world_state,
+            think=character.agent_think,
+            show_thinking=character.agent_show_thinking,
+            options=dict(character.agent_options),
+            base_url=base_url,
+            backend=backend,
+            api_key=api_key,
+        )
+    return agents

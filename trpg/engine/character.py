@@ -32,6 +32,25 @@ class Character:
     hp: int
     max_hp: int
     ac: int
+    # ── Scenario/controller configuration ──────────────────────────────────
+    # These optional fields make a scenario Character the single source of
+    # truth for identity, initial placement, party membership, and LLM-agent
+    # behaviour. Engine/RL characters may leave them at their defaults.
+    id: str = ""
+    enabled: bool = True
+    controller_type: str = ""   # human / llm_player / npc; "" = engine-only
+    starting_room_id: str = ""
+    starts_in_party: bool = False
+    turn_order: int = 0
+    agent_personality: str = ""
+    agent_tactics: str = ""
+    agent_combat_tactics: str = ""
+    agent_combat_reasoning: bool = False
+    agent_secrets: list = field(default_factory=list)
+    agent_reveal_threshold: int = 3
+    agent_think: bool = False
+    agent_show_thinking: bool = False
+    agent_options: dict = field(default_factory=dict)
     spell_slots: dict = field(default_factory=dict)
     spellcasting_ability: str = ""                    # "INT"/"WIS"/"CHA"; "" = non-caster
     weapons: list = field(default_factory=list)       # list[Weapon]

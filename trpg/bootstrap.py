@@ -3,12 +3,10 @@ import os
 import sys
 
 from .scenarios.dungeon import (
-    build_world_state, build_npc_agents,
-    THOR_PERSONALITY, THOR_TACTICS_GENERAL, THOR_TACTICS_COMBAT,
+    build_world_state, build_npc_agents, build_player_agents,
 )
 from .llm.gm_agent import GMAgent
 from .llm.tag_agent import TagAgent
-from .llm.player_agent import PlayerAgent
 from .llm import config as llm_config
 from .rl.combat_model import load_combat_policy
 from .game import GameSession
@@ -20,11 +18,6 @@ GM_SHOW_THINKING = False
 GM_OPTIONS = {"temperature": 0.8, "num_predict": 2048, "repeat_penalty": 1.15}
 
 TAG_OPTIONS = {"temperature": 0.2, "num_predict": 200}
-
-THOR_THINK = False
-THOR_SHOW_THINKING = False
-THOR_OPTIONS = {"temperature": 0.9, "num_predict": 150}
-
 
 def init_game() -> dict:
     """Resolve the backend, build + start a GameSession.
@@ -43,14 +36,9 @@ def init_game() -> dict:
         tag_agent=TagAgent(model=model, world_state=world_state,
                            base_url=url, backend=bk,
                            options=TAG_OPTIONS, api_key=api_key),
-        thor_agent=PlayerAgent(model=model, char_id="thor",
-                               character=world_state.characters["thor"],
-                               personality=THOR_PERSONALITY,
-                               tactics=THOR_TACTICS_GENERAL,
-                               combat_tactics=THOR_TACTICS_COMBAT,
-                               world_state=world_state,
-                               think=THOR_THINK, show_thinking=THOR_SHOW_THINKING,
-                               options=THOR_OPTIONS, base_url=url, backend=bk, api_key=api_key),
+        player_agents=build_player_agents(
+            world_state, model, url, bk, api_key=api_key,
+        ),
         npc_agents=build_npc_agents(world_state, model, url, bk, api_key=api_key),
         default_combat_policy=load_combat_policy(),   # allies+monsters ← general model
     )

@@ -12,7 +12,6 @@ from tkinter import ttk, scrolledtext
 from PIL import ImageTk
 
 from . import gui_combat
-from .scenarios.dungeon import OPENING_SCENE
 from .game import (
     TagResult, StreamChunk, ActionResult, RoundStart, CombatStart, CombatEnd,
     ExplorationPrompt, CombatPrompt, ConversationPrompt, StatusMessage,
@@ -58,7 +57,14 @@ class GameGUI(tk.Tk):
 
         self._build_ui()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
-        self._append("你（凱恩）", OPENING_SCENE, "you")
+        human_id = next(
+            (
+                cid for cid, character in self.world_state.characters.items()
+                if character.controller_type == "human"
+            ),
+            "kaine",
+        )
+        self._append(f"你（{self._name(human_id)}）", self.world_state.scene, "you")
         self.after(_PUMP_MS, self._pump)
 
     # ── layout ────────────────────────────────────────────────────────────────
@@ -70,7 +76,7 @@ class GameGUI(tk.Tk):
             top, wrap="word", font=_MELEE_FONT, state="disabled",
             bg="#0d1117", fg="#d0d6de", insertbackground="#d0d6de", padx=8, pady=6)
         self.log.pack(fill="both", expand=True)
-        for tag, color in (("gm", "#e0c86a"), ("thor", "#6ab7ff"),
+        for tag, color in (("gm", "#e0c86a"), ("llm_player", "#6ab7ff"),
                            ("npc", "#9ad07a"), ("you", "#ff9a76"),
                            ("sys", "#8b93a1"), ("result", "#c0a0ff")):
             self.log.tag_config(tag, foreground=color)
@@ -179,8 +185,11 @@ class GameGUI(tk.Tk):
         src = ev.source
         if src in ("gm", "narrate"):
             speaker, tag = "GM", "gm"
-        elif src in ("thor", "pc_combat"):
-            speaker, tag = self._name(ev.actor) if ev.actor else "索爾", "thor"
+        elif src == "pc_combat" or (
+            src in self.world_state.characters
+            and self.world_state.characters[src].controller_type == "llm_player"
+        ):
+            speaker, tag = self._name(ev.actor or src), "llm_player"
         elif src in ("npc", "npc_talk"):
             speaker, tag = self._name(ev.actor) if ev.actor else "NPC", "npc"
         else:

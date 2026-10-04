@@ -146,14 +146,15 @@ def format_kaine_combat_info(kaine, ctx) -> str:
 # ── GameSession ───────────────────────────────────────────────────────────────
 
 class GameSession:
-    def __init__(self, world_state: WorldState, gm, tag_agent, thor_agent,
+    def __init__(self, world_state: WorldState, gm, tag_agent,
+                 player_agents: dict = None,
                  npc_agents: dict = None,
                  policies: dict[str, CombatPolicy] | None = None,
                  default_combat_policy: CombatPolicy | None = None):
         self.world_state = world_state
         self.gm          = gm
         self.tag_agent   = tag_agent
-        self.thor_agent  = thor_agent
+        self.player_agents = player_agents or {}
         self.npc_agents  = npc_agents or {}
         set_npc_agent_registry(self.npc_agents)
 
@@ -171,29 +172,38 @@ class GameSession:
         # front-ends wait forever (or leave their input widget disabled).
         self._pending_prompt = None
 
-        # Combat decisions go through a policy per character. 凱恩 (the human PC)
-        # gets the human-input policy. Every other combatant — allies AND monsters
+        # Combat decisions go through a policy per character. Human-controlled
+        # characters get a human-input policy. Every other combatant — allies AND monsters
         # — defaults to `default_combat_policy` (the trained general model, a
         # shared NeuralCombatPolicy) when provided, else the scripted heuristic.
         # An explicit per-char entry in `policies` still overrides both.
         self.policies: dict[str, CombatPolicy] = dict(policies or {})
         non_human = default_combat_policy or HeuristicCombatPolicy()
-        human_policy = HumanInputPolicy(
-            char_id="kaine",
-            prompt_fn=self._combat_prompt,
-            error_fn=self._combat_error,
-        )
+        human_ids = {
+            cid for cid, character in world_state.characters.items()
+            if character.controller_type == "human"
+        }
+        # Compatibility for engine/tests that create Characters without the
+        # scenario controller metadata.
+        if not human_ids and "kaine" in world_state.characters:
+            human_ids.add("kaine")
         for cid in world_state.characters:
-            if cid == "kaine":
-                self.policies.setdefault(cid, human_policy)
+            if cid in human_ids:
+                self.policies.setdefault(cid, HumanInputPolicy(
+                    char_id=cid,
+                    prompt_fn=self._combat_prompt,
+                    error_fn=self._combat_error,
+                ))
             else:
                 self.policies.setdefault(cid, non_human)
 
         from .llm.controllers import HumanController, LLMPlayerController, LLMNpcController
         self.controllers = {
-            "kaine": HumanController("kaine", self._get_input, self._emit),
-            "thor": LLMPlayerController(thor_agent, self._emit),
+            cid: HumanController(cid, self._get_input, self._emit)
+            for cid in human_ids
         }
+        for cid, agent in self.player_agents.items():
+            self.controllers[cid] = LLMPlayerController(agent, self._emit)
         for cid, agent in self.npc_agents.items():
             self.controllers[cid] = LLMNpcController(agent, self._emit)
 
