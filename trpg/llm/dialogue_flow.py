@@ -1,6 +1,6 @@
-"""Conversation resolution pipeline — focused LLM stages per round.
+"""Conversation resolution pipeline — focused model stages per round.
 
-Replaces the old single `generate_conversation_tags` classifier. Each LLM call
+Replaces the old single `generate_conversation_tags` classifier. Each model call
 stays focused on ONE job so tasks don't bleed together:
 
   1. decide_check     — 玩家輸入 → 要不要檢定？哪個(威嚇/欺瞞/說服)？誰？DC 多少？
@@ -26,12 +26,20 @@ event appliers, which reuse the existing tag_parser dispatchers.
 """
 from __future__ import annotations
 import json
+import math
 import pathlib
 from dataclasses import dataclass
+from typing import Any, Mapping
 
 from .backend import stream_chat
-from .social_dc_agent import SocialDcAgent
-from .log_render import render_script
+
+try:  # Tests can inject a fake client; runtime uses the installed SDK.
+    from typesafe_sdk import Choice, Noul, Score, TypeSafeClient
+except ImportError:  # pragma: no cover - only before dependencies are installed
+    Choice = None
+    Noul = None
+    Score = None
+    TypeSafeClient = None
 
 _DEBUG_DIR = pathlib.Path(__file__).parent.parent / "debug"
 
@@ -40,7 +48,25 @@ _ATTITUDE_LABELS = ["敵意", "戒備", "中立", "友好", "信任"]
 # ── Catalogs ──────────────────────────────────────────────────────────────────
 # The check catalog (all CHA-based today; extend here to add new skills/stats).
 CHECK_TYPES = ("威嚇", "欺瞞", "說服")
-_CHECK_EN = {"威嚇": "intimidate", "欺瞞": "deceive", "說服": "persuade"}
+_CHECK_FROM_CHOICE = {
+    "intimidate": "威嚇",
+    "deceive": "欺瞞",
+    "persuade": "說服",
+}
+_SOCIAL_CHECK_THRESHOLD = 0.80
+
+# Score levels run from least to most likely to work. Jev returns their
+# probability-weighted position, which code rounds to the nearest rubric level.
+_SOCIAL_EFFECTIVENESS_LEVELS = [
+    "幾乎不可能奏效：要求完全不可接受，謊言明顯荒謬，或威脅毫無可信度。",
+    "極難奏效：嚴重違反 NPC 的利益、信念或安全，且沒有足夠理由讓步。",
+    "很難奏效：NPC 必須承擔明顯損失或風險，說法也有重大弱點。",
+    "有明顯阻力但可能奏效：要求有代價，但理由、交換或手段具有一定份量。",
+    "合理且有機會奏效：要求大致合理，說法可信，NPC 的損失或風險有限。",
+    "很容易奏效：明顯符合 NPC 利益、說法高度可信，或威脅具體且可信。",
+    "幾乎必然奏效：NPC 幾乎沒有拒絕理由，接受是自然且低風險的選擇。",
+]
+_DC_BY_EFFECTIVENESS_LEVEL = (25, 20, 16, 14, 12, 10, 8)
 
 # Stage-2 (pre-response) event catalog, split by nature:
 #   non-quest — reveal/give/suggest_join are CONCESSIONS (only on a passed check);
@@ -95,19 +121,27 @@ def _first_json(text: str, opener: str):
 
 
 class DialogueDirector:
-    """Owns the three conversation-resolution LLM calls. Built from the same
+    """Owns the three conversation-resolution model stages. Built from the same
     connection info as the other agents (see DialogueDirector.from_agent)."""
 
     def __init__(self, model: str, base_url: str, backend: str, world_state,
-                 options: dict | None = None, api_key: str | None = None):
+                 options: dict | None = None, api_key: str | None = None,
+                 *, typesafe_api_key: str | None = None,
+                 typesafe_model: str = "jev-latest",
+                 social_check_threshold: float = _SOCIAL_CHECK_THRESHOLD,
+                 typesafe_client: Any | None = None):
         self.model      = model
         self.base_url   = base_url
         self.backend    = backend
         self.world_state = world_state
         self.options    = options or {}
         self.api_key    = api_key
-        # DC calibration stays single-source in the tuned SocialDcAgent.
-        self._dc_agent  = SocialDcAgent(model, base_url, backend, api_key=api_key)
+        self.typesafe_api_key = typesafe_api_key
+        self.typesafe_model = typesafe_model
+        self.social_check_threshold = float(social_check_threshold)
+        if not 0.0 <= self.social_check_threshold <= 1.0:
+            raise ValueError("social_check_threshold must be between 0 and 1")
+        self._typesafe_client = typesafe_client
 
     @classmethod
     def from_agent(cls, agent, world_state=None) -> "DialogueDirector":
@@ -122,6 +156,11 @@ class DialogueDirector:
                         else getattr(agent, "world_state", None),
             options=getattr(agent, "options", None),
             api_key=getattr(agent, "api_key", None),
+            typesafe_api_key=getattr(agent, "typesafe_api_key", None),
+            typesafe_model=getattr(agent, "typesafe_model", "jev-latest"),
+            social_check_threshold=getattr(
+                agent, "intent_threshold", _SOCIAL_CHECK_THRESHOLD),
+            typesafe_client=getattr(agent, "_typesafe_client", None),
         )
 
     def _ask(self, system: str, user: str, num_predict: int, temperature: float,
@@ -152,56 +191,196 @@ class DialogueDirector:
             result, encoding="utf-8", errors="replace")
         return result
 
-    # ── Stage 1 — 檢定判定 ────────────────────────────────────────────────────
-    _CHECK_SYSTEM = (
-        "你是 D&D 5e 對話裁判，只做一件事：判斷玩家這輪對 NPC 的發言，是否構成一個"
-        "需要擲骰的社交嘗試；若是，指出是哪一種、由哪位玩家發起。\n\n"
-        "## 對象 NPC\n{npc_brief}\n\n"
-        "## 三種社交檢定\n"
-        "威嚇 = 明確威脅、恐嚇、拔武器示威、帶暴力後果的命令\n"
-        "欺瞞 = 謊稱身份、捏造事實、欺騙\n"
-        "說服 = 懇求、勸說、要求對方做某件具體的事（含要求交出物品、加入隊伍、停止某行為）\n\n"
-        "## 玩家角色ID\n{pc_ids}\n\n"
-        "## 規則\n"
-        "- 只有玩家的話「直接針對該 NPC」且有成敗風險時才算檢定。\n"
-        "- 普通提問、寒暄、閒聊、回答、隊員之間交談 → 不是檢定。\n"
-        "- 僅口氣兇、催促、皺眉不算威嚇；威嚇要有明確威脅內容。\n"
-        "- 若玩家只是動手攻擊（已揮劍/出拳），那不是社交檢定 → 輸出 none。\n\n"
-        "## 輸出（只輸出一行 JSON，無其他文字）\n"
-        '{{"check": "威嚇"|"欺瞞"|"說服"|"none", "actor": "<玩家ID>"}}\n'
-        "不需檢定時 check 填 none、actor 留空字串。"
-    )
+    # ── Stage 1 — Jev 社交檢定判定 ────────────────────────────────────────────
 
-    def decide_check(self, player_text: str, npc, ws) -> CheckPlan:
-        """Stage 1: is a check needed? which? who? + DC (from SocialDcAgent)."""
-        pc_ids = "、".join(
-            f"{cid}＝{c.name}" for cid, c in ws.characters.items()
-            if not c.is_npc and c.is_alive()
-        )
-        system = self._CHECK_SYSTEM.format(
-            npc_brief=_npc_brief(npc), pc_ids=pc_ids or "kaine＝凱恩",
-        )
-        raw = self._ask(system, f"玩家發言：\n{player_text}",
-                        num_predict=40, temperature=0.1,
-                        debug_name="dialogue_check_context.json")
-        obj = _first_json(raw, "{") or {}
-        check = obj.get("check")
-        if check not in CHECK_TYPES:
-            return CheckPlan()   # no check
-        actor = obj.get("actor") or ""
-        if actor not in ws.characters or ws.characters[actor].is_npc:
-            actor = _default_actor(ws)
-        # DC via the tuned, repeat-penalty-aware SocialDcAgent (single source).
-        try:
-            dc = self._dc_agent.estimate(
-                social_type=_CHECK_EN[check], attempt_text=player_text,
-                personality=getattr(npc, "_personality", ""),
-                attitude=npc.attitude, attitude_label=_ATTITUDE_LABELS[npc.attitude],
-                conv_log_text=render_script(ws, getattr(npc, "char_id", "")),
+    @staticmethod
+    def _normalise_social_actions(player_actions, ws) -> list[dict[str, str]]:
+        """Accept the new structured input and retain string-call compatibility."""
+        if isinstance(player_actions, str):
+            actor_id = _default_actor(ws)
+            actor = ws.characters.get(actor_id)
+            return [{
+                "actor_id": actor_id,
+                "actor_name": actor.name if actor else actor_id,
+                "text": player_actions,
+            }]
+
+        actions: list[dict[str, str]] = []
+        for raw in player_actions or []:
+            if not isinstance(raw, Mapping):
+                continue
+            actor_id = str(raw.get("actor_id", ""))
+            actor = ws.characters.get(actor_id)
+            text = str(raw.get("text", "")).strip()
+            if actor is None or actor.is_npc or not actor.is_alive() or not text:
+                continue
+            actions.append({
+                "actor_id": actor_id,
+                "actor_name": actor.name,
+                "text": text,
+            })
+        return actions
+
+    @staticmethod
+    def _build_social_questions(actions: list[dict[str, str]]) -> dict[str, Any]:
+        if Noul is None or Choice is None or Score is None:
+            raise RuntimeError("缺少 typesafe-sdk；請先安裝 requirements.txt 中的依賴")
+
+        questions: dict[str, Any] = {}
+        for index, _action in enumerate(actions):
+            path = f"`player_actions[{index}].text`"
+            questions[f"social_{index}_required"] = Noul(
+                instructions=(
+                    f"{path} 是否直接對 `npc` 提出一項具有明確目的、且結果存在不確定性的"
+                    "社交嘗試？"
+                ),
+                criteria={
+                    "true": (
+                        "玩家正試圖用說服、欺瞞或威嚇，讓 NPC 採取行動、交出物品、"
+                        "提供非一般性情報，或改變決定。"
+                    ),
+                    "false": (
+                        "只是寒暄、閒聊、普通提問、陳述、回答、隊友間交談、沒有要求 NPC"
+                        " 做事，或已直接動手攻擊。僅語氣兇狠而沒有明確威脅也屬於 false。"
+                    ),
+                },
             )
-        except Exception:
-            dc = 12   # safe default DC on estimator failure
-        return CheckPlan(check=check, dc=dc, actor=actor)
+            # These two speculative questions run in the same request. Code uses
+            # them only when the Noul above clears the configured threshold.
+            questions[f"social_{index}_type"] = Choice(
+                instructions=(
+                    f"假設 {path} 構成社交檢定，選出玩家主要使用的手段。"
+                ),
+                criteria={
+                    "persuade": "以真誠請求、協商、交換利益或講道理使 NPC 願意配合。",
+                    "deceive": "以虛假身分、捏造事實、隱瞞關鍵資訊或誤導使 NPC 相信。",
+                    "intimidate": "以明確威脅、可信的暴力後果或強迫命令使 NPC 因恐懼服從。",
+                },
+            )
+            questions[f"social_{index}_effectiveness"] = Score(
+                instructions=(
+                    f"假設 {path} 構成社交檢定，評估它對目前 `npc` 有多容易奏效。"
+                    "不要考慮玩家的 CHA、技能加值、骰點或運氣。依手段考慮要求的利益與"
+                    "代價、謊言可信度或威脅可信度，並考慮 NPC 的個性、態度及"
+                    "`conversation_history` 中是否重複使用相同手段。"
+                ),
+                criteria=_SOCIAL_EFFECTIVENESS_LEVELS,
+            )
+        return questions
+
+    def _call_jev(self, state: dict[str, Any], questions: dict[str, Any]):
+        if self._typesafe_client is not None:
+            return self._typesafe_client.system_one(
+                state=state, questions=questions, model=self.typesafe_model)
+        if TypeSafeClient is None:
+            raise RuntimeError("缺少 typesafe-sdk；請先安裝 requirements.txt 中的依賴")
+        with TypeSafeClient(api_key=self.typesafe_api_key) as client:
+            return client.system_one(
+                state=state, questions=questions, model=self.typesafe_model)
+
+    @staticmethod
+    def _typed_answer(response, group: str, question_id: str):
+        answers = getattr(response, group, None)
+        if answers is not None and question_id in answers:
+            return answers[question_id]
+        answers = getattr(response, "answers", None)
+        if answers is None or question_id not in answers:
+            raise ValueError(f"Jev 回應缺少答案：{question_id}")
+        return answers[question_id]
+
+    @staticmethod
+    def _effectiveness_to_dc(score: float) -> int:
+        if not math.isfinite(score):
+            raise ValueError(f"Jev 回傳無效 Score：{score!r}")
+        level = max(0, min(
+            len(_DC_BY_EFFECTIVENESS_LEVEL) - 1,
+            int(math.floor(score + 0.5)),
+        ))
+        return _DC_BY_EFFECTIVENESS_LEVEL[level]
+
+    def decide_check(self, player_actions, npc, ws) -> CheckPlan:
+        """Use one Jev call to decide presence, type, actor, and DC rubric."""
+        actions = self._normalise_social_actions(player_actions, ws)
+        if not actions:
+            return CheckPlan()
+
+        state = {
+            "player_actions": actions,
+            "npc": {
+                "id": getattr(npc, "char_id", ""),
+                "name": getattr(getattr(npc, "char", None), "name", "NPC"),
+                "personality": getattr(npc, "_personality", ""),
+                "attitude": npc.attitude,
+                "attitude_label": _ATTITUDE_LABELS[npc.attitude],
+            },
+            "conversation_history": _prior_conversation_script(
+                ws, getattr(npc, "char_id", ""), actions),
+        }
+        questions = self._build_social_questions(actions)
+        (_DEBUG_DIR / "dialogue_check_context.json").write_text(
+            json.dumps({
+                "state": state,
+                "model": self.typesafe_model,
+                "questions": {
+                    question_id: {
+                        "type": question.type,
+                        "instructions": question.instructions,
+                        "criteria": question.criteria,
+                    }
+                    for question_id, question in questions.items()
+                },
+            }, ensure_ascii=False, indent=2),
+            encoding="utf-8", errors="replace",
+        )
+
+        try:
+            response = self._call_jev(state, questions)
+            candidates = []
+            debug_answers = {}
+            for index, action in enumerate(actions):
+                required_id = f"social_{index}_required"
+                type_id = f"social_{index}_type"
+                score_id = f"social_{index}_effectiveness"
+                required_answer = self._typed_answer(response, "nouls", required_id)
+                type_answer = self._typed_answer(response, "choices", type_id)
+                score_answer = self._typed_answer(response, "scores", score_id)
+                probability = float(required_answer.noul)
+                score = float(score_answer.score)
+                check = _CHECK_FROM_CHOICE.get(str(type_answer.choice))
+                debug_answers[str(index)] = {
+                    "required_probability": probability,
+                    "type": str(type_answer.choice),
+                    "type_confidence": float(type_answer.confidence),
+                    "effectiveness_score": score,
+                    "score_confidence": float(score_answer.confidence),
+                }
+                if probability >= self.social_check_threshold and check:
+                    candidates.append((probability, index, check, score, action))
+        except Exception as exc:
+            (_DEBUG_DIR / "dialogue_check_output.json").write_text(
+                json.dumps({
+                    "error": {"type": type(exc).__name__, "message": str(exc)}
+                }, ensure_ascii=False, indent=2),
+                encoding="utf-8", errors="replace",
+            )
+            return CheckPlan()
+
+        (_DEBUG_DIR / "dialogue_check_output.json").write_text(
+            json.dumps({
+                "model": getattr(response, "model", self.typesafe_model),
+                "threshold": self.social_check_threshold,
+                "answers": debug_answers,
+            }, ensure_ascii=False, indent=2),
+            encoding="utf-8", errors="replace",
+        )
+        if not candidates:
+            return CheckPlan()
+        _, _, check, score, action = max(candidates, key=lambda item: item[0])
+        return CheckPlan(
+            check=check,
+            dc=self._effectiveness_to_dc(score),
+            actor=action["actor_id"],
+        )
 
     # ── Stage 2 — 事件安排 ────────────────────────────────────────────────────
     _EVENT_SYSTEM = (
@@ -360,6 +539,25 @@ def _npc_items(npc) -> str:
     names += [f"{c.name}×{c.quantity}" for c in getattr(char, "consumables", [])
               if c.quantity > 0]
     return "\n".join(f"  {n}" for n in names) or "  （無）"
+
+
+def _prior_conversation_script(ws, npc_id: str,
+                               actions: list[dict[str, str]]) -> str:
+    """Render history without duplicating the current, already-logged PC lines."""
+    entries = list(ws.log_for(npc_id))
+    count = len(actions)
+    if count and len(entries) >= count:
+        tail = entries[-count:]
+        if all(
+            entry.get("speaker") == action["actor_id"]
+            and entry.get("text") == action["text"]
+            for entry, action in zip(tail, actions)
+        ):
+            entries = entries[:-count]
+    return "\n".join(
+        f"{ws.speaker_label(entry['speaker'])}：{entry['text']}"
+        for entry in entries
+    )
 
 
 def _default_actor(ws) -> str:

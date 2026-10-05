@@ -736,6 +736,7 @@ class GameSession:
             # ── Each PC takes a conversation turn (LLM may go silent, human
             #     blocks until input or "離開") ───────────────────────────────
             pc_lines: list[str] = []
+            pc_actions: list[dict[str, str]] = []
             for cid in ws.pc_ids:
                 char = ws.characters.get(cid)
                 ctrl = self.controllers.get(cid)
@@ -755,6 +756,11 @@ class GameSession:
                     continue
                 ws.log_event(cid, output.text)
                 pc_lines.append(f"{char.name}：{output.text}")
+                pc_actions.append({
+                    "actor_id": cid,
+                    "actor_name": char.name,
+                    "text": output.text,
+                })
 
             if not pc_lines:
                 # All PCs silent (rare — only happens when no human PC is
@@ -766,7 +772,7 @@ class GameSession:
             combined = "\n".join(pc_lines)
 
             # Stage 1: does this need a check? which / who / DC?
-            plan = self.dialogue.decide_check(combined, npc_agent, ws)
+            plan = self.dialogue.decide_check(pc_actions, npc_agent, ws)
             result = None
             if plan.check:
                 actor = ws.characters.get(plan.actor) or ws.characters.get("kaine")

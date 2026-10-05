@@ -1,9 +1,11 @@
 """Headless tests for the 3-stage conversation resolution pipeline.
 
 Covers the two game.py appliers (_apply_dialogue_events / _apply_quest_events)
-and the DialogueDirector parse+filter logic, all with stubbed LLM seams so no
-network is touched.
+and the DialogueDirector Jev/parse/filter logic, all with stubbed model seams so
+no network is touched.
 """
+from types import SimpleNamespace
+
 from trpg.scenarios.dungeon import build_world_state, build_npc_agents
 from trpg.game import GameSession
 from trpg.llm.controllers import ActorController, HumanController
@@ -136,13 +138,11 @@ def test_quest_event_bad_id_ignored():
     assert ws.quests["moonlight_grass"].status == "inactive"
 
 
-# ── DialogueDirector parse + filter (stubbed _ask / DC) ───────────────────────
+# ── DialogueDirector Jev + parse/filter seams ─────────────────────────────────
 
 def _director(ws, ask_returns):
-    """A director whose _ask returns canned text keyed by debug_name substring,
-    and whose DC is fixed."""
+    """A director whose remaining LLM stages return canned text."""
     d = DialogueDirector("m", "u", "b", ws)
-    d._dc_agent.estimate = lambda **kw: 13
     def fake_ask(system, user, num_predict, temperature, debug_name):
         for key, val in ask_returns.items():
             if key in debug_name:
@@ -152,19 +152,77 @@ def _director(ws, ask_returns):
     return d
 
 
-def test_decide_check_parses_and_defaults_actor():
+class _FakeSocialJevClient:
+    def __init__(self, *, required=0.95, check_type="persuade", score=3.0):
+        self.required = required
+        self.check_type = check_type
+        self.score = score
+        self.call_count = 0
+        self.last_state = None
+        self.last_questions = None
+
+    def system_one(self, *, state, questions, model):
+        self.call_count += 1
+        self.last_state = state
+        self.last_questions = questions
+        answers = {}
+        for question_id, question in questions.items():
+            if question.type == "noul":
+                answers[question_id] = SimpleNamespace(noul=self.required)
+            elif question.type == "choice":
+                answers[question_id] = SimpleNamespace(
+                    choice=self.check_type,
+                    confidence=0.96,
+                    probabilities={key: 0.0 for key in question.criteria},
+                )
+            else:
+                answers[question_id] = SimpleNamespace(
+                    score=self.score,
+                    confidence=0.94,
+                    probabilities={},
+                )
+        return SimpleNamespace(
+            model="jev-test",
+            answers=answers,
+            nouls={key: value for key, value in answers.items()
+                   if hasattr(value, "noul")},
+            choices={key: value for key, value in answers.items()
+                     if hasattr(value, "choice")},
+            scores={key: value for key, value in answers.items()
+                    if hasattr(value, "score")},
+        )
+
+
+def test_decide_check_uses_noul_choice_and_score_in_one_jev_call():
     _, ws, npc = _session()
-    d = _director(ws, {"check": '{"check": "說服", "actor": "kaine"}'})
-    plan = d.decide_check("我求你告訴我", npc["civilian"], ws)
-    assert plan.check == "說服" and plan.dc == 13 and plan.actor == "kaine"
+    client = _FakeSocialJevClient(
+        required=0.95, check_type="persuade", score=4.0)
+    d = DialogueDirector("m", "u", "b", ws, typesafe_client=client)
+    plan = d.decide_check(
+        [{"actor_id": "kaine", "text": "我求你告訴我"}],
+        npc["civilian"], ws,
+    )
 
-    # 'none' → no check
-    d2 = _director(ws, {"check": '{"check": "none", "actor": ""}'})
-    assert d2.decide_check("你好啊", npc["civilian"], ws).check is None
+    assert plan == CheckPlan(check="說服", dc=12, actor="kaine")
+    assert client.call_count == 1
+    assert {question.type for question in client.last_questions.values()} == {
+        "noul", "choice", "score",
+    }
+    required = client.last_questions["social_0_required"]
+    assert required.criteria["true"] and required.criteria["false"]
+    assert client.last_state["player_actions"][0]["actor_id"] == "kaine"
 
-    # bogus actor falls back to a valid PC
-    d3 = _director(ws, {"check": '{"check": "威嚇", "actor": "ghost"}'})
-    assert d3.decide_check("再不說砍了你", npc["civilian"], ws).actor == "kaine"
+
+def test_decide_check_noul_is_a_yes_no_gate_not_an_intensity():
+    _, ws, npc = _session()
+    client = _FakeSocialJevClient(
+        required=0.50, check_type="intimidate", score=6.0)
+    d = DialogueDirector("m", "u", "b", ws, typesafe_client=client)
+
+    plan = d.decide_check(
+        [{"actor_id": "kaine", "text": "你好啊"}], npc["civilian"], ws)
+
+    assert plan.check is None
 
 
 def test_arrange_events_filters_unknown_and_parses_array():
