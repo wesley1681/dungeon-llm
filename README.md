@@ -24,6 +24,8 @@ py -3.13 -m venv gemma-env
 
 探索階段的玩家行動意圖由 TypeSafe Jev 判定。啟動遊戲前設定 API key：
 
+開發或修改 Jev 判斷前，先閱讀 [Jev 請求速查手冊](docs/JEV_REQUEST_GUIDE.md)。
+
 ```powershell
 $env:TYPESAFE_API_KEY = "你的 TypeSafe API key"
 ```

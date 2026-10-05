@@ -25,7 +25,8 @@ models/general_selfplay/*
 !models/general_selfplay/strength_u0300.json
 
 # Docs / planning
-docs/
+docs/*
+!docs/JEV_REQUEST_GUIDE.md
 
 # IDE
 .vscode/
