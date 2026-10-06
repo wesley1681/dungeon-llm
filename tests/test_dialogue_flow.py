@@ -193,6 +193,28 @@ class _FakeSocialJevClient:
         )
 
 
+class _FakeNpcActionJevClient:
+    def __init__(self, probabilities=None, error=None):
+        self.probabilities = probabilities or {}
+        self.error = error
+        self.call_count = 0
+        self.last_state = None
+        self.last_questions = None
+
+    def system_one(self, *, state, questions, model):
+        self.call_count += 1
+        self.last_state = state
+        self.last_questions = questions
+        if self.error:
+            raise self.error
+        answers = {
+            question_id: SimpleNamespace(
+                noul=self.probabilities.get(question_id, 0.0))
+            for question_id in questions
+        }
+        return SimpleNamespace(model="jev-test", answers=answers, nouls=answers)
+
+
 def test_decide_check_uses_noul_choice_and_score_in_one_jev_call():
     _, ws, npc = _session()
     client = _FakeSocialJevClient(
@@ -223,6 +245,38 @@ def test_decide_check_noul_is_a_yes_no_gate_not_an_intensity():
         [{"actor_id": "kaine", "text": "你好啊"}], npc["civilian"], ws)
 
     assert plan.check is None
+
+
+def test_judge_npc_actions_uses_minimal_state_and_four_nouls():
+    _, ws, _ = _session()
+    client = _FakeNpcActionJevClient({
+        "give": 0.96,
+        "offer_quest": 0.88,
+    })
+    d = DialogueDirector("m", "u", "b", ws, typesafe_client=client)
+
+    actions = d.judge_npc_actions("這瓶藥給你，也請幫我找回女兒。")
+
+    assert actions == ["give", "offer_quest"]
+    assert client.call_count == 1
+    assert client.last_state == {
+        "npc_reply": {"text": "這瓶藥給你，也請幫我找回女兒。"}
+    }
+    assert set(client.last_questions) == {
+        "attack", "join", "give", "offer_quest",
+    }
+    assert {q.type for q in client.last_questions.values()} == {"noul"}
+
+
+def test_judge_npc_actions_derives_none_and_falls_back_safely():
+    _, ws, _ = _session()
+    quiet = _FakeNpcActionJevClient()
+    d = DialogueDirector("m", "u", "b", ws, typesafe_client=quiet)
+    assert d.judge_npc_actions("今天天氣不錯。") == ["none"]
+
+    broken = _FakeNpcActionJevClient(error=RuntimeError("offline"))
+    d2 = DialogueDirector("m", "u", "b", ws, typesafe_client=broken)
+    assert d2.judge_npc_actions("請跟我來。") == ["none"]
 
 
 def test_arrange_events_filters_unknown_and_parses_array():
@@ -309,11 +363,16 @@ class _StubNpcCtrl(ActorController):
 class _StubDirector:
     """Canned stage outputs — a guaranteed-success check (dc=0), a reveal, and a
     stage-2 quest accept — so the full pipeline path is exercised deterministically."""
+    def __init__(self):
+        self.npc_action_calls = []
     def decide_check(self, player_text, npc, ws):
         return CheckPlan(check="說服", dc=0, actor="kaine")
     def arrange_events(self, player_text, result, npc, ws):
         return [{"event": "reveal", "indices": [0]},
                 {"event": "quest_accept", "id": "moonlight_grass"}]
+    def judge_npc_actions(self, npc_text):
+        self.npc_action_calls.append(npc_text)
+        return ["none"]
     def judge_completion(self, player_text, npc_response, ws):
         return []
 
@@ -330,6 +389,10 @@ def test_run_conversation_chains_all_stages():
     outcome = session._run_conversation("civilian")
 
     assert not outcome.game_over
+    assert session.dialogue.npc_action_calls == [
+        "你是誰？",
+        "好…我告訴你守衛室的事，也接下你的請求。",
+    ]
     # Stage 1+2: dc=0 check always succeeds → reveal concession granted (sticky).
     assert civ._secrets[0] in civ.revealed
     # Stage 3: quest accepted from the NPC's reply.
@@ -357,6 +420,8 @@ class _GateFaithfulDirector:
                 and q.status == "inactive" and q.offered):
             return [{"event": "quest_accept", "id": "moonlight_grass"}]
         return []
+    def judge_npc_actions(self, npc_text):
+        return ["offer_quest"] if "月光草" in npc_text else ["none"]
     def judge_completion(self, player_text, npc_response, ws):
         return []
 

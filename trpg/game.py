@@ -726,6 +726,7 @@ class GameSession:
         # ── NPC opening ───────────────────────────────────────────────────────
         npc_text = npc_ctrl.take_npc_opening(npc_char)
         ws.log_event(npc_id, npc_text)
+        npc_agent.last_dialogue_actions = self.dialogue.judge_npc_actions(npc_text)
         # The offer is usually voiced HERE (the NPC's quest-offer rule fires on its
         # first utterance at 戒備+ attitude, which is the opening). Mark it now so the
         # player can accept on their very first reply — otherwise accept only unlocks
@@ -799,6 +800,7 @@ class GameSession:
             # ── NPC response ──────────────────────────────────────────────────
             npc_text = npc_ctrl.take_npc_response(npc_char)
             ws.log_event(npc_id, npc_text)
+            npc_agent.last_dialogue_actions = self.dialogue.judge_npc_actions(npc_text)
 
             # After the reply: (a) mark this NPC's quests as offered so accept
             # becomes available NEXT turn (structurally blocks same-turn accept);

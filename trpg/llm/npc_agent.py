@@ -160,6 +160,9 @@ class NpcAgent:
         self.pending_join_decision: bool = False        # one-shot: NPC must answer join/decline this turn
         self.recruit_decision: str = ""                 # "" / "join" / "decline" — parsed from this turn's output
         self.in_party: bool = False                     # mirror of (char_id in ws.party_ids)
+        # Coarse Jev classification of the most recent NPC utterance. Later
+        # stages resolve concrete objects and player consent before execution.
+        self.last_dialogue_actions: list[str] = ["none"]
 
     def _quest_section(self) -> str:
         parts: list[str] = []

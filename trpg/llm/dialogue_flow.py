@@ -7,7 +7,8 @@ stays focused on ONE job so tasks don't bleed together:
   2. arrange_events   — 玩家輸入 + 檢定結果 → 事件目錄挑觸發（reveal/give/suggest_join/
                         attitude/attack）＋ **條件加入** 玩家驅動的 quest_accept（任務已被
                         提出）/ quest_turnin（任務已完成）
-  3. judge_completion — 已承接(active)任務名稱+內容 + 玩家輸入 + NPC 回應 → 判定 quest_complete
+  3. judge_npc_actions — NPC 發言 → Jev 初步行動分類
+  4. judge_completion — 已承接(active)任務名稱+內容 + 玩家輸入 + NPC 回應 → 判定 quest_complete
 
 Checks and events are INDEPENDENT catalogs — NOT a 1:1 mapping. A single passed
 說服 can arrange 揭露情報 OR 物品轉移 OR 建議入夥; the arranger picks.
@@ -82,6 +83,18 @@ STAGE2_EVENTS = _NONQUEST_EVENTS + _STAGE2_QUEST_EVENTS
 # whose context is ONLY the accepted (active) quests — flexible persuade-type goals.
 _COMPLETE_EVENT = "quest_complete"
 
+# NPC reply classification is deliberately coarse. It answers only what kind
+# of action the NPC explicitly expressed; entity resolution and world-state
+# mutation belong to later stages. Actions are independent, so one reply may
+# trigger more than one Noul. "none" is derived by Python.
+NPC_ACTIONS = ("attack", "join", "give", "offer_quest")
+_NPC_ACTION_THRESHOLDS = {
+    "attack": 0.90,
+    "join": 0.80,
+    "give": 0.90,
+    "offer_quest": 0.80,
+}
+
 
 @dataclass
 class CheckPlan:
@@ -121,7 +134,7 @@ def _first_json(text: str, opener: str):
 
 
 class DialogueDirector:
-    """Owns the three conversation-resolution model stages. Built from the same
+    """Owns the conversation-resolution model stages. Built from the same
     connection info as the other agents (see DialogueDirector.from_agent)."""
 
     def __init__(self, model: str, base_url: str, backend: str, world_state,
@@ -383,6 +396,104 @@ class DialogueDirector:
         )
 
     # ── Stage 2 — 事件安排 ────────────────────────────────────────────────────
+    @staticmethod
+    def _build_npc_action_questions() -> dict[str, Any]:
+        if Noul is None:
+            raise RuntimeError("缺少 typesafe-sdk；請先安裝 requirements.txt 中的依賴")
+        return {
+            "attack": Noul(
+                instructions="`npc_reply.text` 是否表示 NPC 已經在這一刻開始攻擊？",
+                criteria={
+                    "true": "NPC 明確動手、發動攻擊，或宣告立即進入戰鬥。",
+                    "false": "只是生氣、辱罵、警告、拒絕，或威脅將來可能攻擊。",
+                },
+            ),
+            "join": Noul(
+                instructions="`npc_reply.text` 是否明確表示 NPC 想加入或跟隨玩家隊伍？",
+                criteria={
+                    "true": "NPC 明確提議加入、同行，或長期成為玩家隊伍的成員。",
+                    "false": "只是暫時幫忙、提供建議、交付任務，或沒有明確表示要加入隊伍。",
+                },
+            ),
+            "give": Noul(
+                instructions="`npc_reply.text` 是否表示 NPC 現在就要把物品交給玩家？",
+                criteria={
+                    "true": "NPC 明確完成贈與或交付，玩家現在取得某項物品。",
+                    "false": "只是答應以後給、提出交易、描述物品，或把物品當作未來報酬。",
+                },
+            ),
+            "offer_quest": Noul(
+                instructions=(
+                    "`npc_reply.text` 是否向玩家提出一項新的任務或委託，"
+                    "需要玩家決定是否接受？"
+                ),
+                criteria={
+                    "true": "NPC 明確請玩家完成某個目標或行動。",
+                    "false": "只是提及問題、提供背景、談論已有委託，或交付任務報酬。",
+                },
+            ),
+        }
+
+    def judge_npc_actions(self, npc_text: str) -> list[str]:
+        """Coarsely classify one NPC utterance with one Jev request."""
+        text = str(npc_text or "").strip()
+        if not text:
+            return ["none"]
+
+        state = {"npc_reply": {"text": text}}
+        questions = self._build_npc_action_questions()
+        (_DEBUG_DIR / "dialogue_npc_action_context.json").write_text(
+            json.dumps({
+                "state": state,
+                "model": self.typesafe_model,
+                "questions": {
+                    question_id: {
+                        "type": question.type,
+                        "instructions": question.instructions,
+                        "criteria": question.criteria,
+                    }
+                    for question_id, question in questions.items()
+                },
+            }, ensure_ascii=False, indent=2),
+            encoding="utf-8", errors="replace",
+        )
+
+        try:
+            response = self._call_jev(state, questions)
+            probabilities = {}
+            actions = []
+            for action in NPC_ACTIONS:
+                answer = self._typed_answer(response, "nouls", action)
+                probability = float(answer.noul)
+                if not math.isfinite(probability) or not 0.0 <= probability <= 1.0:
+                    raise ValueError(
+                        f"Jev 回傳無效 Noul：{action}={probability!r}")
+                probabilities[action] = probability
+                if probability >= _NPC_ACTION_THRESHOLDS[action]:
+                    actions.append(action)
+        except Exception as exc:
+            (_DEBUG_DIR / "dialogue_npc_action_output.json").write_text(
+                json.dumps({
+                    "error": {"type": type(exc).__name__, "message": str(exc)},
+                    "actions": ["none"],
+                }, ensure_ascii=False, indent=2),
+                encoding="utf-8", errors="replace",
+            )
+            return ["none"]
+
+        result = actions or ["none"]
+        (_DEBUG_DIR / "dialogue_npc_action_output.json").write_text(
+            json.dumps({
+                "model": getattr(response, "model", self.typesafe_model),
+                "thresholds": _NPC_ACTION_THRESHOLDS,
+                "probabilities": probabilities,
+                "actions": result,
+            }, ensure_ascii=False, indent=2),
+            encoding="utf-8", errors="replace",
+        )
+        return result
+
+    # ── Stage 2 — 事件安排 ───────────────────────────────────────────
     _EVENT_SYSTEM = (
         "你是 D&D 5e 對話結果編排者，只做一件事：看玩家發言與檢定結果，決定這輪要觸發"
         "哪些「事件」。可以是 0 個、1 個或多個（排列組合）。\n\n"
