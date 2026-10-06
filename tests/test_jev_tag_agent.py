@@ -128,7 +128,7 @@ def _agent(monkeypatch, *, choices=None, nouls=None, error=None):
     return agent, client, world
 
 
-def test_jev_receives_structured_actions_and_all_questions_in_one_request(monkeypatch):
+def test_jev_receives_structured_actions_and_gates_expensive_intents(monkeypatch):
     agent, client, _ = _agent(monkeypatch)
     actions = [{"actor_id": "kaine", "text": "我和守衛談話後往東走"}]
 
@@ -143,6 +143,12 @@ def test_jev_receives_structured_actions_and_all_questions_in_one_request(monkey
     assert client.last_model == "jev-latest"
     assert any(question.type == "choice" for question in client.last_questions.values())
     assert any(question.type == "noul" for question in client.last_questions.values())
+    assert "action_0_give_requested" in client.last_questions
+    assert "action_0_use_requested" in client.last_questions
+    assert "action_0_unlock_requested" in client.last_questions
+    assert "action_0_give_item" not in client.last_questions
+    assert "action_0_use_item" not in client.last_questions
+    assert "action_0_unlock_target" not in client.last_questions
     assert all("confiscate" not in qid for qid in client.last_questions)
     assert all("detain" not in qid and "drag" not in qid for qid in client.last_questions)
     assert judgment["model"] == "jev-test"
@@ -152,7 +158,7 @@ def test_jev_receives_structured_actions_and_all_questions_in_one_request(monkey
 def test_choice_answers_build_typed_commands_without_tag_strings(monkeypatch):
     choices = {
         "action_0_talk_target": "option_0",       # 守衛
-        "action_0_travel_direction": "option_2",  # east
+        "action_0_travel_direction": "option_0",  # east（唯一有效出口）
     }
     agent, client, _ = _agent(monkeypatch, choices=choices)
 
@@ -169,12 +175,13 @@ def test_choice_answers_build_typed_commands_without_tag_strings(monkeypatch):
 
 
 def test_give_requires_both_recipient_and_item_choices(monkeypatch):
-    agent, _, _ = _agent(
+    agent, client, _ = _agent(
         monkeypatch,
         choices={
             "action_0_give_recipient": "option_0",
             "action_0_give_item": "none",
         },
+        nouls={"action_0_give_requested": 0.95},
     )
 
     judgment = agent.judge_actions([
@@ -182,6 +189,7 @@ def test_give_requires_both_recipient_and_item_choices(monkeypatch):
     ])
 
     assert all(command["action"] != "give" for command in judgment["commands"])
+    assert client.call_count == 2
 
 
 def test_unlock_requires_explicit_strength_or_dexterity(monkeypatch):
@@ -191,6 +199,7 @@ def test_unlock_requires_explicit_strength_or_dexterity(monkeypatch):
             "action_0_unlock_target": "option_0",
             "action_0_unlock_method": "none",
         },
+        nouls={"action_0_unlock_requested": 0.95},
     )
 
     judgment = agent.judge_actions([
@@ -198,6 +207,63 @@ def test_unlock_requires_explicit_strength_or_dexterity(monkeypatch):
     ])
 
     assert all(command["action"] != "unlock" for command in judgment["commands"])
+
+
+def test_give_gate_resolves_candidates_only_after_acceptance(monkeypatch):
+    agent, client, _ = _agent(
+        monkeypatch,
+        choices={
+            "action_0_give_recipient": "option_0",
+            "action_0_give_item": "option_1",
+        },
+        nouls={"action_0_give_requested": 0.95},
+    )
+
+    judgment = agent.judge_actions([
+        {"actor_id": "kaine", "text": "我把治療藥水交給守衛"}
+    ])
+
+    assert client.call_count == 2
+    assert judgment["commands"] == [{
+        "action": "give",
+        "actor_id": "kaine",
+        "target_id": "guard",
+        "item": {
+            "kind": "consumable", "index": 0,
+            "name": "治療藥水", "quantity": 2,
+        },
+    }]
+    assert judgment["usage"] == {"input_tokens": 246, "output_tokens": 90}
+
+
+def test_use_resolution_only_exposes_consumables(monkeypatch):
+    agent, client, _ = _agent(
+        monkeypatch,
+        choices={"action_0_use_item": "option_0"},
+        nouls={"action_0_use_requested": 0.95},
+    )
+
+    judgment = agent.judge_actions([
+        {"actor_id": "kaine", "text": "我喝下治療藥水"}
+    ])
+
+    criteria = client.last_questions["action_0_use_item"].criteria
+    assert [value.get("kind") for value in criteria.values() if isinstance(value, dict)] == [
+        "consumable"
+    ]
+    assert judgment["commands"][0]["item"]["name"] == "治療藥水"
+
+
+def test_travel_choice_only_contains_current_room_exits(monkeypatch):
+    agent, client, _ = _agent(monkeypatch)
+
+    agent.judge_actions([{"actor_id": "kaine", "text": "我四處看看"}])
+
+    criteria = client.last_questions["action_0_travel_direction"].criteria
+    assert criteria == {
+        "none": "敘述沒有表達這項行動，或沒有明確指向任何候選。",
+        "option_0": {"id": "east", "name": "東"},
+    }
 
 
 def test_search_uses_noul_threshold(monkeypatch):

@@ -40,7 +40,7 @@ def _question_id(action_index: int, intent: ActionIntent, field: str) -> str:
 
 
 class TagAgent:
-    """Use one Jev request to turn narrated actions into typed game commands."""
+    """Turn narrated actions into typed game commands with conditional Jev calls."""
 
     def __init__(
         self,
@@ -155,6 +155,21 @@ class TagAgent:
                 "values": values,
             }
 
+        def add_gate(
+            index: int,
+            intent: ActionIntent,
+            instructions: str,
+        ) -> None:
+            question_id = _question_id(index, intent, "requested")
+            questions[question_id] = Noul(instructions=instructions)
+            bindings[question_id] = {
+                "index": index,
+                "intent": intent.value,
+                "field": "requested",
+                "required": True,
+                "gate": True,
+            }
+
         for index, action in enumerate(actions):
             actor_id = action["actor_id"]
             actor = self.world_state.characters.get(actor_id)
@@ -171,15 +186,10 @@ class TagAgent:
                 )
 
             if candidates["room_characters"] and candidates["inventory"]:
-                add_choice(
-                    index, ActionIntent.GIVE, "recipient",
-                    f"{path} 明確表示現在要把物品交給哪一名角色？",
-                    candidates["room_characters"],
-                )
-                add_choice(
-                    index, ActionIntent.GIVE, "item",
-                    f"{path} 明確表示現在要完整給出哪一件自身持有的物品？",
-                    candidates["inventory"],
+                add_gate(
+                    index, ActionIntent.GIVE,
+                    f"{path} 是否明確表示行動者現在要把自己持有的物品交給其他角色？"
+                    "只是提及、展示、索取、交換提議或未來打算都回答否。",
                 )
 
             if actor.is_npc and candidates["room_player_characters"]:
@@ -194,16 +204,20 @@ class TagAgent:
                     candidates["room_player_characters"],
                 )
 
-            add_choice(
-                index, ActionIntent.TRAVEL, "direction",
-                f"{path} 明確表示現在要往哪個方向移動？只判斷立即移動。",
-                [
-                    {"id": "north", "name": "北"},
-                    {"id": "south", "name": "南"},
-                    {"id": "east", "name": "東"},
-                    {"id": "west", "name": "西"},
-                ],
-            )
+            if self.world_state.dungeon_map:
+                direction_names = {
+                    "north": "北", "south": "南", "east": "東", "west": "西",
+                }
+                exits = [
+                    {"id": direction, "name": direction_names.get(direction, direction)}
+                    for direction in self.world_state.dungeon_map.current_room.exits
+                ]
+                if exits:
+                    add_choice(
+                        index, ActionIntent.TRAVEL, "direction",
+                        f"{path} 明確表示現在要往哪個可通行方向移動？只判斷立即移動。",
+                        exits,
+                    )
 
             if candidates["pickup_items"]:
                 add_choice(
@@ -212,36 +226,22 @@ class TagAgent:
                     candidates["pickup_items"],
                 )
 
-            if candidates["inventory"]:
-                add_choice(
-                    index, ActionIntent.USE, "item",
-                    f"{path} 明確表示現在要使用或消耗哪一件自身持有的物品？",
-                    candidates["inventory"],
-                )
-                use_targets = [
-                    {"id": actor_id, "name": actor.name},
-                    *candidates["room_characters"],
-                ]
-                add_choice(
-                    index, ActionIntent.USE, "target",
-                    f"{path} 明確表示使用物品要作用在哪一名角色？沒有指定或不需要目標時選 none。",
-                    use_targets,
-                    required=False,
+            usable_items = [
+                item for item in candidates["inventory"]
+                if item.get("kind") == "consumable"
+            ]
+            if usable_items:
+                add_gate(
+                    index, ActionIntent.USE,
+                    f"{path} 是否明確表示行動者現在要使用或消耗自己持有的物品？"
+                    "只是持有、查看、交給別人或提及物品都回答否。",
                 )
 
             if candidates["locked_objects"]:
-                add_choice(
-                    index, ActionIntent.UNLOCK, "target",
-                    f"{path} 明確表示現在要解鎖哪一個上鎖物件？",
-                    candidates["locked_objects"],
-                )
-                add_choice(
-                    index, ActionIntent.UNLOCK, "method",
-                    f"{path} 明確表示要使用力量還是敏捷開鎖？未指定時選 none。",
-                    [
-                        {"id": "strength", "name": "力量"},
-                        {"id": "dexterity", "name": "敏捷"},
-                    ],
+                add_gate(
+                    index, ActionIntent.UNLOCK,
+                    f"{path} 是否明確表示行動者現在要打開或破壞某個上鎖物件的鎖？"
+                    "只是查看、提及或打算以後處理都回答否。",
                 )
 
             search_id = _question_id(index, ActionIntent.SEARCH, "requested")
@@ -261,6 +261,99 @@ class TagAgent:
                     index, ActionIntent.ATTACK, "target",
                     f"{path} 明確表示現在要向哪一名 NPC 發起攻擊？不判斷武器或攻擊方式。",
                     candidates["room_npcs"],
+                )
+
+        return questions, bindings
+
+    def _build_resolution_questions(
+        self,
+        actions: list[dict[str, str]],
+        accepted_gates: set[tuple[int, str]],
+    ) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
+        """Build candidate-heavy questions only for accepted low-frequency intents."""
+        if Choice is None:
+            raise RuntimeError("缺少 typesafe-sdk；請先安裝 requirements.txt 中的依賴")
+
+        questions: dict[str, Any] = {}
+        bindings: dict[str, dict[str, Any]] = {}
+        common_none = "敘述沒有明確指向任何候選。"
+
+        def add_choice(
+            index: int,
+            intent: ActionIntent,
+            field: str,
+            instructions: str,
+            candidates: list[dict[str, Any]],
+            *,
+            required: bool = True,
+        ) -> None:
+            question_id = _question_id(index, intent, field)
+            question, values = self._choice(
+                instructions, candidates, none_meaning=common_none,
+            )
+            questions[question_id] = question
+            bindings[question_id] = {
+                "index": index,
+                "intent": intent.value,
+                "field": field,
+                "required": required,
+                "values": values,
+            }
+
+        for index, action in enumerate(actions):
+            actor_id = action["actor_id"]
+            actor = self.world_state.characters.get(actor_id)
+            if actor is None or not actor.is_alive() or not action["text"].strip():
+                continue
+            path = f"`player_actions[{index}].text`"
+            candidates = build_action_candidates(self.world_state, actor_id)
+
+            if (index, ActionIntent.GIVE.value) in accepted_gates:
+                add_choice(
+                    index, ActionIntent.GIVE, "recipient",
+                    f"{path} 表示要把物品交給哪一名角色？",
+                    candidates["room_characters"],
+                )
+                add_choice(
+                    index, ActionIntent.GIVE, "item",
+                    f"{path} 表示要完整給出哪一件自身持有的物品？",
+                    candidates["inventory"],
+                )
+
+            if (index, ActionIntent.USE.value) in accepted_gates:
+                usable_items = [
+                    item for item in candidates["inventory"]
+                    if item.get("kind") == "consumable"
+                ]
+                add_choice(
+                    index, ActionIntent.USE, "item",
+                    f"{path} 表示要使用或消耗哪一件自身持有的物品？",
+                    usable_items,
+                )
+                use_targets = [
+                    {"id": actor_id, "name": actor.name},
+                    *candidates["room_characters"],
+                ]
+                add_choice(
+                    index, ActionIntent.USE, "target",
+                    f"{path} 表示使用物品要作用在哪一名角色？沒有指定或不需要目標時選 none。",
+                    use_targets,
+                    required=False,
+                )
+
+            if (index, ActionIntent.UNLOCK.value) in accepted_gates:
+                add_choice(
+                    index, ActionIntent.UNLOCK, "target",
+                    f"{path} 表示要解鎖哪一個上鎖物件？",
+                    candidates["locked_objects"],
+                )
+                add_choice(
+                    index, ActionIntent.UNLOCK, "method",
+                    f"{path} 表示要使用力量還是敏捷開鎖？未指定時選 none。",
+                    [
+                        {"id": "strength", "name": "力量"},
+                        {"id": "dexterity", "name": "敏捷"},
+                    ],
                 )
 
         return questions, bindings
@@ -388,70 +481,97 @@ class TagAgent:
             self.last_judgment = judgment
             return judgment
 
-        self._write_debug(
-            "tag_agent_context.json",
-            {
-                "state": state,
-                "model": self.typesafe_model,
-                "questions": {
-                    question_id: {
-                        "type": question.type,
-                        "instructions": question.instructions,
-                        **(
-                            {"criteria": question.criteria}
-                            if hasattr(question, "criteria") else {}
-                        ),
-                    }
-                    for question_id, question in questions.items()
+        def debug_context(name: str, phase_questions: dict[str, Any]) -> None:
+            self._write_debug(
+                name,
+                {
+                    "state": state,
+                    "model": self.typesafe_model,
+                    "questions": {
+                        question_id: {
+                            "type": question.type,
+                            "instructions": question.instructions,
+                            **(
+                                {"criteria": question.criteria}
+                                if hasattr(question, "criteria") else {}
+                            ),
+                        }
+                        for question_id, question in phase_questions.items()
+                    },
                 },
-            },
-        )
+            )
+
+        debug_context("tag_agent_context.json", questions)
         response = self._call_jev(state, questions)
 
         answer_records: dict[str, Any] = {}
         selected: dict[int, dict[str, dict[str, Any]]] = {}
         required: dict[int, dict[str, set[str]]] = {}
         blocked: set[tuple[int, str]] = set()
+        accepted_gates: set[tuple[int, str]] = set()
 
-        for question_id, binding in bindings.items():
-            index = binding["index"]
-            intent = binding["intent"]
-            field = binding["field"]
-            required.setdefault(index, {}).setdefault(intent, set())
-            if binding.get("required", True):
-                required[index][intent].add(field)
+        def consume_answers(
+            phase_response: Any,
+            phase_questions: dict[str, Any],
+            phase_bindings: dict[str, dict[str, Any]],
+        ) -> None:
+            for question_id, binding in phase_bindings.items():
+                index = binding["index"]
+                intent = binding["intent"]
+                field = binding["field"]
+                required.setdefault(index, {}).setdefault(intent, set())
+                if binding.get("required", True):
+                    required[index][intent].add(field)
 
-            question = questions[question_id]
-            if question.type == "noul":
-                probability = self._noul_value(response, question_id)
-                accepted = probability >= self.intent_threshold
+                question = phase_questions[question_id]
+                if question.type == "noul":
+                    probability = self._noul_value(phase_response, question_id)
+                    accepted = probability >= self.intent_threshold
+                    answer_records[question_id] = {
+                        "type": "noul",
+                        "probability": probability,
+                        "accepted": accepted,
+                    }
+                    if accepted:
+                        selected.setdefault(index, {}).setdefault(intent, {})[field] = True
+                        if binding.get("gate"):
+                            accepted_gates.add((index, intent))
+                    else:
+                        blocked.add((index, intent))
+                    continue
+
+                choice, confidence, probabilities = self._choice_value(
+                    phase_response, question_id,
+                )
+                values = binding["values"]
+                if choice not in values:
+                    raise ValueError(f"Jev 選擇了未知選項：{question_id}={choice}")
+                value = values[choice]
                 answer_records[question_id] = {
-                    "type": "noul",
-                    "probability": probability,
-                    "accepted": accepted,
+                    "type": "choice",
+                    "choice": choice,
+                    "value": value,
+                    "confidence": confidence,
+                    "probabilities": probabilities,
                 }
-                if accepted:
-                    selected.setdefault(index, {}).setdefault(intent, {})[field] = True
-                else:
+                if value is not None:
+                    selected.setdefault(index, {}).setdefault(intent, {})[field] = value
+                elif binding.get("required", True):
                     blocked.add((index, intent))
-                continue
 
-            choice, confidence, probabilities = self._choice_value(response, question_id)
-            values = binding["values"]
-            if choice not in values:
-                raise ValueError(f"Jev 選擇了未知選項：{question_id}={choice}")
-            value = values[choice]
-            answer_records[question_id] = {
-                "type": "choice",
-                "choice": choice,
-                "value": value,
-                "confidence": confidence,
-                "probabilities": probabilities,
-            }
-            if value is not None:
-                selected.setdefault(index, {}).setdefault(intent, {})[field] = value
-            elif binding.get("required", True):
-                blocked.add((index, intent))
+        consume_answers(response, questions, bindings)
+
+        responses = [response]
+        resolution_questions, resolution_bindings = self._build_resolution_questions(
+            actions, accepted_gates,
+        )
+        if resolution_questions:
+            debug_context("tag_agent_resolution_context.json", resolution_questions)
+            resolution_response = self._call_jev(state, resolution_questions)
+            responses.append(resolution_response)
+            consume_answers(
+                resolution_response, resolution_questions, resolution_bindings,
+            )
 
         commands: list[dict[str, Any]] = []
         per_action_commands: dict[int, list[dict[str, Any]]] = {}
@@ -471,13 +591,20 @@ class TagAgent:
             {**action, "commands": per_action_commands.get(index, [])}
             for index, action in enumerate(actions)
         ]
-        usage = getattr(response, "usage", None)
+        def total_usage(field: str) -> int | None:
+            values = [
+                getattr(getattr(item, "usage", None), field, None)
+                for item in responses
+            ]
+            numeric = [value for value in values if isinstance(value, (int, float))]
+            return int(sum(numeric)) if numeric else None
+
         judgment = {
-            "model": getattr(response, "model", self.typesafe_model),
+            "model": getattr(responses[-1], "model", self.typesafe_model),
             "threshold": self.intent_threshold,
             "usage": {
-                "input_tokens": getattr(usage, "input_tokens", None),
-                "output_tokens": getattr(usage, "output_tokens", None),
+                "input_tokens": total_usage("input_tokens"),
+                "output_tokens": total_usage("output_tokens"),
             },
             "actions": action_results,
             "answers": answer_records,
@@ -511,7 +638,7 @@ class TagAgent:
             return judgment
 
     def generate_commands(self, player_actions: list[Any], on_chunk=None) -> list[dict[str, Any]]:
-        """Judge a batch once, emit its JSON trace, and return executable commands."""
+        """Judge a batch, emit its JSON trace, and return executable commands."""
         judgment = self._safe_judgment(player_actions)
         result = json.dumps(judgment, ensure_ascii=False, indent=2)
         self._write_debug("tag_agent_output.txt", result)
