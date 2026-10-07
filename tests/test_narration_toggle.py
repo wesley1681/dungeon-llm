@@ -11,8 +11,8 @@ from trpg.llm.controllers import ActorController, HumanController
 
 
 class _StubTagAgent:
-    def generate_tags(self, actions, on_chunk=None):
-        return "無"
+    def generate_commands(self, actions, on_chunk=None):
+        return []
 
 
 class _RecordingGM:

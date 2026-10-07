@@ -12,9 +12,8 @@ from .engine.combat import (
     tick_terrain_damage, tick_aura_damage, roll_death_save,
 )
 from .engine.combat_policy import CombatPolicy, HeuristicCombatPolicy, HumanInputPolicy
-from .engine.quests import check_quest_progress, objective_progress_str
+from .engine.quests import apply_reward, check_quest_progress, objective_progress_str
 from .engine.status import tick_status_effects
-from .llm.tag_parser import execute_all_tags, set_npc_agent_registry
 from .llm.action_executor import execute_action_commands
 from .llm.dialogue_flow import DialogueDirector, CheckResult
 
@@ -156,7 +155,6 @@ class GameSession:
         self.tag_agent   = tag_agent
         self.player_agents = player_agents or {}
         self.npc_agents  = npc_agents or {}
-        set_npc_agent_registry(self.npc_agents)
 
         # Jev-backed conversation decisions share TagAgent's connection/config.
         self.dialogue = DialogueDirector.from_agent(tag_agent, world_state)
@@ -367,19 +365,12 @@ class GameSession:
         def tag_chunk(c, thinking=False):
             self._emit(StreamChunk("tag", c, thinking))
 
-        if hasattr(self.tag_agent, "generate_commands"):
-            commands = self.tag_agent.generate_commands(
-                self._tag_actions, on_chunk=tag_chunk,
-            )
-            ok, errors = execute_action_commands(
-                commands, ws, log_to_narrative=True,
-            )
-        else:
-            # Compatibility for old/stub agents used by peripheral clients.
-            tag_raw = self.tag_agent.generate_tags(
-                self._tag_actions, on_chunk=tag_chunk,
-            )
-            ok, errors = execute_all_tags(tag_raw, ws, log_to_narrative=True)
+        commands = self.tag_agent.generate_commands(
+            self._tag_actions, on_chunk=tag_chunk,
+        )
+        ok, errors = execute_action_commands(
+            commands, ws, log_to_narrative=True,
+        )
         self._emit(TagResult(ok, errors))
         self._check_quests()
         # ── Conversation? (NpcAgent handles the opening; GM is skipped) ──────
@@ -627,19 +618,15 @@ class GameSession:
         return ""
 
     def _handle_flee(self, cid: str, char) -> None:
-        from .llm.tag_parser import execute_all_tags
-        ok, _ = execute_all_tags(f"[FLEE: {cid}]", self.world_state)
+        execute_action_commands(
+            [{"action": "flee", "actor_id": cid}], self.world_state,
+        )
         summary = f"{char.name} 逃離了戰鬥"
         self._emit(ActionResult(char.name, summary, "FLEE", valid=True))
         self.world_state.log_event("system", summary)
-        if cid in self.world_state.party_ids:
-            self.world_state.party_ids.remove(cid)
-            if cid in self.world_state.combat_party_ids:
-                self.world_state.combat_party_ids.remove(cid)
-            self.world_state.follow_targets.pop(cid, None)
-            agent = self.npc_agents.get(cid)
-            if agent is not None:
-                agent.in_party = False
+        agent = self.npc_agents.get(cid)
+        if agent is not None:
+            agent.in_party = False
 
     def _execute_sub_action(self, cid, char, action: dict, resources) -> str:
         """Validate → execute → emit. Returns result_text ("" on rejection).
@@ -707,10 +694,10 @@ class GameSession:
         npc_char  = ws.characters[npc_id]
 
         # The player input that opened this conversation (e.g. "走向老柯說話")
-        # has now been fully consumed by the [TALK] that brought us here. Clear
+        # has now been fully consumed by the talk command that brought us here. Clear
         # it immediately so that leaving/quitting — which take early-return paths
         # out of the loop below — can't leave it queued for TagAgent to
-        # re-classify into another [TALK] next turn (== you can never leave).
+        # re-classify into another talk command next turn (== you can never leave).
         self._tag_actions = []
 
         # Approach cue: re-entry uses a different opening prompt
@@ -835,44 +822,71 @@ class GameSession:
                                 npc_char) -> bool:
         """Apply directional dialogue events for either speaker."""
         ws = self.world_state
-        npc_id = npc_agent.char_id
         for event in events:
             kind = event.get("event")
             if kind == "attack":
                 npc_agent.pending_join_offer = None
-                actor = ws.characters.get(event.get("actor_id"))
-                target = ws.characters.get(event.get("target_id"))
+                actor_id = event.get("actor_id", "")
+                target_id = event.get("target_id", "")
+                actor = ws.characters.get(actor_id)
+                target = ws.characters.get(target_id)
                 actor_name = actor.name if actor else event.get("actor_id", "角色")
                 target_name = target.name if target else event.get("target_id", "對方")
                 note = f"（{actor_name} 對 {target_name} 發動攻擊）"
                 ws.log_event("system", note)
                 self._emit(StreamChunk("npc_talk", f"\n{note}\n", actor="系統"))
-                ok, errors = execute_all_tags(f"[ATTACK_NPC: {npc_id}]", ws)
+                ok, errors = execute_action_commands([{
+                    "action": "attack",
+                    "actor_id": actor_id,
+                    "target_id": target_id,
+                }], ws)
                 self._emit(TagResult(ok, errors))
+                hostile_id = (
+                    actor_id if actor and actor.is_npc
+                    else target_id if target and target.is_npc
+                    else ""
+                )
+                hostile_agent = self.npc_agents.get(hostile_id)
+                if ok and hostile_agent is not None:
+                    hostile_agent.in_party = False
                 self._check_quests()
-                return True
-            if kind == "join":
+                return bool(ok)
+            if kind in {"invite_to_party", "request_to_join"}:
                 actor_id = event.get("actor_id", "")
                 target_id = event.get("target_id", "")
                 actor = ws.characters.get(actor_id)
                 target = ws.characters.get(target_id)
-                candidate_id = (actor_id if actor and actor.is_npc
-                                else target_id if target and target.is_npc
-                                else "")
+                if kind == "invite_to_party":
+                    valid_direction = (
+                        actor is not None and not actor.is_npc
+                        and target is not None and target.is_npc
+                    )
+                    candidate_id = target_id if valid_direction else ""
+                else:
+                    valid_direction = (
+                        actor is not None and actor.is_npc
+                        and target is not None and not target.is_npc
+                    )
+                    candidate_id = actor_id if valid_direction else ""
                 if candidate_id and candidate_id not in ws.party_ids:
                     npc_agent.pending_join_offer = {
+                        "kind": kind,
                         "proposer_id": actor_id,
                         "responder_id": target_id,
                         "candidate_id": candidate_id,
                     }
                 continue
             if kind == "give":
-                item = event.get("item", "")
+                item = event.get("item")
                 giver_id = event.get("actor_id", "")
                 recipient_id = event.get("target_id", "")
                 if item and giver_id and recipient_id:
-                    ok, errors = execute_all_tags(
-                        f"[GIVE: {giver_id} {recipient_id} {item}]", ws)
+                    ok, errors = execute_action_commands([{
+                        "action": "give",
+                        "actor_id": giver_id,
+                        "target_id": recipient_id,
+                        "item": item,
+                    }], ws)
                     self._emit(TagResult(ok, errors))
                 continue
             if kind == "offer_quest":
@@ -915,21 +929,47 @@ class GameSession:
                                        npc_char) -> bool:
         return self._apply_dialogue_actions(events, npc_agent, npc_char)
 
-    _QUEST_EVENT_TAGS = {
-        "quest_accept":   "QUEST_ACCEPT",
-        "quest_complete": "QUEST_COMPLETE",
-        "quest_turnin":   "QUEST_TURNIN",
-    }
-
     def _apply_quest_events(self, events: list[dict]) -> None:
         """Execute accepted, completed, or turned-in quest events."""
         ws = self.world_state
         for ev in events:
-            tag = self._QUEST_EVENT_TAGS.get(ev.get("event"))
+            kind = ev.get("event")
             qid = ev.get("id")
-            if not tag or not qid:
+            if kind not in {"quest_accept", "quest_complete", "quest_turnin"} or not qid:
                 continue
-            ok, errors = execute_all_tags(f"[{tag}: {qid}]", ws)
+            quest = ws.quests.get(qid)
+            ok: list[str] = []
+            errors: list[str] = []
+            if quest is None:
+                errors.append(f"找不到任務：{qid}")
+            elif kind == "quest_accept":
+                if quest.status == "active":
+                    errors.append(f"任務「{quest.title}」已在進行中")
+                elif quest.status in {"completed", "turned_in"}:
+                    errors.append(f"任務「{quest.title}」已完成")
+                else:
+                    quest.status = "active"
+                    ok.append(f"接受任務：{quest.title}")
+            elif kind == "quest_complete":
+                if quest.status != "active":
+                    errors.append(
+                        f"任務「{quest.title}」目前不是進行中（{quest.status}），無法標記完成")
+                else:
+                    quest.status = "completed"
+                    ok.append(f"任務目標達成：{quest.title}")
+            elif quest.status != "completed":
+                errors.append(
+                    f"任務「{quest.title}」尚未達成完成條件（目前 {quest.status}）")
+            else:
+                lines = apply_reward(quest, ws)
+                info = (quest.reward or {}).get("info") or []
+                giver_agent = self.npc_agents.get(quest.giver_id)
+                if info and giver_agent is not None:
+                    giver_agent._secrets.extend(info)
+                    giver_agent.pending_reveal = list(info)
+                quest.status = "turned_in"
+                suffix = "；" + "，".join(lines) if lines else ""
+                ok.append(f"完成任務：{quest.title}{suffix}")
             self._emit(TagResult(ok, errors))
             for line in ok:
                 self._emit(StreamChunk("npc_talk", f"\n【{line}】\n", actor="系統"))

@@ -647,14 +647,3 @@ class TagAgent:
         else:
             print(result)
         return judgment["commands"]
-
-    def generate_tags(self, player_actions: list[Any], on_chunk=None) -> str:
-        """Compatibility wrapper returning JSON; it never generates tag strings."""
-        judgment = self._safe_judgment(player_actions)
-        result = json.dumps(judgment, ensure_ascii=False, indent=2)
-        self._write_debug("tag_agent_output.txt", result)
-        if on_chunk:
-            on_chunk(result, thinking=False)
-        else:
-            print(result)
-        return result

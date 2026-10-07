@@ -75,6 +75,31 @@ def test_talk_and_attack_execute_with_canonical_target_ids():
     assert {"hero", "ally", "guard"}.issubset(ws.combat.initiative_order)
 
 
+def test_npc_attack_and_flee_use_structured_commands():
+    ws = _world()
+
+    with patch("trpg.engine.combat.roll", return_value=10):
+        attack = execute_action_command(
+            {"action": "attack", "actor_id": "guard", "target_id": "hero"}, ws,
+        )
+    assert "發起攻擊" in attack
+    assert ws.characters["guard"].attitude == 0
+    assert {"hero", "ally", "guard"}.issubset(ws.combat.initiative_order)
+
+    ws.party_ids.append("guard")
+    ws.combat_party_ids.append("guard")
+    ws.follow_targets["guard"] = "hero"
+    flee = execute_action_command(
+        {"action": "flee", "actor_id": "guard"}, ws,
+    )
+    assert "逃跑" in flee
+    assert "guard" not in ws.dungeon_map.current_room.npc_ids
+    assert "guard" not in ws.combat.initiative_order
+    assert "guard" not in ws.party_ids
+    assert "guard" not in ws.combat_party_ids
+    assert "guard" not in ws.follow_targets
+
+
 def test_give_transfers_complete_consumable_stack_and_gear():
     ws = _world()
 

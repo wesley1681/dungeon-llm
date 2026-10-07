@@ -287,6 +287,22 @@ def execute_action_command(command: dict[str, Any], ws: WorldState) -> str:
         ws.pending_conversation = target_id
         return f"開始與 {target.name} 對話"
 
+    if action == "flee":
+        if not ws.dungeon_map:
+            return "沒有地圖"
+        room = ws.dungeon_map.current_room
+        if actor_id in room.npc_ids:
+            room.npc_ids.remove(actor_id)
+        if (ws.combat and ws.combat.active
+                and actor_id in ws.combat.initiative_order):
+            ws.combat.initiative_order.remove(actor_id)
+        if actor_id in ws.party_ids:
+            ws.party_ids.remove(actor_id)
+        if actor_id in ws.combat_party_ids:
+            ws.combat_party_ids.remove(actor_id)
+        ws.follow_targets.pop(actor_id, None)
+        return f"{actor.name} 逃跑離開了"
+
     if action == "give":
         target_id = command.get("target_id", "")
         target = ws.characters.get(target_id)
@@ -394,19 +410,23 @@ def execute_action_command(command: dict[str, Any], ws: WorldState) -> str:
         target = ws.characters.get(target_id)
         if target is None:
             return f"找不到角色：{target_id}"
-        if not target.is_npc or not _same_room(ws, actor_id, target_id):
+        if not _same_room(ws, actor_id, target_id):
             return f"無法攻擊 {target.name}：目標不在當前房間"
-        target.attitude = 0
-        if target_id in ws.party_ids:
-            ws.party_ids.remove(target_id)
-        if target_id in ws.combat_party_ids:
-            ws.combat_party_ids.remove(target_id)
-        ws.follow_targets.pop(target_id, None)
+        hostile_id = target_id if target.is_npc else actor_id if actor.is_npc else ""
+        if not hostile_id:
+            return "無法開始戰鬥：攻擊雙方都不是 NPC"
+        hostile = ws.characters[hostile_id]
+        hostile.attitude = 0
+        if hostile_id in ws.party_ids:
+            ws.party_ids.remove(hostile_id)
+        if hostile_id in ws.combat_party_ids:
+            ws.combat_party_ids.remove(hostile_id)
+        ws.follow_targets.pop(hostile_id, None)
         if ws.dungeon_map:
             ws.dungeon_map.current_room.cleared = False
         ws.pending_conversation = ""
         ws.combat = combat.roll_initiative(
-            ws, [target_id] + _combat_allies_in_room(ws)
+            ws, [hostile_id] + _combat_allies_in_room(ws)
         )
         order = "、".join(
             ws.characters[cid].name for cid in ws.combat.initiative_order

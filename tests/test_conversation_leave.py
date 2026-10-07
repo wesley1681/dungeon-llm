@@ -1,10 +1,10 @@
 """Regression: leaving an NPC conversation must not re-trigger it next turn.
 
 Bug: the player input that opens a conversation (e.g. "走向老柯說話") is stored
-in GameSession._tag_actions and classified into [TALK] to enter the conversation.
+in GameSession._tag_actions and classified as a talk command.
 _run_conversation only cleared that queue on its normal loop exit; the player's
 "離開" took an early-return path that skipped the clear, so the stale input was
-re-classified into [TALK] on the very next exploration turn — you could never
+re-classified as talk on the very next exploration turn — you could never
 leave. Fix clears the queue on conversation entry (all exit paths covered).
 """
 from trpg.scenarios.dungeon import build_world_state
@@ -13,8 +13,8 @@ from trpg.llm.controllers import ActorController, HumanController
 
 
 class _StubTagAgent:
-    def generate_tags(self, actions, on_chunk=None):
-        return "無"
+    def generate_commands(self, actions, on_chunk=None):
+        return []
 
     def generate_conversation_tags(self, combined_input, npc_id=""):
         return "無"
@@ -59,9 +59,9 @@ def test_leaving_conversation_clears_tag_actions():
     outcome = session._run_conversation("civilian")
 
     # The triggering input must be gone, or the next turn re-classifies it into
-    # [TALK] and drops us straight back into the conversation.
+    # talk command and drops us straight back into the conversation.
     assert session._tag_actions == [], (
-        "leaving a conversation left stale input queued -> would re-trigger [TALK]"
+        "leaving a conversation left stale input queued -> would re-trigger talk"
     )
     assert not outcome.game_over
     assert not outcome.triggered_combat

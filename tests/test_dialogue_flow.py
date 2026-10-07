@@ -11,8 +11,8 @@ from trpg.engine.items import Consumable
 class _StubTagAgent:
     # Only the connection attrs DialogueDirector.from_agent reads (all absent →
     # None, which is fine — the director is inert unless a stage is called).
-    def generate_tags(self, actions, on_chunk=None):
-        return "無"
+    def generate_commands(self, actions, on_chunk=None):
+        return []
 
 
 def _session():
@@ -223,7 +223,7 @@ def test_npc_actions_include_actor_target_and_four_nouls():
     assert utterance["target"] == {"id": "kaine", "name": "凱恩"}
     assert "side" not in utterance["actor"]
     assert set(client.last_questions) == {
-        "attack", "join", "give", "offer_quest",
+        "attack", "request_to_join", "give", "offer_quest",
     }
     assert {q.type for q in client.last_questions.values()} == {"noul"}
 
@@ -237,6 +237,22 @@ def test_judge_npc_actions_derives_none_and_falls_back_safely():
     broken = _FakeNpcActionJevClient(error=RuntimeError("offline"))
     d2 = DialogueDirector("m", "u", "b", ws, typesafe_client=broken)
     assert d2.judge_npc_actions("請跟我來。", npc["civilian"], ws) == []
+
+
+def test_npc_can_only_emit_request_to_join():
+    _, ws, npc = _session()
+    client = _FakeNpcActionJevClient({"request_to_join": 0.95})
+    d = DialogueDirector("m", "u", "b", ws, typesafe_client=client)
+
+    events = d.judge_npc_actions(
+        "我想加入你們的隊伍。", npc["civilian"], ws)
+
+    assert events == [{
+        "event": "request_to_join",
+        "actor_id": "civilian",
+        "target_id": "kaine",
+    }]
+    assert "invite_to_party" not in client.last_questions
 
 
 def test_resolve_dialogue_actions_only_sends_valid_quest_candidates():
@@ -280,17 +296,20 @@ def test_resolve_give_uses_actor_inventory_and_target():
         "event": "give",
         "actor_id": "civilian",
         "target_id": "kaine",
-        "item": "治療藥水",
+        "item": {
+            "kind": "consumable", "index": 0,
+            "name": "治療藥水", "quantity": 1,
+        },
     }]
 
 
-def test_npc_join_offer_requires_player_acceptance_before_party_change():
+def test_npc_join_request_requires_player_acceptance_before_party_change():
     session, ws, npc = _session()
     civ = npc["civilian"]
     civ_char = ws.characters["civilian"]
     session.dialogue = SimpleNamespace(
         judge_npc_actions=lambda text, agent, state, target_id=None: [{
-            "event": "join",
+            "event": "request_to_join",
             "actor_id": "civilian",
             "target_id": "kaine",
         }],
@@ -300,6 +319,7 @@ def test_npc_join_offer_requires_player_acceptance_before_party_change():
     assert session._apply_npc_dialogue_actions(
         "我想跟你們一起冒險。", civ, civ_char) is False
     assert civ.pending_join_offer == {
+        "kind": "request_to_join",
         "proposer_id": "civilian",
         "responder_id": "kaine",
         "candidate_id": "civilian",
@@ -338,15 +358,32 @@ def test_judge_player_attack_uses_noul():
         "actor_id": "kaine",
         "target_id": "civilian",
     }]
-    assert set(client.last_questions) == {"attack", "join", "give"}
+    assert set(client.last_questions) == {"attack", "invite_to_party", "give"}
     assert "offer_quest" not in client.last_questions
     assert client.last_questions["attack"].type == "noul"
+
+
+def test_player_can_only_emit_invite_to_party():
+    _, ws, npc = _session()
+    client = _FakeChoiceJevClient({"invite_to_party": 0.95})
+    d = DialogueDirector("m", "u", "b", ws, typesafe_client=client)
+
+    events = d.judge_player_actions(
+        "我邀請你加入我們的隊伍。", npc["civilian"], ws)
+
+    assert events == [{
+        "event": "invite_to_party",
+        "actor_id": "kaine",
+        "target_id": "civilian",
+    }]
+    assert "request_to_join" not in client.last_questions
 
 
 def test_player_confirmation_uses_only_pending_offers():
     _, ws, npc = _session()
     civ = npc["civilian"]
     civ.pending_join_offer = {
+        "kind": "request_to_join",
         "proposer_id": "civilian",
         "responder_id": "kaine",
         "candidate_id": "civilian",
@@ -376,21 +413,22 @@ def test_player_confirmation_uses_only_pending_offers():
         },
     ]
     assert set(client.last_questions) == {
-        "attack", "join", "give", "join_response", "quest_0_response",
+        "attack", "invite_to_party", "give", "join_response", "quest_0_response",
     }
 
 
-def test_player_join_offer_is_accepted_by_npc_without_second_player_consent():
+def test_player_party_invitation_is_accepted_by_npc_without_second_player_consent():
     session, ws, npc = _session()
     civ = npc["civilian"]
     civ_char = ws.characters["civilian"]
 
     session._apply_player_dialogue_actions([{
-        "event": "join",
+        "event": "invite_to_party",
         "actor_id": "kaine",
         "target_id": "civilian",
     }], civ, civ_char)
     assert civ.pending_join_offer == {
+        "kind": "invite_to_party",
         "proposer_id": "kaine",
         "responder_id": "civilian",
         "candidate_id": "civilian",
@@ -433,7 +471,10 @@ def test_player_give_uses_same_catalog_resolution_and_dispatch():
         "event": "give",
         "actor_id": "kaine",
         "target_id": "civilian",
-        "item": "治療藥水",
+        "item": {
+            "kind": "consumable", "index": 0,
+            "name": "治療藥水", "quantity": 1,
+        },
     }]
     session._apply_player_dialogue_actions(
         events, npc["civilian"], recipient)
