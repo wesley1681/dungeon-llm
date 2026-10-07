@@ -158,9 +158,7 @@ class GameSession:
         self.npc_agents  = npc_agents or {}
         set_npc_agent_registry(self.npc_agents)
 
-        # Conversation resolution pipeline (focused LLM stages: decide_check →
-        # arrange_events → judge_completion). Built from tag_agent's connection so
-        # no extra wiring through the GUI bootstrap. Inert if tag_agent is a stub.
+        # Jev-backed conversation decisions share TagAgent's connection/config.
         self.dialogue = DialogueDirector.from_agent(tag_agent, world_state)
 
         self._events    : queue.Queue = queue.Queue()
@@ -384,7 +382,6 @@ class GameSession:
             ok, errors = execute_all_tags(tag_raw, ws, log_to_narrative=True)
         self._emit(TagResult(ok, errors))
         self._check_quests()
-
         # ── Conversation? (NpcAgent handles the opening; GM is skipped) ──────
         if ws.pending_conversation:
             npc_id = ws.pending_conversation
@@ -726,13 +723,10 @@ class GameSession:
         # ── NPC opening ───────────────────────────────────────────────────────
         npc_text = npc_ctrl.take_npc_opening(npc_char)
         ws.log_event(npc_id, npc_text)
-        npc_agent.last_dialogue_actions = self.dialogue.judge_npc_actions(npc_text)
-        # The offer is usually voiced HERE (the NPC's quest-offer rule fires on its
-        # first utterance at 戒備+ attitude, which is the opening). Mark it now so the
-        # player can accept on their very first reply — otherwise accept only unlocks
-        # one exchange late (offered was previously set only after in-loop responses).
-        self._mark_quests_offered(npc_agent)
-
+        if self._apply_npc_dialogue_actions(npc_text, npc_agent, npc_char):
+            outcome.skip_next_gm = True
+            outcome.triggered_combat = True
+            return outcome
         while not self._stop_flag.is_set():
             # ── Each PC takes a conversation turn (LLM may go silent, human
             #     blocks until input or "離開") ───────────────────────────────
@@ -750,6 +744,7 @@ class GameSession:
                     outcome.game_over = True
                     return outcome
                 if output.leave:
+                    npc_agent.pending_join_offer = None
                     self._emit(StatusMessage(f"你結束了與 {npc_char.name} 的對話。"))
                     ws.log_event("system", f"（{char.name} 離開了）")
                     return outcome
@@ -771,6 +766,20 @@ class GameSession:
 
             # ── 3-stage conversation resolution (dialogue_flow) ───────────────
             combined = "\n".join(pc_lines)
+            player_started_combat = False
+            for player_action in pc_actions:
+                player_events = self.dialogue.judge_player_actions(
+                    player_action, npc_agent, ws)
+                player_events = self.dialogue.resolve_dialogue_actions(
+                    player_action["text"], player_events, ws)
+                if self._apply_player_dialogue_actions(
+                        player_events, npc_agent, npc_char):
+                    player_started_combat = True
+                    break
+            if player_started_combat:
+                outcome.skip_next_gm = True
+                outcome.triggered_combat = True
+                break
 
             # Stage 1: does this need a check? which / who / DC?
             plan = self.dialogue.decide_check(pc_actions, npc_agent, ws)
@@ -783,134 +792,128 @@ class GameSession:
                         f" → {'成功' if success else '失敗'}】")
                 ws.log_event("system", note)
                 self._emit(StreamChunk("npc_talk", f"\n{note}\n", actor="系統"))
-
-            # Stage 2: arrange events BEFORE the NPC speaks, so its reply reflects
-            # them. Non-quest (reveal/give/suggest_join/attitude/attack) + the
-            # player-input-driven quest events accept/turn-in (gated by quest state).
-            events = self.dialogue.arrange_events(combined, result, npc_agent, ws)
-            quest_evs = [e for e in events
-                         if e.get("event") in ("quest_accept", "quest_turnin")]
-            other_evs = [e for e in events if e not in quest_evs]
-            if self._apply_dialogue_events(other_evs, npc_agent, npc_char, result):
-                outcome.skip_next_gm = True   # an attack event started combat
-                outcome.triggered_combat = True
-                break
-            self._apply_quest_events(quest_evs)   # accept / turn-in (pre-response)
+                npc_agent.pending_directives.append(
+                    f"玩家的{result.check}檢定{'成功' if result.success else '失敗'}。"
+                    "請依照這個結果與你的個性自然回應；"
+                    "檢定失敗時不要做出玩家想要的讓步。"
+                )
 
             # ── NPC response ──────────────────────────────────────────────────
             npc_text = npc_ctrl.take_npc_response(npc_char)
             ws.log_event(npc_id, npc_text)
-            npc_agent.last_dialogue_actions = self.dialogue.judge_npc_actions(npc_text)
+            if self._apply_npc_dialogue_actions(
+                    npc_text, npc_agent, npc_char,
+                    target_id=pc_actions[-1]["actor_id"]):
+                outcome.skip_next_gm = True
+                outcome.triggered_combat = True
+                break
 
-            # After the reply: (a) mark this NPC's quests as offered so accept
-            # becomes available NEXT turn (structurally blocks same-turn accept);
-            # (b) run the dedicated completion judge over accepted quests, which
-            # needs the NPC's actual reply (e.g. "boss agreed to stop").
-            self._mark_quests_offered(npc_agent)
+            # Narrative objectives may be completed by the NPC's actual reply.
             self._apply_quest_events(
                 self.dialogue.judge_completion(combined, npc_text, ws))
-
-            # ── Recruit decision — handle JOIN / DECLINE ──────────────────────
-            if npc_agent.recruit_decision == "join":
-                if npc_id not in ws.party_ids:
-                    ws.party_ids.append(npc_id)
-                if npc_id not in ws.combat_party_ids:
-                    ws.combat_party_ids.append(npc_id)
-                npc_agent.in_party = True
-                note = f"（{npc_char.name} 加入了隊伍）"
-                ws.log_event("system", note)
-                self._emit(StreamChunk("npc_talk", f"\n{note}\n", actor="系統"))
-            elif npc_agent.recruit_decision == "decline":
-                note = f"（{npc_char.name} 婉拒了邀請）"
-                ws.log_event("system", note)
-                self._emit(StreamChunk("npc_talk", f"\n{note}\n", actor="系統"))
-            npc_agent.recruit_decision = ""   # defensive — already reset in generate()
-
-            # ── NPC chose to attack or flee — end conversation, execute ───────
-            if npc_agent.pending_action:
-                action = npc_agent.pending_action
-                npc_agent.pending_action = ""
-                tag = "ATTACK_NPC" if action == "attack" else "FLEE"
-                ok, errors = execute_all_tags(f"[{tag}: {npc_id}]", ws)
-                self._emit(TagResult(ok, errors))
-                self._check_quests()
-                if action == "attack":
-                    outcome.skip_next_gm = True
-                    outcome.triggered_combat = True
-                ws.log_event("system",
-                    f"（{npc_char.name} {'發動攻擊' if action == 'attack' else '逃離現場'}）")
-                break
 
         # Conversation finished. GM reads everything from the log on next turn;
         # TagAgent's queue was already cleared on entry (see top of method).
         return outcome
 
-    def _apply_dialogue_events(self, events: list[dict], npc_agent, npc_char,
-                               result) -> bool:
-        """Execute Stage-2 (non-quest) events from the event arranger. Returns
-        True if combat started (caller ends the conversation).
+    def _apply_npc_dialogue_actions(self, npc_text: str, npc_agent,
+                                    npc_char, target_id: str | None = None) -> bool:
+        """Classify, resolve, and apply actions explicitly spoken by an NPC.
 
-        reveal / give / suggest_join are CONCESSIONS — only applied when a check
-        was passed this round. attitude / attack are unconditional. Concessions
-        set per-turn directives on the NPC so its reply reflects them; the actual
-        world-state mutation reuses the existing tag_parser dispatchers.
+        Returns True only when an attack started combat.
         """
         ws = self.world_state
+        actions = self.dialogue.judge_npc_actions(
+            npc_text, npc_agent, ws, target_id=target_id)
+        npc_agent.last_dialogue_actions = (
+            [event.get("event") for event in actions] or ["none"])
+        events = self.dialogue.resolve_dialogue_actions(npc_text, actions, ws)
+        npc_agent.last_dialogue_events = events
+        return self._apply_dialogue_actions(events, npc_agent, npc_char)
+
+    def _apply_dialogue_actions(self, events: list[dict], npc_agent,
+                                npc_char) -> bool:
+        """Apply directional dialogue events for either speaker."""
+        ws = self.world_state
         npc_id = npc_agent.char_id
-        won = bool(result and result.success)
-        for ev in events:
-            kind = ev.get("event")
+        for event in events:
+            kind = event.get("event")
             if kind == "attack":
-                note = f"（{npc_char.name} 與冒險者爆發衝突）"
+                npc_agent.pending_join_offer = None
+                actor = ws.characters.get(event.get("actor_id"))
+                target = ws.characters.get(event.get("target_id"))
+                actor_name = actor.name if actor else event.get("actor_id", "角色")
+                target_name = target.name if target else event.get("target_id", "對方")
+                note = f"（{actor_name} 對 {target_name} 發動攻擊）"
                 ws.log_event("system", note)
                 self._emit(StreamChunk("npc_talk", f"\n{note}\n", actor="系統"))
                 ok, errors = execute_all_tags(f"[ATTACK_NPC: {npc_id}]", ws)
                 self._emit(TagResult(ok, errors))
                 self._check_quests()
                 return True
-            if kind == "attitude":
-                try:
-                    delta = int(ev.get("delta", 0) or 0)
-                except (TypeError, ValueError):
-                    delta = 0
-                if delta:
-                    old = npc_char.attitude
-                    npc_char.attitude = max(0, min(4, old + delta))
-                    if npc_char.attitude != old:
-                        note = f"（{npc_char.name} 的態度：{old} → {npc_char.attitude}）"
-                        ws.log_event("system", note)
-                        self._emit(StreamChunk("npc_talk", f"\n{note}\n", actor="系統"))
+            if kind == "join":
+                actor_id = event.get("actor_id", "")
+                target_id = event.get("target_id", "")
+                actor = ws.characters.get(actor_id)
+                target = ws.characters.get(target_id)
+                candidate_id = (actor_id if actor and actor.is_npc
+                                else target_id if target and target.is_npc
+                                else "")
+                if candidate_id and candidate_id not in ws.party_ids:
+                    npc_agent.pending_join_offer = {
+                        "proposer_id": actor_id,
+                        "responder_id": target_id,
+                        "candidate_id": candidate_id,
+                    }
                 continue
-            # ── concessions below: only granted on a passed check ──
-            if not won:
+            if kind == "give":
+                item = event.get("item", "")
+                giver_id = event.get("actor_id", "")
+                recipient_id = event.get("target_id", "")
+                if item and giver_id and recipient_id:
+                    ok, errors = execute_all_tags(
+                        f"[GIVE: {giver_id} {recipient_id} {item}]", ws)
+                    self._emit(TagResult(ok, errors))
                 continue
-            if kind == "reveal":
-                secrets = getattr(npc_agent, "_secrets", []) or []
-                said = []
-                for i in ev.get("indices", []) or []:
-                    if isinstance(i, int) and 0 <= i < len(secrets):
-                        s = secrets[i]
-                        if s not in npc_agent.revealed:
-                            npc_agent.revealed.append(s)
-                        said.append(s)
-                if said:
-                    npc_agent.pending_directives.append(
-                        "如實把以下你知道的情報告訴對方：" + "；".join(said))
-            elif kind == "give":
-                item = ev.get("item", "")
-                to = ev.get("to", "kaine")
-                if to not in ws.characters or ws.characters[to].is_npc:
-                    to = "kaine"
-                ok, errors = execute_all_tags(f"[GIVE: {npc_id} {to} {item}]", ws)
-                self._emit(TagResult(ok, errors))
-                if ok:
-                    npc_agent.pending_directives.append(
-                        f"你願意把 {item} 交給對方，說話時自然地表達這個舉動。")
-            elif kind == "suggest_join":
-                npc_agent.pending_join_decision = True
-                npc_agent.pending_directives.append(
-                    "你覺得對方說得很有道理、很有說服力，開始認真考慮是否加入他們一起冒險。")
+            if kind == "offer_quest":
+                quest = ws.quests.get(event.get("id"))
+                if (quest is not None
+                        and quest.giver_id == event.get("actor_id")
+                        and quest.status == "inactive"):
+                    quest.offered = True
+                continue
+            if kind == "join_accept":
+                candidate_id = (event.get("candidate_id")
+                                or (npc_agent.pending_join_offer or {}).get(
+                                    "candidate_id", ""))
+                candidate = ws.characters.get(candidate_id)
+                if not candidate or not candidate.is_npc:
+                    continue
+                if candidate_id not in ws.party_ids:
+                    ws.party_ids.append(candidate_id)
+                if candidate_id not in ws.combat_party_ids:
+                    ws.combat_party_ids.append(candidate_id)
+                candidate_agent = self.npc_agents.get(candidate_id)
+                if candidate_agent:
+                    candidate_agent.in_party = True
+                    candidate_agent.pending_join_offer = None
+                npc_agent.pending_join_offer = None
+                note = f"（{candidate.name} 加入了隊伍）"
+                ws.log_event("system", note)
+                self._emit(StreamChunk("npc_talk", f"\n{note}\n", actor="系統"))
+            elif kind == "join_reject":
+                npc_agent.pending_join_offer = None
+            elif kind == "quest_accept":
+                self._apply_quest_events([event])
+            elif kind == "quest_turnin":
+                self._apply_quest_events([event])
+            # quest_reject intentionally preserves Quest.offered: the NPC does
+            # not repeat the full pitch, and the player may change their mind.
         return False
+
+    def _apply_player_dialogue_actions(self, events: list[dict], npc_agent,
+                                       npc_char) -> bool:
+        return self._apply_dialogue_actions(events, npc_agent, npc_char)
 
     _QUEST_EVENT_TAGS = {
         "quest_accept":   "QUEST_ACCEPT",
@@ -919,8 +922,7 @@ class GameSession:
     }
 
     def _apply_quest_events(self, events: list[dict]) -> None:
-        """Execute quest events (accept / turn-in from stage 2, complete from the
-        dedicated completion judge). Shared applier — event→tag→dispatcher."""
+        """Execute accepted, completed, or turned-in quest events."""
         ws = self.world_state
         for ev in events:
             tag = self._QUEST_EVENT_TAGS.get(ev.get("event"))
@@ -932,19 +934,4 @@ class GameSession:
             for line in ok:
                 self._emit(StreamChunk("npc_talk", f"\n【{line}】\n", actor="系統"))
         self._check_quests()
-
-    def _mark_quests_offered(self, npc_agent) -> None:
-        """After an NPC utterance (opening OR in-loop response), flag its still-
-        inactive quests as offered so quest_accept becomes available. The NPC's
-        quest-offer prompt section requires it to voice the request when
-        attitude >= 戒備(1), so an utterance at that attitude means the offer is now
-        on the table. Called after the opening (the offer is usually voiced there)
-        and after each response (covers an NPC that warms up mid-conversation).
-        The offer and the player's accept are always separate LLM calls, so this
-        stays the structural guard against same-turn false-accept."""
-        if npc_agent.attitude < 1:
-            return
-        npc_id = npc_agent.char_id
-        for q in self.world_state.quests.values():
-            if q.giver_id == npc_id and q.status == "inactive":
-                q.offered = True
+        return None

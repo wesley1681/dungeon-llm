@@ -21,14 +21,11 @@ class _StubTagAgent:
 
 
 class _StubNpcAgent:
-    """Only the attributes _run_conversation reads before we leave.
-    attitude/char_id are read by _mark_quests_offered, which now runs right after
-    the NPC opening (before the loop) on every conversation."""
+    """Only the attributes _run_conversation reads before we leave."""
     attitude_label = "友善"
     attitude = 3            # 友善 — matches attitude_label
     char_id = "civilian"
-    recruit_decision = ""
-    pending_action = ""
+    pending_join_offer = None
 
 
 def _build_session():

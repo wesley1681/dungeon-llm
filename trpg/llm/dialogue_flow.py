@@ -1,29 +1,13 @@
-"""Conversation resolution pipeline — focused model stages per round.
+"""Jev-backed conversation decisions.
 
-Replaces the old single `generate_conversation_tags` classifier. Each model call
-stays focused on ONE job so tasks don't bleed together:
+NPC and player utterances use the same directional action catalog with explicit
+actor and target identities. Callers expose only the actions available to that
+speaker: NPCs currently have attack/join/give/offer_quest, while players have
+attack/join/give. Only give and offer_quest need a second Jev call to select a
+valid world-state candidate. Pending replies and narrative quest completion are
+judged alongside or after those actions as appropriate.
 
-  1. decide_check     — 玩家輸入 → 要不要檢定？哪個(威嚇/欺瞞/說服)？誰？DC 多少？
-  2. arrange_events   — 玩家輸入 + 檢定結果 → 事件目錄挑觸發（reveal/give/suggest_join/
-                        attitude/attack）＋ **條件加入** 玩家驅動的 quest_accept（任務已被
-                        提出）/ quest_turnin（任務已完成）
-  3. judge_npc_actions — NPC 發言 → Jev 初步行動分類
-  4. judge_completion — 已承接(active)任務名稱+內容 + 玩家輸入 + NPC 回應 → 判定 quest_complete
-
-Checks and events are INDEPENDENT catalogs — NOT a 1:1 mapping. A single passed
-說服 can arrange 揭露情報 OR 物品轉移 OR 建議入夥; the arranger picks.
-
-Quest handling is split by nature (a quest event is not one thing):
-  · accept / turn-in are PLAYER-INPUT-driven → they ride arrange_events (stage 2,
-    pre-response), and are injected into its context ONLY when in scope: accept
-    once the quest has been OFFERED (Quest.offered, set after the NPC voices it),
-    turn-in once it is COMPLETED. The `offered` gate structurally prevents the
-    same-turn false-accept (offer and accept can't be the same turn).
-  · complete is NPC-REPLY-driven and needs flexible judgement → its OWN agent
-    (judge_completion), post-response, whose context is ONLY the accepted quests.
-
-This module only DECIDES. Execution (mutating world state) lives in game.py's
-event appliers, which reuse the existing tag_parser dispatchers.
+This module only decides. World-state mutation lives in ``game.py``.
 """
 from __future__ import annotations
 import json
@@ -31,8 +15,6 @@ import math
 import pathlib
 from dataclasses import dataclass
 from typing import Any, Mapping
-
-from .backend import stream_chat
 
 try:  # Tests can inject a fake client; runtime uses the installed SDK.
     from typesafe_sdk import Choice, Noul, Score, TypeSafeClient
@@ -69,31 +51,51 @@ _SOCIAL_EFFECTIVENESS_LEVELS = [
 ]
 _DC_BY_EFFECTIVENESS_LEVEL = (25, 20, 16, 14, 12, 10, 8)
 
-# Stage-2 (pre-response) event catalog, split by nature:
-#   non-quest — reveal/give/suggest_join are CONCESSIONS (only on a passed check);
-#               attitude/attack are unconditional.
-#   quest     — quest_accept/quest_turnin are PLAYER-INPUT-driven and gated by
-#               quest state: accept only once the quest has been OFFERED, turn-in
-#               only once it is COMPLETED. They ride the same arrange_events call
-#               (per design) but are conditionally injected into its context.
-_NONQUEST_EVENTS   = ("reveal", "give", "suggest_join", "attitude", "attack")
-_STAGE2_QUEST_EVENTS = ("quest_accept", "quest_turnin")
-STAGE2_EVENTS = _NONQUEST_EVENTS + _STAGE2_QUEST_EVENTS
-# quest_complete lives in its OWN dedicated agent (judge_completion), post-response,
-# whose context is ONLY the accepted (active) quests — flexible persuade-type goals.
 _COMPLETE_EVENT = "quest_complete"
 
-# NPC reply classification is deliberately coarse. It answers only what kind
-# of action the NPC explicitly expressed; entity resolution and world-state
-# mutation belong to later stages. Actions are independent, so one reply may
-# trigger more than one Noul. "none" is derived by Python.
-NPC_ACTIONS = ("attack", "join", "give", "offer_quest")
-_NPC_ACTION_THRESHOLDS = {
-    "attack": 0.90,
-    "join": 0.80,
-    "give": 0.90,
-    "offer_quest": 0.80,
+# Shared action catalog. Callers select a subset, so unavailable actions never
+# become Jev questions. "none" is derived when no Noul clears its threshold.
+DIALOGUE_ACTIONS = {
+    "attack": {
+        "threshold": 0.90,
+        "instructions": (
+            "`utterance.text` 是否表示 `utterance.actor` 已經在這一刻對 "
+            "`utterance.target` 開始攻擊？"
+        ),
+        "true": "發言者明確動手、施法攻擊，或宣告立即對對方發動攻擊。",
+        "false": "只是生氣、辱罵、警告、拒絕，或威脅將來可能攻擊。",
+    },
+    "join": {
+        "threshold": 0.80,
+        "instructions": (
+            "`utterance.text` 是否由 `utterance.actor` 主動提出，讓對話中的 NPC "
+            "加入或長期跟隨玩家隊伍？"
+        ),
+        "true": "發言者明確提出 NPC 加入、同行，或長期成為玩家隊伍成員的提議。",
+        "false": "只是暫時幫忙、同行一小段、談論隊伍，或回覆既有的加入提議。",
+    },
+    "give": {
+        "threshold": 0.90,
+        "instructions": (
+            "`utterance.text` 是否表示 `utterance.actor` 現在就要把自己的物品交給 "
+            "`utterance.target`？"
+        ),
+        "true": "發言者明確完成贈與或交付，接收者現在取得某項物品。",
+        "false": "只是答應以後給、提出交易、描述物品，或把物品當作未來報酬。",
+    },
+    "offer_quest": {
+        "threshold": 0.80,
+        "instructions": (
+            "`utterance.text` 是否由 `utterance.actor` 向 `utterance.target` 提出一項"
+            "新的任務或委託，需要對方決定是否接受？"
+        ),
+        "true": "發言者明確請對方完成某個目標或行動。",
+        "false": "只是提及問題、提供背景、談論已有委託，或交付任務報酬。",
+    },
 }
+
+NPC_DIALOGUE_ACTIONS = ("attack", "join", "give", "offer_quest")
+PLAYER_DIALOGUE_ACTIONS = ("attack", "join", "give")
 
 
 @dataclass
@@ -110,27 +112,6 @@ class CheckResult:
     total: int
     dc: int
     actor: str
-
-
-def _first_json(text: str, opener: str):
-    """Extract and parse the first JSON value (array or object) in `text`.
-    Robust to models that wrap it in prose / code fences. Returns None on fail."""
-    close = "]" if opener == "[" else "}"
-    depth = 0
-    start = -1
-    for i, ch in enumerate(text):
-        if ch == opener:
-            if depth == 0:
-                start = i
-            depth += 1
-        elif ch == close and depth > 0:
-            depth -= 1
-            if depth == 0:
-                try:
-                    return json.loads(text[start:i + 1])
-                except (ValueError, json.JSONDecodeError):
-                    return None
-    return None
 
 
 class DialogueDirector:
@@ -175,34 +156,6 @@ class DialogueDirector:
                 agent, "intent_threshold", _SOCIAL_CHECK_THRESHOLD),
             typesafe_client=getattr(agent, "_typesafe_client", None),
         )
-
-    def _ask(self, system: str, user: str, num_predict: int, temperature: float,
-             debug_name: str) -> str:
-        messages = [
-            {"role": "system", "content": system},
-            {"role": "user",   "content": user},
-        ]
-        (_DEBUG_DIR / debug_name).write_text(
-            json.dumps(messages, ensure_ascii=False, indent=2),
-            encoding="utf-8", errors="replace",
-        )
-        opts = {**self.options, "temperature": temperature, "num_predict": num_predict}
-        try:
-            result = stream_chat(
-                self.base_url, self.model, messages, opts,
-                think=False, on_chunk=None, backend=self.backend, timeout=30,
-                api_key=self.api_key,
-            )
-        except Exception:
-            # A transient backend failure must not crash the conversation — the
-            # caller's parse falls back to "no check / no events".
-            return ""
-        result = result.strip()
-        # Persist the raw decision too (not just the context) so each stage's
-        # judgement is directly inspectable, e.g. dialogue_event_output.txt.
-        (_DEBUG_DIR / debug_name.replace("_context.json", "_output.txt")).write_text(
-            result, encoding="utf-8", errors="replace")
-        return result
 
     # ── Stage 1 — Jev 社交檢定判定 ────────────────────────────────────────────
 
@@ -250,7 +203,7 @@ class DialogueDirector:
                 criteria={
                     "true": (
                         "玩家正試圖用說服、欺瞞或威嚇，讓 NPC 採取行動、交出物品、"
-                        "提供非一般性情報，或改變決定。"
+                        "加入隊伍，或改變決定。"
                     ),
                     "false": (
                         "只是寒暄、閒聊、普通提問、陳述、回答、隊友間交談、沒有要求 NPC"
@@ -258,11 +211,11 @@ class DialogueDirector:
                     ),
                 },
             )
-            # These two speculative questions run in the same request. Code uses
-            # them only when the Noul above clears the configured threshold.
+            # These answers run in the same request and are used only when the
+            # Noul above clears the configured threshold.
             questions[f"social_{index}_type"] = Choice(
                 instructions=(
-                    f"假設 {path} 構成社交檢定，選出玩家主要使用的手段。"
+                    f"判斷 {path} 主要使用的社交手段。"
                 ),
                 criteria={
                     "persuade": "以真誠請求、協商、交換利益或講道理使 NPC 願意配合。",
@@ -272,10 +225,8 @@ class DialogueDirector:
             )
             questions[f"social_{index}_effectiveness"] = Score(
                 instructions=(
-                    f"假設 {path} 構成社交檢定，評估它對目前 `npc` 有多容易奏效。"
-                    "不要考慮玩家的 CHA、技能加值、骰點或運氣。依手段考慮要求的利益與"
-                    "代價、謊言可信度或威脅可信度，並考慮 NPC 的個性、態度及"
-                    "`conversation_history` 中是否重複使用相同手段。"
+                    f"評估 {path} 對目前 `npc` 有多容易奏效。依手段考慮要求的利益與"
+                    "代價、謊言可信度或威脅可信度，以及 NPC 的個性與態度。"
                 ),
                 criteria=_SOCIAL_EFFECTIVENESS_LEVELS,
             )
@@ -326,8 +277,6 @@ class DialogueDirector:
                 "attitude": npc.attitude,
                 "attitude_label": _ATTITUDE_LABELS[npc.attitude],
             },
-            "conversation_history": _prior_conversation_script(
-                ws, getattr(npc, "char_id", ""), actions),
         }
         questions = self._build_social_questions(actions)
         (_DEBUG_DIR / "dialogue_check_context.json").write_text(
@@ -395,57 +344,109 @@ class DialogueDirector:
             actor=action["actor_id"],
         )
 
-    # ── Stage 2 — 事件安排 ────────────────────────────────────────────────────
+    # ── Shared dialogue-action classifier ────────────────────────────────────
     @staticmethod
-    def _build_npc_action_questions() -> dict[str, Any]:
+    def _action_questions(allowed_actions) -> tuple[tuple[str, ...], dict[str, Any]]:
         if Noul is None:
             raise RuntimeError("缺少 typesafe-sdk；請先安裝 requirements.txt 中的依賴")
-        return {
-            "attack": Noul(
-                instructions="`npc_reply.text` 是否表示 NPC 已經在這一刻開始攻擊？",
+        requested = tuple(dict.fromkeys(allowed_actions or ()))
+        unknown = set(requested) - set(DIALOGUE_ACTIONS)
+        if unknown:
+            raise ValueError(f"未知的對話行動：{sorted(unknown)}")
+        questions = {
+            action: Noul(
+                instructions=DIALOGUE_ACTIONS[action]["instructions"],
                 criteria={
-                    "true": "NPC 明確動手、發動攻擊，或宣告立即進入戰鬥。",
-                    "false": "只是生氣、辱罵、警告、拒絕，或威脅將來可能攻擊。",
+                    "true": DIALOGUE_ACTIONS[action]["true"],
+                    "false": DIALOGUE_ACTIONS[action]["false"],
                 },
-            ),
-            "join": Noul(
-                instructions="`npc_reply.text` 是否明確表示 NPC 想加入或跟隨玩家隊伍？",
-                criteria={
-                    "true": "NPC 明確提議加入、同行，或長期成為玩家隊伍的成員。",
-                    "false": "只是暫時幫忙、提供建議、交付任務，或沒有明確表示要加入隊伍。",
-                },
-            ),
-            "give": Noul(
-                instructions="`npc_reply.text` 是否表示 NPC 現在就要把物品交給玩家？",
-                criteria={
-                    "true": "NPC 明確完成贈與或交付，玩家現在取得某項物品。",
-                    "false": "只是答應以後給、提出交易、描述物品，或把物品當作未來報酬。",
-                },
-            ),
-            "offer_quest": Noul(
+            )
+            for action in requested
+        }
+        return requested, questions
+
+    @staticmethod
+    def _character_ref(ws, char_id: str) -> dict[str, str]:
+        char = ws.characters.get(char_id)
+        return {"id": char_id, "name": char.name if char else char_id}
+
+    def judge_dialogue_actions(
+            self, text: str, actor_id: str, target_id: str, allowed_actions,
+            ws, *, pending_join: dict | None = None,
+            pending_quests=None, turnins=None,
+            debug_name: str = "dialogue_action") -> list[dict]:
+        """Judge one utterance using the shared catalog and optional replies."""
+        utterance = str(text or "").strip()
+        if not utterance or Choice is None or Noul is None:
+            return []
+
+        actions, questions = self._action_questions(allowed_actions)
+        pending_quests = list(pending_quests or [])
+        turnins = list(turnins or [])
+        join_for_actor = (
+            pending_join if isinstance(pending_join, dict)
+            and pending_join.get("responder_id") == actor_id else None
+        )
+        response_criteria = {
+            "accept": "發言者明確同意或答應這項提議。",
+            "reject": "發言者明確拒絕、不願意或要求取消這項提議。",
+            "none": "發言者沒有回答這項提議、語意不明，或正在談其他事情。",
+        }
+        if join_for_actor:
+            questions["join_response"] = Choice(
                 instructions=(
-                    "`npc_reply.text` 是否向玩家提出一項新的任務或委託，"
-                    "需要玩家決定是否接受？"
+                    "`utterance.text` 對 `pending.join` 的加入隊伍提議，"
+                    "是接受、拒絕，還是沒有明確回答？"
+                ),
+                criteria=response_criteria,
+            )
+        for index, _quest in enumerate(pending_quests):
+            questions[f"quest_{index}_response"] = Choice(
+                instructions=(
+                    f"`utterance.text` 對 `pending.quests[{index}]` 的任務邀請，"
+                    "是接受、拒絕，還是沒有明確回答？"
+                ),
+                criteria=response_criteria,
+            )
+        for index, _quest in enumerate(turnins):
+            questions[f"turnin_{index}"] = Noul(
+                instructions=(
+                    f"`utterance.text` 是否向對方明確回報已完成 "
+                    f"`pending.turnins[{index}]`，並準備提交或領取報酬？"
                 ),
                 criteria={
-                    "true": "NPC 明確請玩家完成某個目標或行動。",
-                    "false": "只是提及問題、提供背景、談論已有委託，或交付任務報酬。",
+                    "true": "發言者明確回報完成任務、交付成果或要求結算報酬。",
+                    "false": "只是詢問進度、談論任務，或沒有回報完成。",
                 },
-            ),
+            )
+
+        state = {
+            "utterance": {
+                "text": utterance,
+                "actor": self._character_ref(ws, actor_id),
+                "target": self._character_ref(ws, target_id),
+            },
+            "pending": {
+                "join": join_for_actor,
+                "quests": [{
+                    "id": q.id,
+                    "title": q.title,
+                    "description": q.description,
+                } for q in pending_quests],
+                "turnins": [{
+                    "id": q.id,
+                    "title": q.title,
+                    "description": q.description,
+                } for q in turnins],
+            },
         }
-
-    def judge_npc_actions(self, npc_text: str) -> list[str]:
-        """Coarsely classify one NPC utterance with one Jev request."""
-        text = str(npc_text or "").strip()
-        if not text:
-            return ["none"]
-
-        state = {"npc_reply": {"text": text}}
-        questions = self._build_npc_action_questions()
-        (_DEBUG_DIR / "dialogue_npc_action_context.json").write_text(
+        context_path = _DEBUG_DIR / f"{debug_name}_context.json"
+        output_path = _DEBUG_DIR / f"{debug_name}_output.json"
+        context_path.write_text(
             json.dumps({
                 "state": state,
                 "model": self.typesafe_model,
+                "allowed_actions": list(actions),
                 "questions": {
                     question_id: {
                         "type": question.type,
@@ -460,216 +461,278 @@ class DialogueDirector:
 
         try:
             response = self._call_jev(state, questions)
+            events: list[dict] = []
             probabilities = {}
-            actions = []
-            for action in NPC_ACTIONS:
-                answer = self._typed_answer(response, "nouls", action)
-                probability = float(answer.noul)
+            for action in actions:
+                probability = float(self._typed_answer(
+                    response, "nouls", action).noul)
                 if not math.isfinite(probability) or not 0.0 <= probability <= 1.0:
                     raise ValueError(
                         f"Jev 回傳無效 Noul：{action}={probability!r}")
                 probabilities[action] = probability
-                if probability >= _NPC_ACTION_THRESHOLDS[action]:
-                    actions.append(action)
+                if probability >= DIALOGUE_ACTIONS[action]["threshold"]:
+                    events.append({
+                        "event": action,
+                        "actor_id": actor_id,
+                        "target_id": target_id,
+                    })
+
+            if join_for_actor:
+                answer = str(self._typed_answer(
+                    response, "choices", "join_response").choice)
+                if answer in ("accept", "reject"):
+                    # A response to an existing offer is not a second join offer.
+                    events = [e for e in events if e["event"] != "join"]
+                    events.append({
+                        "event": f"join_{answer}",
+                        "actor_id": actor_id,
+                        "target_id": join_for_actor.get("proposer_id", target_id),
+                        "candidate_id": join_for_actor.get("candidate_id", ""),
+                    })
+            for index, quest in enumerate(pending_quests):
+                answer = str(self._typed_answer(
+                    response, "choices", f"quest_{index}_response").choice)
+                if answer in ("accept", "reject"):
+                    events.append({
+                        "event": f"quest_{answer}",
+                        "id": quest.id,
+                        "actor_id": actor_id,
+                        "target_id": target_id,
+                    })
+            for index, quest in enumerate(turnins):
+                probability = float(self._typed_answer(
+                    response, "nouls", f"turnin_{index}").noul)
+                if not math.isfinite(probability) or not 0.0 <= probability <= 1.0:
+                    raise ValueError(
+                        f"Jev 回傳無效 Noul：turnin_{index}={probability!r}")
+                if probability >= 0.80:
+                    events.append({
+                        "event": "quest_turnin",
+                        "id": quest.id,
+                        "actor_id": actor_id,
+                        "target_id": target_id,
+                    })
         except Exception as exc:
-            (_DEBUG_DIR / "dialogue_npc_action_output.json").write_text(
+            output_path.write_text(
                 json.dumps({
                     "error": {"type": type(exc).__name__, "message": str(exc)},
-                    "actions": ["none"],
+                    "events": [],
                 }, ensure_ascii=False, indent=2),
                 encoding="utf-8", errors="replace",
             )
-            return ["none"]
+            return []
 
-        result = actions or ["none"]
-        (_DEBUG_DIR / "dialogue_npc_action_output.json").write_text(
+        output_path.write_text(
             json.dumps({
                 "model": getattr(response, "model", self.typesafe_model),
-                "thresholds": _NPC_ACTION_THRESHOLDS,
                 "probabilities": probabilities,
-                "actions": result,
+                "events": events,
             }, ensure_ascii=False, indent=2),
             encoding="utf-8", errors="replace",
         )
-        return result
+        return events
 
-    # ── Stage 2 — 事件安排 ───────────────────────────────────────────
-    _EVENT_SYSTEM = (
-        "你是 D&D 5e 對話結果編排者，只做一件事：看玩家發言與檢定結果，決定這輪要觸發"
-        "哪些「事件」。可以是 0 個、1 個或多個（排列組合）。\n\n"
-        "## 對象 NPC\n{npc_brief}\n"
-        "## NPC 身上的物品（可被說服交出）\n{npc_items}\n"
-        "## NPC 知道、但尚未告訴玩家的情報（編號）\n{secrets}\n\n"
-        "## 檢定結果\n{check_line}\n\n"
-        "## 事件目錄\n"
-        "reveal      揭露情報：把上面某幾條情報告訴玩家。**僅在檢定成功時可用**。\n"
-        "give        物品轉移：NPC 把自己的一件物品交給玩家。**僅在檢定成功時可用**。\n"
-        "suggest_join 建議入夥：讓 NPC 認真考慮加入隊伍（最終仍由它自己決定）。**僅在檢定成功時可用**。\n"
-        "attitude    好感度增減：改變 NPC 對玩家的態度，delta 為整數（可負）。任何時候可用。\n"
-        "attack      翻臉開戰：NPC 或玩家動手，進入戰鬥。任何時候可用（例如玩家動手、或威脅過火觸怒 NPC）。\n"
-        "{quest_section}"
-        "\n## 判斷原則\n"
-        "- reveal/give/suggest_join 是「被贏得的讓步」，檢定失敗或根本沒檢定就**不可**輸出。\n"
-        "- 只輸出玩家實際要求、且情境合理的事件；玩家沒要的東西不要硬給。\n"
-        "- 威嚇成功常伴隨 attitude 下降（怨恨）；欺瞞失敗常伴隨 attitude 下降（識破）。\n"
-        "- reveal 的 indices 只能取自上面的情報編號；give 的 item 必須是上面列出的物品名。\n\n"
-        "## 輸出（只輸出一行 JSON 陣列，無其他文字）\n"
-        '例：[{{"event":"reveal","indices":[0,2]}}, {{"event":"attitude","delta":-1}}]\n'
-        '例：[{{"event":"give","item":"手斧","to":"kaine"}}]\n'
-        "沒有任何事件時輸出 []。"
-    )
-
-    @staticmethod
-    def _build_quest_section(ws, accept_ids: set, turnin_ids: set) -> str:
-        """The conditionally-injected quest block: accept only appears once the
-        quest is OFFERED, turn-in only once COMPLETED. Empty when neither."""
-        def _lines(ids):
-            return "\n".join(f"    [{q.id}] {q.title}｜{q.description}"
-                             for q in ws.quests.values() if q.id in ids)
-        parts = []
-        if accept_ids:
-            parts.append(
-                "quest_accept  **玩家這一輪的發言**明確答應接下「可接受的任務」中的某項"
-                "（例：『好，我幫你』『交給我們』）。\n"
-                "              ⚠ NPC 提出／拜託任務**不算**接受；玩家只是打聽、寒暄、還沒回應"
-                "就**不要**觸發。id 取自下列。\n"
-                "  可接受的任務：\n" + _lines(accept_ids) + "\n"
-                '  觸發時這樣輸出（鍵名務必用 id）：{"event":"quest_accept","id":"上面的任務id"}\n')
-        if turnin_ids:
-            parts.append(
-                "quest_turnin  玩家向委託人回報並領取「可提交的任務」的獎勵。id 取自下列。\n"
-                "  可提交的任務：\n" + _lines(turnin_ids) + "\n"
-                '  觸發時這樣輸出（鍵名務必用 id）：{"event":"quest_turnin","id":"上面的任務id"}\n')
-        return "".join(parts)
-
-    def arrange_events(self, player_text: str, result: CheckResult | None,
-                       npc, ws) -> list[dict]:
-        """Stage 2: pick events given the input + check outcome. Non-quest events
-        (reveal/give/suggest_join/attitude/attack) plus, when in scope, the
-        player-input-driven quest events accept (offered) / turnin (completed)."""
+    def judge_npc_actions(self, npc_text: str, npc, ws,
+                          target_id: str | None = None) -> list[dict]:
         npc_id = getattr(npc, "char_id", "")
-        secrets = getattr(npc, "_secrets", []) or []
-        # Only secrets not yet revealed are offerable.
-        revealed = set(getattr(npc, "revealed", []) or [])
-        secret_lines = "\n".join(
-            f"  [{i}] {s}" for i, s in enumerate(secrets) if s not in revealed
-        ) or "  （無）"
-        if result is None:
-            check_line = "本輪未進行檢定（reveal/give/suggest_join 不可用）。"
-        else:
-            check_line = (
-                f"{result.check} 檢定 {'成功' if result.success else '失敗'}"
-                f"（擲出 {result.total} vs DC {result.dc}）。"
-            )
-        # Conditionally-available quest events (design): accept only after the
-        # quest has been OFFERED to the player; turn-in only once COMPLETED.
-        accept_ids = {q.id for q in ws.quests.values()
-                      if q.giver_id == npc_id and q.status == "inactive" and q.offered}
-        turnin_ids = {q.id for q in ws.quests.values()
-                      if q.giver_id == npc_id and q.status == "completed"}
-        valid_qids = accept_ids | turnin_ids
-
-        system = self._EVENT_SYSTEM.format(
-            npc_brief=_npc_brief(npc), npc_items=_npc_items(npc),
-            secrets=secret_lines, check_line=check_line,
-            quest_section=self._build_quest_section(ws, accept_ids, turnin_ids),
+        return self.judge_dialogue_actions(
+            npc_text, npc_id, target_id or _default_actor(ws),
+            NPC_DIALOGUE_ACTIONS, ws,
+            pending_join=getattr(npc, "pending_join_offer", None),
+            debug_name="dialogue_npc_action",
         )
-        raw = self._ask(system, f"玩家發言：\n{player_text}",
-                        num_predict=200, temperature=0.2,
-                        debug_name="dialogue_event_context.json")
-        arr = _first_json(raw, "[")
-        if not isinstance(arr, list):
-            return []
-        out = []
-        for e in arr:
-            if not isinstance(e, dict):
-                continue
-            ev = e.get("event")
-            if ev in _NONQUEST_EVENTS:
-                out.append(e)
-            elif ev in _STAGE2_QUEST_EVENTS:
-                qid = e.get("id") or e.get("quest_id")   # models vary on the key name
-                if qid in valid_qids:
-                    out.append({"event": ev, "id": qid})  # normalise to "id"
-        return out
 
-    # ── Completion judge — its own agent, minimal context, post-response ──────
-    _COMPLETE_SYSTEM = (
-        "你是任務完成裁判，只做一件事：看玩家發言與 NPC 回應，判斷這一輪對話有沒有讓某個"
-        "「進行中的任務」達成目標。這類任務通常需要彈性判斷（例：任務要你說服某人停手，而"
-        "NPC 在回應中真的答應停手了）。\n\n"
-        "## 進行中的任務（玩家已承接）\n{active}\n\n"
-        "## 原則\n"
-        "- 只有 NPC 的回應**真正體現**任務目標被達成才觸發；只是嘴上敷衍、還在討價還價、"
-        "或只答應「考慮看看」，都**不算**。\n"
-        "- id 只能取自上面清單。沒有達成任何任務時輸出 []。\n\n"
-        "## 輸出（只輸出一行 JSON 陣列，無其他文字）\n"
-        '例：[{{"event":"quest_complete","id":"stop_boss"}}]\n'
-        "沒有任何達成時輸出 []。"
-    )
+    def judge_player_actions(self, player_action, npc, ws) -> list[dict]:
+        """Judge one player's utterance plus replies to pending NPC offers."""
+        npc_id = getattr(npc, "char_id", "")
+        if isinstance(player_action, Mapping):
+            actor_id = str(player_action.get("actor_id", ""))
+            text = str(player_action.get("text", ""))
+        else:
+            actor_id = _default_actor(ws)
+            text = str(player_action or "")
+        quests = [q for q in ws.quests.values()
+                  if (q.giver_id == npc_id and q.status == "inactive"
+                      and q.offered)]
+        turnins = [q for q in ws.quests.values()
+                   if q.giver_id == npc_id and q.status == "completed"]
+        return self.judge_dialogue_actions(
+            text, actor_id, npc_id, PLAYER_DIALOGUE_ACTIONS, ws,
+            pending_join=getattr(npc, "pending_join_offer", None),
+            pending_quests=quests,
+            turnins=turnins,
+            debug_name="dialogue_player_action",
+        )
 
+    def resolve_dialogue_actions(self, text: str, events: list[dict], ws) -> list[dict]:
+        """Resolve inventory/quest candidates for shared coarse action events."""
+        resolved = [dict(event) for event in events
+                    if event.get("event") not in ("give", "offer_quest")]
+        give_event = next(
+            (event for event in events if event.get("event") == "give"), None)
+        quest_event = next(
+            (event for event in events if event.get("event") == "offer_quest"), None)
+
+        items: list[str] = []
+        giver = ws.characters.get(give_event.get("actor_id")) if give_event else None
+        if giver is not None:
+            items.extend(w.name for w in getattr(giver, "weapons", []))
+            items.extend(c.name for c in getattr(giver, "consumables", [])
+                         if c.quantity > 0)
+            items.extend(str(item) for item in getattr(giver, "gear", []))
+            items = list(dict.fromkeys(items))
+
+        quest_giver_id = quest_event.get("actor_id") if quest_event else ""
+        quests = [q for q in ws.quests.values()
+                  if (q.giver_id == quest_giver_id
+                      and q.status == "inactive" and not q.offered)]
+        if Choice is None:
+            return resolved
+
+        questions: dict[str, Any] = {}
+        item_keys = {f"item_{i}": name for i, name in enumerate(items)}
+        quest_keys = {f"quest_{i}": q.id for i, q in enumerate(quests)}
+        if item_keys:
+            questions["give_item"] = Choice(
+                instructions=(
+                    "假設 `utterance.text` 確實表示交付物品，選出 "
+                    "`candidates.items` 中由發言者交付的物品。"
+                ),
+                criteria={
+                    **{key: f"發言者持有的「{name}」。"
+                       for key, name in item_keys.items()},
+                    "none": "發言沒有明確對應任何候選物品。",
+                },
+            )
+        if quest_keys:
+            questions["offered_quest"] = Choice(
+                instructions=(
+                    "假設 `utterance.text` 確實提出新任務，選出 "
+                    "`candidates.quests` 中被提出的任務。"
+                ),
+                criteria={
+                    **{key: f"任務「{q.title}」：{q.description}"
+                       for key, q in zip(quest_keys, quests)},
+                    "none": "發言沒有明確對應任何候選任務。",
+                },
+            )
+        if not questions:
+            return resolved
+
+        source_event = give_event or quest_event or {}
+        actor_id = source_event.get("actor_id", "")
+        target_id = source_event.get("target_id", "")
+        state = {
+            "utterance": {
+                "text": str(text or "").strip(),
+                "actor": self._character_ref(ws, actor_id),
+                "target": self._character_ref(ws, target_id),
+            },
+            "candidates": {
+                "items": [{"key": key, "name": name}
+                          for key, name in item_keys.items()],
+                "quests": [{
+                    "key": key,
+                    "id": q.id,
+                    "title": q.title,
+                    "description": q.description,
+                } for key, q in zip(quest_keys, quests)],
+            },
+        }
+        try:
+            response = self._call_jev(state, questions)
+            if "give_item" in questions and give_event:
+                key = str(self._typed_answer(
+                    response, "choices", "give_item").choice)
+                item = item_keys.get(key)
+                if item:
+                    resolved.append({**give_event, "item": item})
+            if "offered_quest" in questions and quest_event:
+                key = str(self._typed_answer(
+                    response, "choices", "offered_quest").choice)
+                qid = quest_keys.get(key)
+                if qid:
+                    resolved.append({**quest_event, "id": qid})
+        except Exception as exc:
+            (_DEBUG_DIR / "dialogue_action_detail_output.json").write_text(
+                json.dumps({
+                    "error": {"type": type(exc).__name__, "message": str(exc)},
+                    "events": resolved,
+                }, ensure_ascii=False, indent=2),
+                encoding="utf-8", errors="replace",
+            )
+            return resolved
+
+        (_DEBUG_DIR / "dialogue_action_detail_output.json").write_text(
+            json.dumps({"state": state, "events": resolved},
+                       ensure_ascii=False, indent=2),
+            encoding="utf-8", errors="replace",
+        )
+        return resolved
+
+    # ── Completion judge — minimal active-quest context, post-response ────────
     def judge_completion(self, player_text: str, npc_response: str, ws) -> list[dict]:
-        """Dedicated post-response agent: did this exchange fulfil any ACTIVE quest's
-        goal? Context is ONLY the accepted quests (name+content) — NPC-agnostic, since
-        the current NPC may be the target of a quest given by someone else."""
-        active = [f"  [{q.id}] {q.title}｜{q.description}"
-                  for q in ws.quests.values() if q.status == "active"]
+        """Use Jev to judge narrative completion of active quests."""
+        active = [q for q in ws.quests.values() if q.status == "active"]
         if not active:
-            return []   # nothing accepted → skip the call entirely
-        system = self._COMPLETE_SYSTEM.format(active="\n".join(active))
-        user = f"玩家發言：\n{player_text}\n\nNPC 回應：\n{npc_response}"
-        raw = self._ask(system, user, num_predict=60, temperature=0.1,
-                        debug_name="dialogue_complete_context.json")
-        arr = _first_json(raw, "[")
-        if not isinstance(arr, list):
             return []
-        valid = {q.id for q in ws.quests.values() if q.status == "active"}
-        out = []
-        for e in arr:
-            if isinstance(e, dict) and e.get("event") == _COMPLETE_EVENT:
-                qid = e.get("id") or e.get("quest_id")   # tolerate the key name
-                if qid in valid:
-                    out.append({"event": _COMPLETE_EVENT, "id": qid})
-        return out
+        if Noul is None:
+            return []
 
+        state = {
+            "player_reply": {"text": str(player_text or "").strip()},
+            "npc_reply": {"text": str(npc_response or "").strip()},
+            "active_quests": [{
+                "id": q.id,
+                "title": q.title,
+                "description": q.description,
+            } for q in active],
+        }
+        questions = {
+            f"complete_{index}": Noul(
+                instructions=(
+                    f"這輪 `player_reply.text` 與 `npc_reply.text` 是否已經真正達成 "
+                    f"`active_quests[{index}]` 的任務目標？"
+                ),
+                criteria={
+                    "true": "NPC 的實際回應或這輪結果已明確完成任務目標。",
+                    "false": "只是敷衍、討價還價、答應考慮，或尚未真正達成目標。",
+                },
+            )
+            for index, _quest in enumerate(active)
+        }
+        try:
+            response = self._call_jev(state, questions)
+            events = []
+            probabilities = {}
+            for index, quest in enumerate(active):
+                question_id = f"complete_{index}"
+                probability = float(self._typed_answer(
+                    response, "nouls", question_id).noul)
+                if not math.isfinite(probability) or not 0.0 <= probability <= 1.0:
+                    raise ValueError(
+                        f"Jev 回傳無效 Noul：{question_id}={probability!r}")
+                probabilities[question_id] = probability
+                if probability >= 0.85:
+                    events.append({"event": _COMPLETE_EVENT, "id": quest.id})
+        except Exception as exc:
+            (_DEBUG_DIR / "dialogue_complete_output.json").write_text(
+                json.dumps({
+                    "error": {"type": type(exc).__name__, "message": str(exc)}
+                }, ensure_ascii=False, indent=2),
+                encoding="utf-8", errors="replace",
+            )
+            return []
 
-# ── context helpers ───────────────────────────────────────────────────────────
-
-def _npc_brief(npc) -> str:
-    char = getattr(npc, "char", None)
-    name = getattr(char, "name", getattr(npc, "char_id", "NPC"))
-    att = npc.attitude
-    return f"{name}（態度：{_ATTITUDE_LABELS[att]} {att}/4）\n{getattr(npc, '_personality', '')}"
-
-
-def _npc_items(npc) -> str:
-    char = getattr(npc, "char", None)
-    if char is None:
-        return "  （無）"
-    names = [w.name for w in getattr(char, "weapons", [])]
-    names += [f"{c.name}×{c.quantity}" for c in getattr(char, "consumables", [])
-              if c.quantity > 0]
-    return "\n".join(f"  {n}" for n in names) or "  （無）"
-
-
-def _prior_conversation_script(ws, npc_id: str,
-                               actions: list[dict[str, str]]) -> str:
-    """Render history without duplicating the current, already-logged PC lines."""
-    entries = list(ws.log_for(npc_id))
-    count = len(actions)
-    if count and len(entries) >= count:
-        tail = entries[-count:]
-        if all(
-            entry.get("speaker") == action["actor_id"]
-            and entry.get("text") == action["text"]
-            for entry, action in zip(tail, actions)
-        ):
-            entries = entries[:-count]
-    return "\n".join(
-        f"{ws.speaker_label(entry['speaker'])}：{entry['text']}"
-        for entry in entries
-    )
-
+        (_DEBUG_DIR / "dialogue_complete_output.json").write_text(
+            json.dumps({
+                "state": state,
+                "probabilities": probabilities,
+                "events": events,
+            }, ensure_ascii=False, indent=2),
+            encoding="utf-8", errors="replace",
+        )
+        return events
 
 def _default_actor(ws) -> str:
     """The human PC if present, else the first living PC."""

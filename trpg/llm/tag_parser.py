@@ -66,7 +66,7 @@ def execute_all_tags(text: str, world_state: WorldState,
     seen_once: set[str] = set()   # TRAVEL / INITIATIVE / TALK / ATTACK_NPC / FLEE fire once per call
     for m in re.finditer(r"\[([A-Z_]+):\s*([^\]]+)\]", text):
         tag = m.group(1)
-        if tag in {"TRAVEL", "INITIATIVE", "TALK", "ATTACK_NPC", "FLEE", "QUEST_ACCEPT", "QUEST_COMPLETE", "QUEST_TURNIN", "RECRUIT"} and tag in seen_once:
+        if tag in {"TRAVEL", "INITIATIVE", "TALK", "ATTACK_NPC", "FLEE", "QUEST_ACCEPT", "QUEST_COMPLETE", "QUEST_TURNIN"} and tag in seen_once:
             continue
         try:
             result = _dispatch(tag, m.group(2).strip(), world_state)
@@ -78,7 +78,7 @@ def execute_all_tags(text: str, world_state: WorldState,
             ok.append(result)
             if log_to_narrative:
                 world_state.log_event("system", result)
-            if tag in {"TRAVEL", "INITIATIVE", "TALK", "ATTACK_NPC", "FLEE", "QUEST_ACCEPT", "QUEST_COMPLETE", "QUEST_TURNIN", "RECRUIT"}:
+            if tag in {"TRAVEL", "INITIATIVE", "TALK", "ATTACK_NPC", "FLEE", "QUEST_ACCEPT", "QUEST_COMPLETE", "QUEST_TURNIN"}:
                 seen_once.add(tag)
     return ok, errors
 
@@ -595,23 +595,6 @@ def _dispatch(tag: str, args: str, ws: WorldState) -> str:
         if revealed:
             return f"{char.name} 搜索（{stat} {total}）→ 發現：{'；'.join(revealed)}"
         return f"{char.name} 搜索（{stat} {total}）→ 沒看出名堂，可能還漏看了什麼"
-
-    if tag == "RECRUIT":
-        key = args.strip().split()[0]
-        npc_id, char = _find_npc(key, ws)
-        if not char:
-            return f"找不到角色：{key}"
-        if not char.is_alive():
-            return f"無法招募 {char.name}——他已經倒下"
-        if npc_id in ws.party_ids:
-            return f"{char.name} 已經跟著你們了"
-        if char.attitude < 2:
-            return f"{char.name} 不夠信任你，不會跟你走"
-        agent = _npc_agent_registry.get(npc_id) if _npc_agent_registry else None
-        if agent is None:
-            return f"找不到 {char.name} 的 NpcAgent"
-        agent.pending_join_decision = True
-        return f"{char.name} 看著你，似乎在考慮…"
 
     if tag == "QUEST_ACCEPT":
         qid = args.strip().split()[0]

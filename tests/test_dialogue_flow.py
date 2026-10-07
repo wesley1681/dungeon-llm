@@ -1,15 +1,11 @@
-"""Headless tests for the 3-stage conversation resolution pipeline.
-
-Covers the two game.py appliers (_apply_dialogue_events / _apply_quest_events)
-and the DialogueDirector Jev/parse/filter logic, all with stubbed model seams so
-no network is touched.
-"""
+"""Headless tests for the Jev-backed conversation resolution pipeline."""
 from types import SimpleNamespace
 
 from trpg.scenarios.dungeon import build_world_state, build_npc_agents
 from trpg.game import GameSession
 from trpg.llm.controllers import ActorController, HumanController
-from trpg.llm.dialogue_flow import DialogueDirector, CheckResult, CheckPlan
+from trpg.llm.dialogue_flow import DialogueDirector, CheckPlan
+from trpg.engine.items import Consumable
 
 
 class _StubTagAgent:
@@ -47,74 +43,7 @@ def test_npc_agent_lost_attitude_self_marking():
     assert not hasattr(civ, "_skip_marker")
 
 
-# ── Stage-2 appliers ──────────────────────────────────────────────────────────
-
-def test_attitude_event_changes_attitude():
-    session, ws, npc = _session()
-    civ = npc["civilian"]; civ_char = ws.characters["civilian"]
-    civ_char.attitude = 2
-    combat = session._apply_dialogue_events(
-        [{"event": "attitude", "delta": -1}], civ, civ_char, None)
-    assert combat is False
-    assert civ_char.attitude == 1, "attitude event must move attitude"
-
-
-def test_attitude_event_clamps():
-    session, ws, npc = _session()
-    civ = npc["civilian"]; civ_char = ws.characters["civilian"]
-    civ_char.attitude = 4
-    session._apply_dialogue_events([{"event": "attitude", "delta": 5}], civ, civ_char, None)
-    assert civ_char.attitude == 4, "attitude must clamp at 4"
-
-
-def test_reveal_requires_won_check_and_is_sticky():
-    session, ws, npc = _session()
-    civ = npc["civilian"]; civ_char = ws.characters["civilian"]
-
-    # Not won → concession dropped, nothing revealed.
-    session._apply_dialogue_events(
-        [{"event": "reveal", "indices": [0]}], civ, civ_char,
-        CheckResult("說服", success=False, total=5, dc=12, actor="kaine"))
-    assert civ.revealed == []
-    assert civ.pending_directives == []
-
-    # Won → secret 0 moves into the sticky revealed set + a directive is queued.
-    won = CheckResult("威嚇", success=True, total=18, dc=12, actor="kaine")
-    session._apply_dialogue_events([{"event": "reveal", "indices": [0, 2]}], civ, civ_char, won)
-    assert len(civ.revealed) == 2
-    assert civ._secrets[0] in civ.revealed and civ._secrets[2] in civ.revealed
-    assert any("情報" in d for d in civ.pending_directives)
-
-
-def test_no_check_blocks_concessions():
-    session, ws, npc = _session()
-    civ = npc["civilian"]; civ_char = ws.characters["civilian"]
-    session._apply_dialogue_events(
-        [{"event": "reveal", "indices": [0]}, {"event": "suggest_join"}],
-        civ, civ_char, None)   # result=None → no check ran
-    assert civ.revealed == []
-    assert civ.pending_join_decision is False
-
-
-def test_suggest_join_opens_recruit_decision():
-    session, ws, npc = _session()
-    civ = npc["civilian"]; civ_char = ws.characters["civilian"]
-    won = CheckResult("說服", success=True, total=16, dc=12, actor="kaine")
-    session._apply_dialogue_events([{"event": "suggest_join"}], civ, civ_char, won)
-    assert civ.pending_join_decision is True
-    assert any("加入" in d for d in civ.pending_directives)
-
-
-def test_attack_event_starts_combat():
-    session, ws, npc = _session()
-    civ = npc["civilian"]; civ_char = ws.characters["civilian"]
-    combat = session._apply_dialogue_events([{"event": "attack"}], civ, civ_char, None)
-    assert combat is True, "attack event must signal the caller to end the conversation"
-    assert civ_char.attitude == 0, "attacked NPC turns hostile"
-    assert ws.combat is not None and ws.combat.active
-
-
-# ── Stage-3 quest applier ─────────────────────────────────────────────────────
+# ── Quest applier ─────────────────────────────────────────────────────────────
 
 def test_quest_accept_complete_turnin_lifecycle():
     session, ws, npc = _session()
@@ -139,18 +68,6 @@ def test_quest_event_bad_id_ignored():
 
 
 # ── DialogueDirector Jev + parse/filter seams ─────────────────────────────────
-
-def _director(ws, ask_returns):
-    """A director whose remaining LLM stages return canned text."""
-    d = DialogueDirector("m", "u", "b", ws)
-    def fake_ask(system, user, num_predict, temperature, debug_name):
-        for key, val in ask_returns.items():
-            if key in debug_name:
-                return val
-        return ""
-    d._ask = fake_ask
-    return d
-
 
 class _FakeSocialJevClient:
     def __init__(self, *, required=0.95, check_type="persuade", score=3.0):
@@ -215,6 +132,38 @@ class _FakeNpcActionJevClient:
         return SimpleNamespace(model="jev-test", answers=answers, nouls=answers)
 
 
+class _FakeChoiceJevClient:
+    def __init__(self, selections):
+        self.selections = selections
+        self.call_count = 0
+        self.last_state = None
+        self.last_questions = None
+
+    def system_one(self, *, state, questions, model):
+        self.call_count += 1
+        self.last_state = state
+        self.last_questions = questions
+        answers = {}
+        for question_id, question in questions.items():
+            if question.type == "noul":
+                answers[question_id] = SimpleNamespace(
+                    noul=float(self.selections.get(question_id, 0.0)))
+            else:
+                answers[question_id] = SimpleNamespace(
+                    choice=self.selections.get(question_id, "none"),
+                    confidence=0.99,
+                    probabilities={},
+                )
+        return SimpleNamespace(
+            model="jev-test",
+            answers=answers,
+            nouls={key: value for key, value in answers.items()
+                   if hasattr(value, "noul")},
+            choices={key: value for key, value in answers.items()
+                     if hasattr(value, "choice")},
+        )
+
+
 def test_decide_check_uses_noul_choice_and_score_in_one_jev_call():
     _, ws, npc = _session()
     client = _FakeSocialJevClient(
@@ -233,6 +182,11 @@ def test_decide_check_uses_noul_choice_and_score_in_one_jev_call():
     required = client.last_questions["social_0_required"]
     assert required.criteria["true"] and required.criteria["false"]
     assert client.last_state["player_actions"][0]["actor_id"] == "kaine"
+    assert set(client.last_state) == {"player_actions", "npc"}
+    score_prompt = client.last_questions["social_0_effectiveness"].instructions
+    assert "假設" not in score_prompt
+    assert "CHA" not in score_prompt
+    assert "conversation_history" not in score_prompt
 
 
 def test_decide_check_noul_is_a_yes_no_gate_not_an_intensity():
@@ -247,21 +201,27 @@ def test_decide_check_noul_is_a_yes_no_gate_not_an_intensity():
     assert plan.check is None
 
 
-def test_judge_npc_actions_uses_minimal_state_and_four_nouls():
-    _, ws, _ = _session()
+def test_npc_actions_include_actor_target_and_four_nouls():
+    _, ws, npc = _session()
     client = _FakeNpcActionJevClient({
         "give": 0.96,
         "offer_quest": 0.88,
     })
     d = DialogueDirector("m", "u", "b", ws, typesafe_client=client)
 
-    actions = d.judge_npc_actions("這瓶藥給你，也請幫我找回女兒。")
+    actions = d.judge_npc_actions(
+        "這瓶藥給你，也請幫我找回女兒。", npc["civilian"], ws)
 
-    assert actions == ["give", "offer_quest"]
+    assert actions == [
+        {"event": "give", "actor_id": "civilian", "target_id": "kaine"},
+        {"event": "offer_quest", "actor_id": "civilian", "target_id": "kaine"},
+    ]
     assert client.call_count == 1
-    assert client.last_state == {
-        "npc_reply": {"text": "這瓶藥給你，也請幫我找回女兒。"}
-    }
+    utterance = client.last_state["utterance"]
+    assert utterance["text"] == "這瓶藥給你，也請幫我找回女兒。"
+    assert utterance["actor"] == {"id": "civilian", "name": "老柯"}
+    assert utterance["target"] == {"id": "kaine", "name": "凱恩"}
+    assert "side" not in utterance["actor"]
     assert set(client.last_questions) == {
         "attack", "join", "give", "offer_quest",
     }
@@ -269,86 +229,235 @@ def test_judge_npc_actions_uses_minimal_state_and_four_nouls():
 
 
 def test_judge_npc_actions_derives_none_and_falls_back_safely():
-    _, ws, _ = _session()
+    _, ws, npc = _session()
     quiet = _FakeNpcActionJevClient()
     d = DialogueDirector("m", "u", "b", ws, typesafe_client=quiet)
-    assert d.judge_npc_actions("今天天氣不錯。") == ["none"]
+    assert d.judge_npc_actions("今天天氣不錯。", npc["civilian"], ws) == []
 
     broken = _FakeNpcActionJevClient(error=RuntimeError("offline"))
     d2 = DialogueDirector("m", "u", "b", ws, typesafe_client=broken)
-    assert d2.judge_npc_actions("請跟我來。") == ["none"]
+    assert d2.judge_npc_actions("請跟我來。", npc["civilian"], ws) == []
 
 
-def test_arrange_events_filters_unknown_and_parses_array():
+def test_resolve_dialogue_actions_only_sends_valid_quest_candidates():
     _, ws, npc = _session()
-    d = _director(ws, {"event":
-        '亂講 [{"event":"reveal","indices":[0]},{"event":"bogus"},{"event":"attitude","delta":-1}] 尾巴'})
-    res = CheckResult("威嚇", True, 18, 12, "kaine")
-    evs = d.arrange_events("威脅他", res, npc["civilian"], ws)
-    kinds = [e["event"] for e in evs]
-    assert "reveal" in kinds and "attitude" in kinds
-    assert "bogus" not in kinds, "unknown events must be filtered out"
+    client = _FakeChoiceJevClient({"offered_quest": "quest_0"})
+    d = DialogueDirector("m", "u", "b", ws, typesafe_client=client)
+
+    events = d.resolve_dialogue_actions(
+        "能請你們幫我採集月光草嗎？", [{
+            "event": "offer_quest",
+            "actor_id": "civilian",
+            "target_id": "kaine",
+        }], ws)
+
+    assert events == [{
+        "event": "offer_quest",
+        "actor_id": "civilian",
+        "target_id": "kaine",
+        "id": "moonlight_grass",
+    }]
+    assert client.call_count == 1
+    assert client.last_state["candidates"]["items"] == []
+    assert client.last_state["candidates"]["quests"][0]["id"] == "moonlight_grass"
 
 
-def test_arrange_events_quest_accept_gated_by_offered():
+def test_resolve_give_uses_actor_inventory_and_target():
     _, ws, npc = _session()
-    q = ws.quests["moonlight_grass"]   # giver == civilian, inactive
-    # Not offered yet → accept is out of scope → dropped even if the model emits it
-    # (this is the structural guard against same-turn false-accept).
-    q.offered = False
-    d = _director(ws, {"event": '[{"event":"quest_accept","id":"moonlight_grass"}]'})
-    assert d.arrange_events("好我接", None, npc["civilian"], ws) == []
+    ws.characters["civilian"].consumables.append(
+        Consumable("治療藥水", 1, "heal", "2d4+2"))
+    client = _FakeChoiceJevClient({"give_item": "item_0"})
+    d = DialogueDirector("m", "u", "b", ws, typesafe_client=client)
 
-    # Offered → accept is in scope; valid id passes, bogus id dropped.
-    q.offered = True
-    d2 = _director(ws, {"event":
-        '[{"event":"quest_accept","id":"moonlight_grass"},{"event":"quest_accept","id":"nope"}]'})
-    evs = d2.arrange_events("好我接", None, npc["civilian"], ws)
-    assert [e["id"] for e in evs] == ["moonlight_grass"]
+    events = d.resolve_dialogue_actions(
+        "這瓶治療藥水給你。", [{
+            "event": "give",
+            "actor_id": "civilian",
+            "target_id": "kaine",
+        }], ws)
+
+    assert events == [{
+        "event": "give",
+        "actor_id": "civilian",
+        "target_id": "kaine",
+        "item": "治療藥水",
+    }]
 
 
-def test_arrange_events_tolerates_quest_id_key():
-    # Regression: the model sometimes emits "quest_id" instead of "id"; the parser
-    # must tolerate it and normalise to "id" (else a valid accept silently drops).
+def test_npc_join_offer_requires_player_acceptance_before_party_change():
+    session, ws, npc = _session()
+    civ = npc["civilian"]
+    civ_char = ws.characters["civilian"]
+    session.dialogue = SimpleNamespace(
+        judge_npc_actions=lambda text, agent, state, target_id=None: [{
+            "event": "join",
+            "actor_id": "civilian",
+            "target_id": "kaine",
+        }],
+        resolve_dialogue_actions=lambda text, events, state: events,
+    )
+
+    assert session._apply_npc_dialogue_actions(
+        "我想跟你們一起冒險。", civ, civ_char) is False
+    assert civ.pending_join_offer == {
+        "proposer_id": "civilian",
+        "responder_id": "kaine",
+        "candidate_id": "civilian",
+    }
+    assert "civilian" not in ws.party_ids
+
+    assert session._apply_player_dialogue_actions(
+        [{"event": "join_accept", "candidate_id": "civilian"}],
+        civ, civ_char) is False
+    assert civ.pending_join_offer is None
+    assert "civilian" in ws.party_ids
+
+
+def test_player_attack_action_starts_combat_immediately():
+    session, ws, npc = _session()
+    civ = npc["civilian"]
+    civ_char = ws.characters["civilian"]
+
+    assert session._apply_player_dialogue_actions([{
+        "event": "attack",
+        "actor_id": "kaine",
+        "target_id": "civilian",
+    }], civ, civ_char) is True
+    assert ws.combat is not None and ws.combat.active
+
+
+def test_judge_player_attack_uses_noul():
     _, ws, npc = _session()
+    client = _FakeChoiceJevClient({"attack": 0.95})
+    d = DialogueDirector("m", "u", "b", ws, typesafe_client=client)
+
+    events = d.judge_player_actions("我拔劍立刻砍向你。", npc["civilian"], ws)
+
+    assert events == [{
+        "event": "attack",
+        "actor_id": "kaine",
+        "target_id": "civilian",
+    }]
+    assert set(client.last_questions) == {"attack", "join", "give"}
+    assert "offer_quest" not in client.last_questions
+    assert client.last_questions["attack"].type == "noul"
+
+
+def test_player_confirmation_uses_only_pending_offers():
+    _, ws, npc = _session()
+    civ = npc["civilian"]
+    civ.pending_join_offer = {
+        "proposer_id": "civilian",
+        "responder_id": "kaine",
+        "candidate_id": "civilian",
+    }
     ws.quests["moonlight_grass"].offered = True
-    d = _director(ws, {"event": '[{"event":"quest_accept","quest_id":"moonlight_grass"}]'})
-    evs = d.arrange_events("我決定接下老柯的任務", None, npc["civilian"], ws)
-    assert evs == [{"event": "quest_accept", "id": "moonlight_grass"}]
+    client = _FakeChoiceJevClient({
+        "join_response": "accept",
+        "quest_0_response": "reject",
+    })
+    d = DialogueDirector("m", "u", "b", ws, typesafe_client=client)
+
+    events = d.judge_player_actions(
+        "你可以加入，但我不接這個任務。", civ, ws)
+
+    assert events == [
+        {
+            "event": "join_accept",
+            "actor_id": "kaine",
+            "target_id": "civilian",
+            "candidate_id": "civilian",
+        },
+        {
+            "event": "quest_reject",
+            "id": "moonlight_grass",
+            "actor_id": "kaine",
+            "target_id": "civilian",
+        },
+    ]
+    assert set(client.last_questions) == {
+        "attack", "join", "give", "join_response", "quest_0_response",
+    }
 
 
-def test_arrange_events_turnin_gated_by_completed():
-    _, ws, npc = _session()
-    q = ws.quests["moonlight_grass"]   # giver == civilian
-    d = _director(ws, {"event": '[{"event":"quest_turnin","id":"moonlight_grass"}]'})
-    # Not completed → turn-in out of scope → dropped.
-    q.status = "active"
-    assert d.arrange_events("我來領獎", None, npc["civilian"], ws) == []
-    # Completed → turn-in in scope.
-    q.status = "completed"
-    evs = d.arrange_events("我來領獎", None, npc["civilian"], ws)
-    assert [e["id"] for e in evs] == ["moonlight_grass"]
+def test_player_join_offer_is_accepted_by_npc_without_second_player_consent():
+    session, ws, npc = _session()
+    civ = npc["civilian"]
+    civ_char = ws.characters["civilian"]
+
+    session._apply_player_dialogue_actions([{
+        "event": "join",
+        "actor_id": "kaine",
+        "target_id": "civilian",
+    }], civ, civ_char)
+    assert civ.pending_join_offer == {
+        "proposer_id": "kaine",
+        "responder_id": "civilian",
+        "candidate_id": "civilian",
+    }
+
+    client = _FakeChoiceJevClient({"join_response": "accept"})
+    d = DialogueDirector("m", "u", "b", ws, typesafe_client=client)
+    events = d.judge_npc_actions(
+        "好，我加入你們。", civ, ws, target_id="kaine")
+
+    assert events == [{
+        "event": "join_accept",
+        "actor_id": "civilian",
+        "target_id": "kaine",
+        "candidate_id": "civilian",
+    }]
+    session._apply_dialogue_actions(events, civ, civ_char)
+    assert "civilian" in ws.party_ids
+    assert civ.pending_join_offer is None
+
+
+def test_player_give_uses_same_catalog_resolution_and_dispatch():
+    session, ws, npc = _session()
+    giver = ws.characters["kaine"]
+    recipient = ws.characters["civilian"]
+    giver.weapons = []
+    giver.gear = []
+    giver.consumables = [Consumable("治療藥水", 1, "heal", "2d4+2")]
+    recipient.consumables = []
+    client = _FakeChoiceJevClient({"give": 0.96, "give_item": "item_0"})
+    d = DialogueDirector("m", "u", "b", ws, typesafe_client=client)
+
+    events = d.judge_player_actions({
+        "actor_id": "kaine",
+        "text": "這瓶治療藥水給你。",
+    }, npc["civilian"], ws)
+    events = d.resolve_dialogue_actions("這瓶治療藥水給你。", events, ws)
+
+    assert events == [{
+        "event": "give",
+        "actor_id": "kaine",
+        "target_id": "civilian",
+        "item": "治療藥水",
+    }]
+    session._apply_player_dialogue_actions(
+        events, npc["civilian"], recipient)
+    assert giver.get_consumable("治療藥水") is None
+    assert recipient.get_consumable("治療藥水").quantity == 1
 
 
 def test_judge_completion_detects_and_validates_id():
     _, ws, npc = _session()
     ws.quests["moonlight_grass"].status = "active"
-    d = _director(ws, {"complete":
-        '[{"event":"quest_complete","id":"moonlight_grass"},{"event":"quest_complete","id":"nope"}]'})
+    client = _FakeNpcActionJevClient({"complete_0": 0.91})
+    d = DialogueDirector("m", "u", "b", ws, typesafe_client=client)
     evs = d.judge_completion("你答應停手嗎", "好啦我不收保護費了", ws)
-    assert [e["id"] for e in evs] == ["moonlight_grass"], "invalid id must be dropped"
+    assert evs == [{"event": "quest_complete", "id": "moonlight_grass"}]
+    assert set(client.last_questions) == {"complete_0"}
 
 
 def test_judge_completion_skips_when_no_active_quests():
     _, ws, npc = _session()
     # moonlight_grass is inactive; no active quests → empty scope → skip LLM call.
-    called = {"n": 0}
-    d = DialogueDirector("m", "u", "b", ws)
-    def spy_ask(*a, **k):
-        called["n"] += 1
-        return "[]"
-    d._ask = spy_ask
-    assert d.judge_completion("嗨", "哼", ws) == [] and called["n"] == 0
+    client = _FakeNpcActionJevClient()
+    d = DialogueDirector("m", "u", "b", ws, typesafe_client=client)
+    assert d.judge_completion("嗨", "哼", ws) == []
+    assert client.call_count == 0
 
 
 # ── Integration: _run_conversation wires the 3 stages together ────────────────
@@ -361,18 +470,20 @@ class _StubNpcCtrl(ActorController):
 
 
 class _StubDirector:
-    """Canned stage outputs — a guaranteed-success check (dc=0), a reveal, and a
-    stage-2 quest accept — so the full pipeline path is exercised deterministically."""
+    """Canned outputs so the full pipeline runs deterministically."""
     def __init__(self):
         self.npc_action_calls = []
+        self.player_confirmation_calls = []
     def decide_check(self, player_text, npc, ws):
         return CheckPlan(check="說服", dc=0, actor="kaine")
-    def arrange_events(self, player_text, result, npc, ws):
-        return [{"event": "reveal", "indices": [0]},
-                {"event": "quest_accept", "id": "moonlight_grass"}]
-    def judge_npc_actions(self, npc_text):
+    def judge_npc_actions(self, npc_text, npc, ws, target_id=None):
         self.npc_action_calls.append(npc_text)
-        return ["none"]
+        return []
+    def resolve_dialogue_actions(self, text, events, ws):
+        return events
+    def judge_player_actions(self, player_action, npc, ws):
+        self.player_confirmation_calls.append(player_action)
+        return []
     def judge_completion(self, player_text, npc_response, ws):
         return []
 
@@ -393,10 +504,13 @@ def test_run_conversation_chains_all_stages():
         "你是誰？",
         "好…我告訴你守衛室的事，也接下你的請求。",
     ]
-    # Stage 1+2: dc=0 check always succeeds → reveal concession granted (sticky).
-    assert civ._secrets[0] in civ.revealed
-    # Stage 3: quest accepted from the NPC's reply.
-    assert ws.quests["moonlight_grass"].status == "active"
+    assert session.dialogue.player_confirmation_calls == [
+        {
+            "actor_id": "kaine",
+            "actor_name": "凱恩",
+            "text": "我求求你，把守衛室的情況告訴我",
+        },
+    ]
     # Leaving still clears the trigger queue (no regression of the leave fix).
     assert session._tag_actions == []
 
@@ -410,27 +524,40 @@ class _OfferingNpcCtrl(ActorController):
 
 
 class _GateFaithfulDirector:
-    """Mirrors the REAL arrange_events offered-gate so the regression actually bites:
-    it emits quest_accept only when the quest is already marked offered."""
+    """Accepts a quest only after its spoken offer was recorded."""
     def decide_check(self, player_text, npc, ws):
         return CheckPlan(check=None, dc=0, actor="kaine")
-    def arrange_events(self, player_text, result, npc, ws):
-        q = ws.quests["moonlight_grass"]
-        if (q.giver_id == getattr(npc, "char_id", "")
-                and q.status == "inactive" and q.offered):
-            return [{"event": "quest_accept", "id": "moonlight_grass"}]
+    def judge_npc_actions(self, npc_text, npc, ws, target_id=None):
+        if "月光草" not in npc_text:
+            return []
+        return [{
+            "event": "offer_quest",
+            "actor_id": "civilian",
+            "target_id": target_id or "kaine",
+        }]
+    def resolve_dialogue_actions(self, text, events, ws):
+        return [
+            {**event, "id": "moonlight_grass"}
+            if event.get("event") == "offer_quest" else event
+            for event in events
+        ]
+    def judge_player_actions(self, player_action, npc, ws):
+        if (ws.quests["moonlight_grass"].offered
+                and "接下" in player_action["text"]):
+            return [{
+                "event": "quest_accept",
+                "id": "moonlight_grass",
+                "actor_id": player_action["actor_id"],
+                "target_id": "civilian",
+            }]
         return []
-    def judge_npc_actions(self, npc_text):
-        return ["offer_quest"] if "月光草" in npc_text else ["none"]
     def judge_completion(self, player_text, npc_response, ws):
         return []
 
 
 def test_opening_offer_unlocks_first_turn_accept():
-    # Regression: the offer is voiced in the NPC opening (take_npc_opening), which
-    # runs BEFORE the conversation loop. If `offered` is marked only after in-loop
-    # responses, the player's very first "I accept" lands one exchange too early and
-    # silently drops. Marking offered right after the opening fixes it.
+    # Regression: an offer voiced in the opening must be recorded before the
+    # player's first reply is classified.
     session, ws, npc = _session()
     assert npc["civilian"].attitude >= 1          # 老柯 starts 戒備 → voices the offer
     q = ws.quests["moonlight_grass"]
@@ -444,7 +571,7 @@ def test_opening_offer_unlocks_first_turn_accept():
 
     assert q.status == "active", (
         "a quest offered in the NPC opening must be acceptable on the player's "
-        "first reply — offered must be marked right after the opening")
+        "first reply")
 
 
 if __name__ == "__main__":

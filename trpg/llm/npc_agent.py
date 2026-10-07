@@ -1,5 +1,4 @@
 import json
-import re
 import pathlib
 from ..engine.character import Character
 from ..engine.quests import Quest, objective_progress_str
@@ -27,9 +26,8 @@ _CORE_BODY_TEMPLATE = """你正在扮演 {name}。{personality}
 威脅只能讓你說出你**真的知道**的事，威脅變不出你不知道的事。
 """
 
-# Conversation-only extras: dialogue format rules, volatile state (attitude,
-# pending reveals, recruit, secrets, quests, action threshold), attitude
-# marker grammar. Combat mode skips this entire block.
+# Conversation-only extras: dialogue format rules, attitude, pending quest
+# rewards, secrets, directives, quests, and hostile action guidance.
 _CONVERSATION_EXTRAS_TEMPLATE = """## 對話規則
 - 用第一人稱繁體中文回應，控制在 60 字以內
 - 直接輸出對話內容，不加旁白或括號說明
@@ -37,16 +35,13 @@ _CONVERSATION_EXTRAS_TEMPLATE = """## 對話規則
 
 ## 當前態度：{attitude_label}（{attitude}/4）
 
-{pending_section}{recruit_section}{secrets_section}{revealed_section}{directives_section}{quest_section}{action_section}"""
+{pending_section}{secrets_section}{revealed_section}{directives_section}{quest_section}{action_section}"""
 
 _ACTION_SECTION = """## 行動選擇（你已經到達敵意，根據自己的性格決定）
-若你決定不再忍受、動手攻擊對方，在回應結尾加 <ATTACK>
-若你決定逃離現場，在回應結尾加 <FLEE>
-若你只想繼續用言語抗拒、拒絕配合，不加任何標記
+若你決定不再忍受、現在就動手攻擊對方，請在對話中明確說出你立即發動攻擊。
+若你只想繼續用言語抗拒、拒絕配合，就只回應對話。
 
 """
-
-_ACTION_RE = re.compile(r'<\s*(ATTACK|FLEE)\s*>', re.IGNORECASE)
 
 _SECRETS_UNLOCKED = """## 你知道的情報（態度已足夠，對方問起時如實回答）
 {secrets}
@@ -56,15 +51,14 @@ _SECRETS_LOCKED = """## 你知道的情報
 你隱約知道一些事，但現在還不夠信任對方，不願透露細節。
 """
 
-# Sticky: knowledge the NPC has already told the player (via a won reveal check).
+# Sticky: knowledge the NPC has already told the player.
 # Once revealed it stays in context permanently — the NPC talks about it freely.
 _REVEALED_SECTION = """## 你已經告訴過對方的情報（已公開，對方問起時照常談論，不要否認）
 {items}
 
 """
 
-# Per-turn directives set by the Stage-2 event arranger (dialogue_flow). These
-# tell the NPC what concession it just made this round; it still acts in-voice.
+# Per-turn directives produced by game systems, such as social-check outcomes.
 _DIRECTIVES_SECTION = """## 本輪劇情指示（依此回應，但仍用你自己的口吻與情緒演出）
 {items}
 
@@ -96,21 +90,15 @@ _QUEST_ACTIVE = """## 你已經拜託的事
 
 """
 
-_QUEST_COMPLETED = """## 對方已完成的請託
-對方已替你完成：{description}
-若對方提起、回報、或詢問獎勵，立刻表達感謝並交付承諾的報酬與情報。
+_QUEST_AWAITING_REPLY = """## 你剛提出、正在等待答覆的委託
+你已經向對方提出：{description}
+不要反覆重述整份委託；對方若接受、拒絕或追問，依其回答自然回應。
 
 """
 
-_RECRUIT_RE = re.compile(r'<\s*(JOIN|DECLINE)\s*>', re.IGNORECASE)
-
-_RECRUIT_SECTION = """## 對方邀你加入冒險（重要決定）
-對方邀請你跟著他們一起冒險。根據你的個性、當前狀況、對對方的信任程度，
-決定要不要去。決定後在回應**結尾另起一行**只能輸出以下兩種標記：
-<JOIN>   = 願意加入
-<DECLINE> = 拒絕，留在原地
-
-回應內容簡短說明你的想法/原因，再加上標記。
+_QUEST_COMPLETED = """## 對方已完成的請託
+對方已替你完成：{description}
+若對方提起、回報、或詢問獎勵，立刻表達感謝並交付承諾的報酬與情報。
 
 """
 
@@ -155,20 +143,21 @@ class NpcAgent:
         self._quests          = quests or []
         self.pending_reveal: list[str] = []             # quest reward lines NPC MUST say this turn
         self.revealed: list[str] = []                   # sticky: secrets already told (stay in context)
-        self.pending_directives: list[str] = []         # this-turn event instructions (Stage-2 arranger)
-        self.pending_action: str = ""                   # "attack" / "flee"
-        self.pending_join_decision: bool = False        # one-shot: NPC must answer join/decline this turn
-        self.recruit_decision: str = ""                 # "" / "join" / "decline" — parsed from this turn's output
+        self.pending_directives: list[str] = []         # this-turn narrative instructions
         self.in_party: bool = False                     # mirror of (char_id in ws.party_ids)
         # Coarse Jev classification of the most recent NPC utterance. Later
         # stages resolve concrete objects and player consent before execution.
         self.last_dialogue_actions: list[str] = ["none"]
+        self.last_dialogue_events: list[dict] = []
+        # Directional proposal: proposer_id / responder_id / candidate_id.
+        self.pending_join_offer: dict | None = None
 
     def _quest_section(self) -> str:
         parts: list[str] = []
         for q in self._quests:
             if q.status == "inactive":
-                parts.append(_QUEST_OFFER.format(description=q.description))
+                template = _QUEST_AWAITING_REPLY if q.offered else _QUEST_OFFER
+                parts.append(template.format(description=q.description))
             elif q.status == "active":
                 prog = objective_progress_str(q, self.world_state) if self.world_state else ""
                 parts.append(_QUEST_ACTIVE.format(description=q.description, progress=prog or "未知"))
@@ -179,10 +168,9 @@ class NpcAgent:
     def _system(self) -> str:
         """Conversation-mode body: core (identity/personality/general tactics/
         knowledge boundary) + conversation extras (dialogue rules / attitude /
-        secrets / revealed / this-turn directives / quests / recruit).
+        secrets / revealed / this-turn directives / quests).
 
-        Attitude is NO LONGER self-marked by the NPC — it is driven only by the
-        dialogue_flow event arranger (好感度增減) or quest rewards.
+        Attitude is not self-marked by the NPC; game mechanics own its changes.
         """
         if self._secrets:
             formatted = "\n".join(f"- {s}" for s in self._secrets)
@@ -212,7 +200,6 @@ class NpcAgent:
             directives_section = ""
 
         action_section = _ACTION_SECTION if self.attitude == 0 else ""
-        recruit_section = _RECRUIT_SECTION if self.pending_join_decision else ""
         tactics_section = (self._tactics.rstrip() + "\n\n") if self._tactics else ""
 
         core = _CORE_BODY_TEMPLATE.format(
@@ -224,7 +211,6 @@ class NpcAgent:
             attitude_label=_ATTITUDE_LABELS[self.attitude],
             attitude=self.attitude,
             pending_section=pending_section,
-            recruit_section=recruit_section,
             secrets_section=secrets_section,
             revealed_section=revealed_section,
             directives_section=directives_section,
@@ -248,9 +234,7 @@ class NpcAgent:
         """Generate an NPC response.
 
         combat=False (default): conversation mode. Body includes attitude /
-            secrets / quests / recruit / attitude-marker rules. After the LLM
-            replies, JOIN/DECLINE/[+/=/-]/<ATTACK>/<FLEE> markers are parsed
-            out and used to update internal state; cleaned text is returned.
+            secrets / quests and action rules. Jev classifies the spoken action.
         combat=True: slim body (identity + personality + combat tactics +
             knowledge boundary only). No marker parsing — caller
             (LLMNpcController) is responsible for stripping <FLEE>/<END>.
@@ -292,27 +276,10 @@ class NpcAgent:
             return full
 
         # ── Conversation mode: reset one-shots and parse markers ──────────────
-        # Attitude is no longer self-marked by the NPC — it changes only via the
-        # dialogue_flow event arranger (好感度增減) or quest rewards. Only the two
-        # autonomy markers remain: <ATTACK>/<FLEE> (hostile NPC) and
-        # <JOIN>/<DECLINE> (recruit decision). One-shot injections consumed by
+        # Attitude is no longer self-marked by the NPC. One-shot injections consumed by
         # _system() above are cleared here; `revealed` is sticky and kept.
         self.pending_reveal        = []
         self.pending_directives    = []
-        self.pending_join_decision = False
-        self.recruit_decision      = ""
-
-        # Parse and strip action marker (only meaningful when attitude == 0)
-        am = _ACTION_RE.search(full)
-        if am:
-            self.pending_action = am.group(1).lower()
-            full = _ACTION_RE.sub("", full).strip()
-
-        # Parse and strip recruit decision marker (<JOIN> / <DECLINE>)
-        rm = _RECRUIT_RE.search(full)
-        if rm:
-            self.recruit_decision = rm.group(1).lower()
-            full = _RECRUIT_RE.sub("", full).strip()
 
         return full
 
