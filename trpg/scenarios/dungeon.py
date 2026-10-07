@@ -25,14 +25,6 @@ THOR_TACTICS_GENERAL = """## 平常行為原則（探索、對話時適用）
 - 隊友（凱恩）已經在發起社交時，你選擇 [SILENT]，不搶話；但隊友被攻擊或威脅時，第一個衝出去護衛
 """
 
-THOR_TACTICS_COMBAT = """## 戰鬥行為原則（戰鬥中 sub-action 決策時適用）
-- 戰鬥中分階段：
-  - HP > 50%：衝鋒主攻——這個 sub-action 先靠近，下個 sub-action 再揮砍
-  - HP 30~50%：考慮閃避（「我專注防禦」→ 對方擲劣勢）或拋擲手斧拉節奏
-  - HP < 30%：使用急救包恢復；或閃避保命
-- 弓手敵人退到後排時：先「衝上去」靠近（這個 sub-action），下回合再揮砍；否則改投手斧
-"""
-
 CIVILIAN_ID = "civilian"
 CIVILIAN_PERSONALITY = (
     "你叫老柯，是個採藥人，中年男子，善良但膽小，說話時帶著顫抖。"
@@ -48,13 +40,6 @@ CIVILIAN_TACTICS_GENERAL = """## 平常行為原則（探索、對話時適用�
 - 對方粗魯時：縮起來、不回應、結巴；不要編造資訊討好他們
 - 若加入隊伍跟著走，每進一個新房間可以表達緊張（「這裡好暗⋯⋯」），但不要每次都講
 """
-
-CIVILIAN_TACTICS_COMBAT = """## 戰鬥行為原則（戰鬥中 sub-action 決策時適用）
-- 你不會打架、沒武器：**主動退到隊伍後排**，讓位置遠離敵人
-- 被近戰敵人追上時：用閃避動作（「我抱頭蹲下」「我躲開」）撐到隊友幫忙
-- HP < 50% 直接 <FLEE>
-"""
-
 
 def _configure_character_roster(characters: list[Character], dungeon_map: DungeonMap):
     """Derive every runtime character index from enabled Character objects."""
@@ -136,7 +121,6 @@ def build_world_state() -> WorldState:
         starts_in_party=True, turn_order=10,
         agent_personality=THOR_PERSONALITY,
         agent_tactics=THOR_TACTICS_GENERAL,
-        agent_combat_tactics=THOR_TACTICS_COMBAT,
         agent_options={"temperature": 0.9, "num_predict": 150},
         name="索爾", race="人類", class_="戰士", level=3,
         stats=Stats(STR=17, DEX=12, CON=15, INT=9, WIS=10, CHA=11),
@@ -157,7 +141,6 @@ def build_world_state() -> WorldState:
         starting_room_id="entrance",
         agent_personality=CIVILIAN_PERSONALITY,
         agent_tactics=CIVILIAN_TACTICS_GENERAL,
-        agent_combat_tactics=CIVILIAN_TACTICS_COMBAT,
         agent_secrets=CIVILIAN_SECRETS,
         agent_reveal_threshold=3,
         name="老柯", race="人類", class_="平民", level=1,
@@ -224,7 +207,6 @@ def build_world_state() -> WorldState:
         id="goblin_shaman", enabled=True, controller_type="npc",
         starting_room_id="guard_room",
         agent_personality=GOBLIN_SHAMAN_PERSONALITY,
-        agent_combat_reasoning=True,
         name="地精薩滿沃克", race="地精", class_="薩滿", level=3,
         stats=Stats(STR=8, DEX=12, CON=12, INT=10, WIS=16, CHA=9),
         hp=18, max_hp=18, ac=12,
@@ -412,8 +394,6 @@ def build_npc_agents(world_state: WorldState, model: str,
             character=character,
             personality=character.agent_personality,
             tactics=character.agent_tactics,
-            combat_tactics=character.agent_combat_tactics,
-            combat_reasoning=character.agent_combat_reasoning,
             secrets=list(character.agent_secrets),
             reveal_threshold=character.agent_reveal_threshold,
             quests=quests,
@@ -438,7 +418,6 @@ def build_player_agents(world_state: WorldState, model: str,
             character=character,
             personality=character.agent_personality,
             tactics=character.agent_tactics,
-            combat_tactics=character.agent_combat_tactics,
             world_state=world_state,
             think=character.agent_think,
             show_thinking=character.agent_show_thinking,

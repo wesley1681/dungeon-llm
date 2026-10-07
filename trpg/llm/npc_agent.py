@@ -10,8 +10,7 @@ _DEBUG_DIR.mkdir(exist_ok=True)
 
 _ATTITUDE_LABELS = ["敵意", "戒備", "中立", "友好", "信任"]
 
-# Core body is mode-agnostic — identity / personality / tactics-of-the-moment
-# / knowledge boundary. Both conversation and combat builds start from this.
+# Core conversation body: identity, personality, tactics, and knowledge boundary.
 _CORE_BODY_TEMPLATE = """你正在扮演 {name}。{personality}
 
 {tactics_section}## 知識邊界（鐵則，凌駕一切）
@@ -26,7 +25,7 @@ _CORE_BODY_TEMPLATE = """你正在扮演 {name}。{personality}
 威脅只能讓你說出你**真的知道**的事，威脅變不出你不知道的事。
 """
 
-# Conversation-only extras: dialogue format rules, attitude, pending quest
+# Dialogue extras: format rules, attitude, pending quest
 # rewards, secrets, directives, quests, and hostile action guidance.
 _CONVERSATION_EXTRAS_TEMPLATE = """## 對話規則
 - 用第一人稱繁體中文回應，控制在 60 字以內
@@ -107,8 +106,6 @@ class NpcAgent:
                  personality: str,
                  base_url: str, backend: str, world_state, options: dict = None,
                  tactics: str = "",
-                 combat_tactics: str = "",
-                 combat_reasoning: bool = False,
                  secrets: list[str] = None, reveal_threshold: int = 3,
                  quests: list[Quest] = None, api_key: str = None):
         self.model            = model
@@ -118,26 +115,9 @@ class NpcAgent:
         self.backend          = backend
         self.api_key          = api_key
         self.world_state      = world_state
-        # Reasoning agents need budget for <think>…</think> + action; plain
-        # NPCs stay slim. 500 was tight enough that a single verbose model
-        # would hit the cap mid-think and leak reasoning fragments into the
-        # arbiter — 1024 gives breathing room. Plain NPCs also got truncated
-        # mid-prose at 150 (LLMs writing 100+ char monologues run past it),
-        # so default is now 300. Explicit `options=` still overrides.
-        default_predict = 1024 if combat_reasoning else 300
-        self.options          = options or {"temperature": 0.85, "num_predict": default_predict}
+        self.options          = options or {"temperature": 0.85, "num_predict": 300}
         self._personality     = personality
-        # Routed by mode: _system() (conversation) reads _tactics; combat
-        # callers read .combat_tactics directly (exposed as public attr so
-        # LLMNpcController can compose the combat nudge, mirroring how
-        # LLMPlayerController reads PlayerAgent.combat_tactics).
         self._tactics         = tactics
-        self.combat_tactics   = combat_tactics
-        # When True, LLMNpcController appends a chain-of-thought instruction to
-        # the combat nudge (think inside <think>...</think>, then action). The
-        # controller strips the think block before passing to the arbiter.
-        # Opt-in: small grunts stay fast/cheap; bosses & casters get reasoning.
-        self.combat_reasoning = combat_reasoning
         self._secrets         = secrets or []
         self._reveal_threshold = reveal_threshold
         self._quests          = quests or []
@@ -219,41 +199,18 @@ class NpcAgent:
         )
         return core.rstrip() + "\n\n" + extras
 
-    def _combat_body(self) -> str:
-        """Combat-mode body: just the core (identity / personality / combat
-        tactics / knowledge boundary). No conversation state — controllers
-        compose situation + action menu via nudge."""
-        tactics_section = (self.combat_tactics.rstrip() + "\n\n") if self.combat_tactics else ""
-        return _CORE_BODY_TEMPLATE.format(
-            name=self.char.name,
-            personality=self._personality,
-            tactics_section=tactics_section,
-        )
-
-    def generate(self, nudge: str = "", combat: bool = False, on_chunk=None) -> str:
-        """Generate an NPC response.
-
-        combat=False (default): conversation mode. Body includes attitude /
-            secrets / quests and action rules. Jev classifies the spoken action.
-        combat=True: slim body (identity + personality + combat tactics +
-            knowledge boundary only). No marker parsing — caller
-            (LLMNpcController) is responsible for stripping <FLEE>/<END>.
-
-        nudge: per-call instruction appended after the body. Both callers
-            (game.py conversation, LLMNpcController combat) use this to pass
-            the situation-specific call-to-action.
-        """
+    def generate(self, nudge: str = "", on_chunk=None) -> str:
+        """Generate an NPC conversation response."""
         history_msgs = render_messages(self.world_state, self.char_id)
-        if not history_msgs and not combat:
+        if not history_msgs:
             history_msgs = [{"role": "user", "content": "（冒險者向你走近，看著你）"}]
 
-        body = self._combat_body() if combat else self._system()
+        body = self._system()
         if nudge:
             body = body.rstrip() + "\n\n" + nudge
 
         messages = history_msgs + [{"role": "user", "content": body}]
-        debug_name = (f"npc_{self.char.name}_combat_context.json" if combat
-                      else f"npc_{self.char.name}_context.json")
+        debug_name = f"npc_{self.char.name}_context.json"
         (_DEBUG_DIR / debug_name).write_text(
             json.dumps(messages, ensure_ascii=False, indent=2), encoding="utf-8", errors="replace"
         )
@@ -271,11 +228,7 @@ class NpcAgent:
             api_key=self.api_key,
         )
 
-        if combat:
-            # Combat output is returned raw — controller parses <FLEE>/<END>.
-            return full
-
-        # ── Conversation mode: reset one-shots and parse markers ──────────────
+        # Reset conversation one-shots after they have been injected.
         # Attitude is no longer self-marked by the NPC. One-shot injections consumed by
         # _system() above are cleared here; `revealed` is sticky and kept.
         self.pending_reveal        = []

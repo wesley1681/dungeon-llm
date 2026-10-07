@@ -44,8 +44,6 @@ class Character:
     turn_order: int = 0
     agent_personality: str = ""
     agent_tactics: str = ""
-    agent_combat_tactics: str = ""
-    agent_combat_reasoning: bool = False
     agent_secrets: list = field(default_factory=list)
     agent_reveal_threshold: int = 3
     agent_think: bool = False
