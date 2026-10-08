@@ -1,10 +1,11 @@
-from ..engine.character import Character, Stats
+from ..engine.character import Character
 from ..engine.items import WEAPON_DEFS, Weapon, Consumable, Chest, Hideout
 from ..engine.world_state import WorldState
 from ..engine.dungeon_map import DungeonMap, Room
 from ..engine.quests import Quest
 from ..llm.npc_agent import NpcAgent
 from ..llm.player_agent import PlayerAgent
+from .character_builder import build_character
 
 OPENING_SCENE = (
     "你受僱前來冒險，任務是從地精手中奪回小鎮鎮長的護身符。"
@@ -81,24 +82,18 @@ def build_world_state() -> WorldState:
     # Character is the scenario roster's single source of truth. To remove a
     # character from the runtime, change only that character's enabled to False.
     # ── 玩家角色 ────────────────────────────────────────────────────────────────
-    kaine = Character(
+    kaine = build_character(
         id="kaine", enabled=True, controller_type="human",
         starts_in_party=True, turn_order=20,
-        name="凱恩", race="人類", class_="盜賊", level=3,
-        stats=Stats(STR=14, DEX=16, CON=12, INT=14, WIS=12, CHA=10),
-        hp=22, max_hp=22, ac=14,
-        weapons=[
-            WEAPON_DEFS["短劍"],
-            WEAPON_DEFS["匕首"],
-            WEAPON_DEFS["長劍"],            # 供 trip_attack / reckless_attack 用
-        ],
+        name="凱恩", race_id="human", class_id="rogue", level=10,
+        growth_seed=1001, equipment=["鑲釘皮甲"],
+        weapons=["短劍", "匕首", "長劍"],  # 供 trip_attack / reckless_attack 用
         consumables=[
             Consumable("火把", 3, "light",  ""),
             Consumable("火瓶", 2, "throw",  "2d100"),   # AOE 投擲，DEX DC13 豁免半傷
             Consumable("毒煙彈", 1, "throw", "1d6"),  # AOE 投擲，CON DC12 豁免半傷
         ],
         gear=["盜賊工具", "繩索 15 尺"],
-        proficiencies=["DEX", "INT", "潛行", "開鎖", "察覺", "欺騙"],
         # 測試用：把 12 招的相關資源都裝齊（多職業混血）
         spell_slots={1: 3, 2: 2},
         spellcasting_ability="INT",
@@ -114,105 +109,91 @@ def build_world_state() -> WorldState:
     kaine.archetype_id = ""   # Multi-class test character; use "" so all
                               # base-class (archetype_id="") abilities are included.
 
-    thor = Character(
+    thor = build_character(
         id="thor", enabled=True, controller_type="llm_player",
         starts_in_party=True, turn_order=10,
         agent_personality=THOR_PERSONALITY,
         agent_tactics=THOR_TACTICS_GENERAL,
         agent_options={"temperature": 0.9, "num_predict": 150},
-        name="索爾", race="人類", class_="戰士", level=3,
-        stats=Stats(STR=17, DEX=12, CON=15, INT=9, WIS=10, CHA=11),
-        hp=31, max_hp=31, ac=16,
-        weapons=[WEAPON_DEFS["長劍"], WEAPON_DEFS["手斧"]],
+        name="索爾", race_id="human", class_id="fighter", level=3,
+        growth_seed=1002, equipment=["鏈甲", "盾牌"],
+        weapons=["長劍", "手斧"],
         consumables=[
             Consumable("急救包", 2, "heal", "1d4+2"),
             Consumable("火把",   2, "light", ""),
         ],
-        gear=["鏈甲", "盾牌"],
-        proficiencies=["STR", "CON", "運動", "恐嚇"],
         is_npc=False,
     )
 
     # ── NPC（個性、初始態度由 NpcAgent 控制；attitude=0 即敵意）─────────────────
-    civilian = Character(
+    civilian = build_character(
         id=CIVILIAN_ID, enabled=True, controller_type="npc",
         starting_room_id="entrance",
         agent_personality=CIVILIAN_PERSONALITY,
         agent_tactics=CIVILIAN_TACTICS_GENERAL,
         agent_secrets=CIVILIAN_SECRETS,
         agent_reveal_threshold=3,
-        name="老柯", race="人類", class_="平民", level=1,
-        stats=Stats(STR=9, DEX=10, CON=10, INT=11, WIS=12, CHA=11),
-        hp=6, max_hp=6, ac=10,
+        name="老柯", race_id="human", class_id="commoner", level=1,
+        growth_seed=2001, base_max_hp=6,
         is_npc=True,
         attitude=1,                   # 戒備
         hostile_reaction="flee",      # 膽小，敵意時會逃
     )
 
-    goblin_1 = Character(
+    goblin_1 = build_character(
         id="goblin_1", enabled=True, controller_type="npc",
         starting_room_id="guard_room",
         agent_personality=GOBLIN_GRUNT_PERSONALITY,
-        name="地精甲", race="地精", class_="—", level=1,
-        stats=Stats(STR=8, DEX=14, CON=10, INT=8, WIS=8, CHA=8),
-        hp=7, max_hp=7, ac=13,
-        weapons=[WEAPON_DEFS["彎刀"]],
+        name="地精甲", race_id="goblin", class_id="warrior", level=1,
+        growth_seed=3001, base_max_hp=7, equipment=["皮甲"], weapons=["彎刀"],
         is_npc=True,
         attitude=0,   # 敵意
     )
 
-    goblin_2 = Character(
+    goblin_2 = build_character(
         id="goblin_2", enabled=True, controller_type="npc",
         starting_room_id="guard_room",
         agent_personality=GOBLIN_GRUNT_PERSONALITY,
-        name="地精乙", race="地精", class_="—", level=1,
-        stats=Stats(STR=8, DEX=14, CON=10, INT=8, WIS=8, CHA=8),
-        hp=7, max_hp=7, ac=13,
-        weapons=[WEAPON_DEFS["彎刀"]],
+        name="地精乙", race_id="goblin", class_id="warrior", level=1,
+        growth_seed=3002, base_max_hp=7, equipment=["皮甲"], weapons=["彎刀"],
         is_npc=True,
         attitude=0,
     )
 
-    goblin_3 = Character(
+    goblin_3 = build_character(
         id="goblin_3", enabled=True, controller_type="npc",
         starting_room_id="boss_chamber",
         agent_personality=GOBLIN_ARCHER_PERSONALITY,
-        name="地精丙", race="地精", class_="—", level=1,
-        stats=Stats(STR=8, DEX=14, CON=10, INT=8, WIS=8, CHA=8),
-        hp=5, max_hp=5, ac=12,
-        weapons=[WEAPON_DEFS["短弓"]],
+        name="地精丙", race_id="goblin", class_id="warrior", level=1,
+        growth_seed=3003, base_max_hp=5, equipment=["皮甲"], weapons=["短弓"],
         consumables=[Consumable("箭", 20, "ammo", "")],
         is_npc=True,
         attitude=0,
     )
 
-    goblin_boss = Character(
+    goblin_boss = build_character(
         id="goblin_boss", enabled=True, controller_type="npc",
         starting_room_id="boss_chamber",
         agent_personality=GOBLIN_BOSS_PERSONALITY,
-        name="地精頭目葛茲", race="地精", class_="—", level=3,
-        stats=Stats(STR=13, DEX=14, CON=12, INT=10, WIS=9, CHA=12),
-        hp=21, max_hp=21, ac=15,
-        weapons=[WEAPON_DEFS["彎刀"], WEAPON_DEFS["短弓"]],
+        name="地精頭目葛茲", race_id="goblin", class_id="warrior", level=3,
+        growth_seed=3010, base_max_hp=9, hp_per_level=5,
+        equipment=["鑲釘皮甲"], weapons=["彎刀", "短弓"],
         consumables=[Consumable("箭", 10, "ammo", "")],
         gear=["破舊皮甲", "護符（贓物）"],
-        proficiencies=["STR", "DEX"],
         is_npc=True,
         attitude=0,
     )
 
-    goblin_shaman = Character(
+    goblin_shaman = build_character(
         id="goblin_shaman", enabled=True, controller_type="npc",
         starting_room_id="guard_room",
         agent_personality=GOBLIN_SHAMAN_PERSONALITY,
-        name="地精薩滿沃克", race="地精", class_="薩滿", level=3,
-        stats=Stats(STR=8, DEX=12, CON=12, INT=10, WIS=16, CHA=9),
-        hp=18, max_hp=18, ac=12,
+        name="地精薩滿沃克", race_id="goblin", class_id="shaman", level=3,
+        growth_seed=3020, base_max_hp=8, hp_per_level=4,
+        equipment=["皮甲"],
         weapons=[Weapon("骨杖", "1d6", "鈍擊", "近戰", range_normal=1.5)],
         spell_slots={1: 3, 2: 2, 3: 1},
         spellcasting_ability="WIS",
-        proficiencies=["WIS", "奧秘"],
-        known_abilities=["fire_bolt"],   # 戲法：level 3 薩滿放得出來（火球 min_level 5 放不了）
         is_npc=True,
         attitude=0,
     )
@@ -370,8 +351,6 @@ GOBLIN_BOSS_PERSONALITY = (
 GOBLIN_SHAMAN_PERSONALITY = (
     "你是地精部落的薩滿沃克，瘦削、駝背，臉上塗著紅泥，眼神陰沉。"
     "你不擅近身搏鬥，但能召喚火焰、煙霧與恐懼。"
-    "你信奉地精古老的火靈，對敵人投擲烈焰時會用沙啞的咒語助勢。"
-    "面對危險時你優先施法保持距離，HP 過低時準備脫逃。"
 )
 
 

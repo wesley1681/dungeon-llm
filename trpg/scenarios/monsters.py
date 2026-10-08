@@ -1,4 +1,4 @@
-"""Wave 0 monster registry: a monster IS a ClassDef (MONSTER_CATALOG.md §5).
+"""Wave 0 bestiary registry built from combat templates (MONSTER_CATALOG.md §5).
 
 Every monster here is PURE ASSEMBLY — chassis numbers + existing abilities +
 existing traits. Zero new engine mechanics (that's the Wave 0 contract).
@@ -60,9 +60,11 @@ Known approximations (documented, accepted for Wave 0):
     forced-move pull primitive is deferred until a second user shows up
     (design vigilance ≥2 rule).
 
-HP uses ``hp_base = MM HP, hp_per_level = 0`` — a monster's HP is its
-statblock, whatever level the env passes. ``natural_level`` is what callers
-should pass as the monster's level (prof/DC fidelity + obs threat scale);
+The catalog panel is the monster's natural-level starting point. Calling
+``make_monster`` without a level reproduces that panel exactly; passing a
+higher level advances it through the shared Character growth system. The
+legacy RL factory keeps ``hp_base = MM HP, hp_per_level = 0`` so existing
+checkpoints and calibration remain stable. ``natural_level`` is the baseline;
 the CR→「等效對位等級」mapping is measured separately (scripts/calibrate_cr.py)
 and lives in MONSTER_CATALOG, not here.
 
@@ -77,17 +79,24 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ..engine.items import Weapon
+from ..engine.progression import GrowthProfile, STAT_NAMES
 from .archetypes import (
     CLASS_DEFS, ARCHETYPE_FACTORIES, ARCHETYPE_ROLES,
-    ClassDef, SkillGrant, TraitGrant, _factory, make_character,
+    CombatTemplateDef, SkillGrant, TraitGrant, _factory, make_character,
 )
 
 
 @dataclass(frozen=True)
-class MonsterDef(ClassDef):
-    """A ClassDef plus the monster-book metadata the classes don't need."""
+class MonsterDef(CombatTemplateDef):
+    """A bestiary template plus monster-book metadata and growth rules."""
     cr: float = 0.0
     natural_level: int = 1   # max(1, round(cr)) — reproduces MM prof/DC
+    # Monsters use the same Character progression capability as everyone else.
+    # Existing catalog entries infer their direction from the printed statblock.
+    growth_weights: dict | None = None
+    growth_points_per_level: int = 2
+    growth_hp_per_level: int = 5
+    level_locked: bool = False
 
 
 # ── Natural weapons (merged into WEAPON_DEFS on register) ────────────────────
@@ -766,9 +775,37 @@ def register_monsters() -> tuple[str, ...]:
     return tuple(MONSTER_DEFS)
 
 
-def make_monster(monster_id: str, name: str | None = None):
-    """Build a monster Character at its natural level (registers on demand)."""
+def make_monster(monster_id: str, name: str | None = None, *,
+                 level: int | None = None, growth_seed: int = 0):
+    """Build a monster Character, optionally advancing past its natural level.
+
+    The catalog statblock is the monster's starting panel.  A definition may
+    opt out with ``level_locked=True``; this is a capability flag, not a
+    distinction between monsters and other Characters.
+    """
     if not _registered:
         register_monsters()
-    return make_character(monster_id, name=name,
-                          level=MONSTER_DEFS[monster_id].natural_level)
+    md = MONSTER_DEFS[monster_id]
+    target_level = md.natural_level if level is None else int(level)
+    if target_level < md.natural_level:
+        raise ValueError(
+            f"{monster_id} 的成長起點是 level {md.natural_level}，不可向下生成"
+        )
+    c = make_character(monster_id, name=name, level=md.natural_level)
+    inferred_weights = {
+        stat: float(max(1, getattr(c.stats, stat) - 5)) for stat in STAT_NAMES
+    }
+    c.race_id = monster_id
+    c.class_id = ""
+    c.base_stats = type(c.stats)(**vars(c.stats))
+    c.base_max_hp = c.max_hp
+    c.growth_seed = int(growth_seed)
+    c.growth_profile = GrowthProfile(
+        class_weights=dict(md.growth_weights or inferred_weights),
+        points_per_level=md.growth_points_per_level,
+    )
+    c.hp_per_level = md.growth_hp_per_level
+    c.level_locked = md.level_locked
+    if target_level > c.level:
+        c.level_up_to(target_level)
+    return c

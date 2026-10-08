@@ -27,6 +27,46 @@ class Consumable:
     effect_value: str  # heal 用骰子式 e.g."1d4+2"；其餘為 ""
 
 
+@dataclass(frozen=True)
+class Armor:
+    name: str
+    base_ac: int
+    dex_cap: int | None = None   # None=完整 DEX；0=不加 DEX；2=中甲上限
+
+
+@dataclass(frozen=True)
+class Shield:
+    name: str = "盾牌"
+    ac_bonus: int = 2
+
+
+ARMOR_DEFS: dict[str, Armor | Shield] = {
+    "皮甲": Armor("皮甲", base_ac=11),
+    "鑲釘皮甲": Armor("鑲釘皮甲", base_ac=12),
+    "獸皮甲": Armor("獸皮甲", base_ac=12, dex_cap=2),
+    "鏈甲": Armor("鏈甲", base_ac=16, dex_cap=0),
+    "盾牌": Shield(),
+}
+
+
+def calculate_ac(char) -> int:
+    """Permanent AC from the character's DEX and actually equipped armor."""
+    dex_mod = char.stats.modifier("DEX")
+    armor = next((item for item in char.equipment if isinstance(item, Armor)), None)
+    if armor is None:
+        ac = 10 + dex_mod
+    else:
+        if armor.dex_cap is None:
+            dex_bonus = dex_mod
+        elif armor.dex_cap == 0:
+            dex_bonus = 0
+        else:
+            dex_bonus = min(dex_mod, armor.dex_cap)
+        ac = armor.base_ac + dex_bonus
+    ac += sum(item.ac_bonus for item in char.equipment if isinstance(item, Shield))
+    return ac
+
+
 @dataclass
 class Chest:
     name: str

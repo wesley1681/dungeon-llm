@@ -1,10 +1,10 @@
-"""Data-driven archetype registry: a class IS a stat block + skills + traits.
+"""Legacy data-driven combat-template registry.
 
-A class/monster identity here is pure data (``ClassDef``): a numeric panel
+A prebuilt combat identity here is pure data (``CombatTemplateDef``): a numeric panel
 (stats/HP/AC/equipment), a list of level-gated skill grants, and a list of
 level-gated trait grants. ONE generic builder (``make_character``) turns any
-ClassDef into a Character — adding a new class or monster means adding a data
-entry, never a new factory function or an engine branch.
+template into a Character.  These are presets used by the RL combat catalog;
+the real race/class progression model lives in ``character_builder``.
 
 Traits are keyed by MECHANIC, not by class: ``sneak_attack`` / ``portent`` /
 ``aura_of_protection`` are registered once in ``TRAIT_APPLIERS`` and any
@@ -261,11 +261,11 @@ def _death_throes(c: Character, level: int, p: dict) -> None:
     }
 
 
-# ── Class definitions ────────────────────────────────────────────────────────
+# ── Legacy combat-template definitions ──────────────────────────────────────
 
 
 @dataclass(frozen=True)
-class ClassDef:
+class CombatTemplateDef:
     archetype_id: str
     default_name: str
     class_display: str          # 顯示用基礎職業名（戰士/法師/...）
@@ -319,7 +319,7 @@ _RAGE_USES_TABLE = {1: 2, 2: 2, 3: 3, 4: 3, 5: 3, 6: 4, 7: 4, 8: 4}
 
 _CLASS_DEF_LIST = [
     # ── Fighter ──────────────────────────────────────────────────────────
-    ClassDef(
+    CombatTemplateDef(
         archetype_id="battle_master", default_name="Battle Master",
         class_display="戰士", role="front",
         stat_block=dict(STR=16, DEX=12, CON=14, INT=10, WIS=12, CHA=10),
@@ -337,7 +337,7 @@ _CLASS_DEF_LIST = [
             TraitGrant("extra_attack", min_level=5),
         ),
     ),
-    ClassDef(
+    CombatTemplateDef(
         archetype_id="champion", default_name="Champion",
         class_display="戰士", role="front",
         stat_block=dict(STR=16, DEX=14, CON=14, INT=10, WIS=10, CHA=10),
@@ -355,7 +355,7 @@ _CLASS_DEF_LIST = [
         ),
     ),
     # ── Barbarian ────────────────────────────────────────────────────────
-    ClassDef(
+    CombatTemplateDef(
         archetype_id="totem_bear", default_name="Totem Warrior",
         class_display="蠻人", role="front",
         stat_block=dict(STR=17, DEX=14, CON=16, INT=8, WIS=10, CHA=10),
@@ -373,7 +373,7 @@ _CLASS_DEF_LIST = [
                 "skill": "rage", "table": _RAGE_USES_TABLE, "default": 4}),
         ),
     ),
-    ClassDef(
+    CombatTemplateDef(
         archetype_id="berserker", default_name="Berserker",
         class_display="蠻人", role="front",
         stat_block=dict(STR=17, DEX=14, CON=16, INT=8, WIS=10, CHA=10),
@@ -392,7 +392,7 @@ _CLASS_DEF_LIST = [
         ),
     ),
     # ── Wizard ───────────────────────────────────────────────────────────
-    ClassDef(
+    CombatTemplateDef(
         archetype_id="evocation", default_name="Evoker",
         class_display="法師", role="striker",
         stat_block=dict(STR=8, DEX=14, CON=14, INT=16, WIS=12, CHA=10),
@@ -414,7 +414,7 @@ _CLASS_DEF_LIST = [
             TraitGrant("sculpt_spells", min_level=2),
         ),
     ),
-    ClassDef(
+    CombatTemplateDef(
         archetype_id="divination", default_name="Diviner",
         class_display="法師", role="striker",
         stat_block=dict(STR=8, DEX=14, CON=14, INT=16, WIS=12, CHA=10),
@@ -436,7 +436,7 @@ _CLASS_DEF_LIST = [
         ),
     ),
     # ── Cleric ───────────────────────────────────────────────────────────
-    ClassDef(
+    CombatTemplateDef(
         archetype_id="life", default_name="Life Cleric",
         class_display="牧師", role="support",
         stat_block=dict(STR=12, DEX=10, CON=14, INT=10, WIS=16, CHA=12),
@@ -461,7 +461,7 @@ _CLASS_DEF_LIST = [
                        params={"skill": "channel_divinity", "uses": 1}),
         ),
     ),
-    ClassDef(
+    CombatTemplateDef(
         archetype_id="war", default_name="War Cleric",
         class_display="牧師", role="support",
         stat_block=dict(STR=15, DEX=10, CON=14, INT=10, WIS=16, CHA=10),
@@ -489,7 +489,7 @@ _CLASS_DEF_LIST = [
         ),
     ),
     # ── Rogue ────────────────────────────────────────────────────────────
-    ClassDef(
+    CombatTemplateDef(
         archetype_id="assassin", default_name="Assassin",
         class_display="盜賊", role="striker",
         stat_block=dict(STR=10, DEX=17, CON=12, INT=14, WIS=12, CHA=10),
@@ -515,7 +515,7 @@ _CLASS_DEF_LIST = [
                        params={"status": Evasion}),
         ),
     ),
-    ClassDef(
+    CombatTemplateDef(
         archetype_id="arcane_trickster", default_name="Arcane Trickster",
         class_display="盜賊", role="striker",
         stat_block=dict(STR=10, DEX=17, CON=12, INT=14, WIS=12, CHA=10),
@@ -543,7 +543,7 @@ _CLASS_DEF_LIST = [
         ),
     ),
     # ── Paladin ──────────────────────────────────────────────────────────
-    ClassDef(
+    CombatTemplateDef(
         archetype_id="devotion", default_name="Devotion Paladin",
         class_display="聖騎士", role="front",
         stat_block=dict(STR=16, DEX=10, CON=14, INT=10, WIS=12, CHA=16),
@@ -570,7 +570,7 @@ _CLASS_DEF_LIST = [
                        params={"ability": "CHA"}),
         ),
     ),
-    ClassDef(
+    CombatTemplateDef(
         archetype_id="vengeance", default_name="Vengeance Paladin",
         class_display="聖騎士", role="front",
         stat_block=dict(STR=16, DEX=10, CON=14, INT=10, WIS=12, CHA=16),
@@ -598,7 +598,13 @@ _CLASS_DEF_LIST = [
     ),
 ]
 
-CLASS_DEFS: dict[str, ClassDef] = {cd.archetype_id: cd for cd in _CLASS_DEF_LIST}
+COMBAT_TEMPLATE_DEFS: dict[str, CombatTemplateDef] = {
+    definition.archetype_id: definition for definition in _CLASS_DEF_LIST
+}
+# Compatibility aliases for RL tools and older scripts.  New gameplay code
+# must import ClassDef from character_builder instead.
+ClassDef = CombatTemplateDef
+CLASS_DEFS = COMBAT_TEMPLATE_DEFS
 
 # The 12 standard classes, frozen HERE — at module-body time, before any
 # runtime registration (monsters, synth identities) can mutate CLASS_DEFS.
@@ -613,7 +619,7 @@ STANDARD_ARCHETYPES: tuple[str, ...] = tuple(CLASS_DEFS.keys())
 
 def make_character(archetype_id: str, name: str | None = None, level: int = 3,
                    portent_rolls: list | None = None) -> Character:
-    """Build a Character from its ClassDef — the ONLY construction path.
+    """Build a Character from a legacy RL combat template.
 
     ``portent_rolls``: explicit stored-d20 override for identities with the
     ``portent`` trait (skips rolling, matching the old divination factory API).

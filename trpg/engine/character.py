@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from .vec2 import Vec2
+from .progression import GrowthProfile, StatGrowth, allocate_level_growth
 
 if TYPE_CHECKING:
     from .items import Weapon, Consumable
@@ -32,6 +33,21 @@ class Character:
     hp: int
     max_hp: int
     ac: int
+    # Stable definition ids. ``race`` / ``class_`` remain display strings.
+    race_id: str = ""
+    class_id: str = ""
+    # Permanent progression belongs to the character, not to its class.
+    growth_profile: GrowthProfile | None = None
+    growth_seed: int = 0
+    growth_history: list[StatGrowth] = field(default_factory=list)
+    level_locked: bool = False
+    # HP growth is an individual vitality setting.  A class never owns it.
+    base_stats: Stats | None = None
+    base_max_hp: int = 0
+    hp_per_level: int = 0
+    # True for generated humanoids whose permanent AC follows DEX/equipment.
+    # Fixed statblocks keep their authored AC while still being able to level.
+    derive_ac_from_equipment: bool = False
     # ── Scenario/controller configuration ──────────────────────────────────
     # These optional fields make a scenario Character the single source of
     # truth for identity, initial placement, party membership, and LLM-agent
@@ -56,6 +72,12 @@ class Character:
     gear: list = field(default_factory=list)          # list[str] — 非戰鬥道具
     equipment: list = field(default_factory=list)     # 穿戴中的裝備（Modifier-capable）
     status_effects: list = field(default_factory=list)
+    weapon_proficiencies: list = field(default_factory=list)
+    armor_proficiencies: list = field(default_factory=list)
+    saving_throw_proficiencies: list = field(default_factory=list)
+    skill_proficiencies: list = field(default_factory=list)
+    # Compatibility view consumed by the current save/check engine.  Builders
+    # populate it from saving_throw_proficiencies + skill_proficiencies.
     proficiencies: list = field(default_factory=list)
     is_npc: bool = False
     attitude: int = 2   # 0=敵意 1=戒備 2=中立 3=友好 4=信任（僅 NPC 使用）
@@ -143,6 +165,44 @@ class Character:
     @property
     def proficiency_bonus(self) -> int:
         return (self.level - 1) // 4 + 2
+
+    def level_up_to(self, target_level: int, *, force: bool = False) -> list[StatGrowth]:
+        """Advance deterministically and return newly awarded stat points.
+
+        Direct generation and in-game levelling use the same method, therefore
+        building level N is identical to advancing one level at a time.  A
+        locked panel can only be advanced by an explicit ``force=True`` call.
+        """
+        if target_level < self.level:
+            raise ValueError("level_up_to 不支援降低等級")
+        if target_level == self.level:
+            return []
+        if self.level_locked and not force:
+            raise ValueError(f"{self.name} 使用固定面板，無法升級")
+        if self.growth_profile is None or not self.growth_profile.enabled:
+            raise ValueError(f"{self.name} 沒有可用的成長設定")
+
+        awarded: list[StatGrowth] = []
+        while self.level < target_level:
+            next_level = self.level + 1
+            gains = allocate_level_growth(
+                self.stats, self.growth_profile,
+                seed=self.growth_seed, level=next_level,
+            )
+            self.growth_history.extend(gains)
+            awarded.extend(gains)
+            self.level = next_level
+
+            # HP grows from Character vitality + its current CON, never class.
+            hp_gain = max(1, self.hp_per_level + self.stats.modifier("CON"))
+            self.max_hp += hp_gain
+            self.hp += hp_gain
+
+        # AC is cached for existing UI/RL callers; refresh it after DEX growth.
+        if self.derive_ac_from_equipment:
+            from .items import calculate_ac
+            self.ac = calculate_ac(self)
+        return awarded
 
     def is_alive(self) -> bool:
         """True if hp > 0 — the creature can act and be targeted normally."""
