@@ -2,7 +2,7 @@
 from types import SimpleNamespace
 
 from trpg.scenarios.dungeon import build_world_state, build_npc_agents
-from trpg.game import GameSession
+from trpg.game import GameSession, _social_result_directive
 from trpg.llm.controllers import ActorController, HumanController
 from trpg.llm.dialogue_flow import DialogueDirector, CheckPlan
 from trpg.engine.items import Consumable
@@ -502,6 +502,27 @@ def test_judge_completion_skips_when_no_active_quests():
 
 
 # ── Integration: _run_conversation wires the 3 stages together ────────────────
+
+def test_social_result_directives_are_in_world_and_cover_all_outcomes():
+    directives = {
+        (check, success): _social_result_directive(check, success)
+        for check in ("說服", "欺瞞", "威嚇")
+        for success in (True, False)
+    }
+
+    assert len(set(directives.values())) == 6
+    assert "接受其核心請求" in directives[("說服", True)]
+    assert "不要接受其核心請求" in directives[("說服", False)]
+    assert "視為真實" in directives[("欺瞞", True)]
+    assert "不能相信其核心說法" in directives[("欺瞞", False)]
+    assert "服從其核心要求" in directives[("威嚇", True)]
+    assert "不要因這次威脅讓步" in directives[("威嚇", False)]
+    for directive in directives.values():
+        assert "玩家" not in directive
+        assert "檢定" not in directive
+        assert "成功" not in directive
+        assert "失敗" not in directive
+
 
 class _StubNpcCtrl(ActorController):
     def take_npc_opening(self, char):

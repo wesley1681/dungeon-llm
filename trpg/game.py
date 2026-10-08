@@ -97,6 +97,48 @@ class ConversationOutcome:
 
 _STOP = object()
 
+# NPC-facing consequences of social checks.  These are deliberately phrased as
+# in-world perceptions rather than exposing dice or check results to the role-
+# playing model.  A successful check settles the core outcome; personality may
+# colour how the NPC yields, but must not silently undo the mechanical success.
+_SOCIAL_RESULT_DIRECTIVES = {
+    ("說服", True): (
+        "對方的理由切中了你在意的事情，使原本的顧慮不再足以阻止你。"
+        "若對方的要求客觀上可行，且不違反你明確的絕對底線，請以符合個性的方式"
+        "接受其核心請求；你可以保留戒心、附加合理條件，或不情願地答應，但不能"
+        "否定這次交涉的成果。"
+    ),
+    ("說服", False): (
+        "你理解對方想表達什麼，但這些理由仍不足以抵銷你所承擔的風險與代價。"
+        "不要接受其核心請求；你可以直接拒絕、說明顧慮，或提出尚未被滿足的條件。"
+    ),
+    ("欺瞞", True): (
+        "對方的說法在你聽來前後一致，足以消除目前的懷疑。請把其中的核心說法"
+        "視為真實，並依此作出合理反應；不要無端識破、試探，或暗示自己仍然知道真相。"
+    ),
+    ("欺瞞", False): (
+        "對方的說法有些地方對不上，使你察覺事情可能不是表面那樣。你不一定知道"
+        "真相，但不能相信其核心說法，也不能因此作出對方期待的讓步；可依個性"
+        "追問、試探、拆穿或拒絕。"
+    ),
+    ("威嚇", True): (
+        "對方展現的威勢讓你相信，拒絕會招致迫近而真實的後果。即使你感到憤怒、"
+        "屈辱或暗自記恨，此刻仍會為了自保而服從其核心要求；請用符合個性的方式"
+        "表現這份畏懼。"
+    ),
+    ("威嚇", False): (
+        "對方的威脅沒有壓倒你：你可能看出虛張聲勢，也可能認為反抗比屈服更能接受。"
+        "不要因這次威脅讓步；依個性選擇冷笑、警告、求援、離開或採取敵對態度，"
+        "但不必無條件升級成戰鬥。"
+    ),
+}
+
+
+def _social_result_directive(check: str, success: bool) -> str:
+    """Return the in-world NPC instruction for one resolved social check."""
+    return _SOCIAL_RESULT_DIRECTIVES[(check, success)]
+
+
 # ── Combat turn structure ─────────────────────────────────────────────────────
 
 # Safety cap: max sub-actions per character per round (prevents runaway loops)
@@ -780,9 +822,7 @@ class GameSession:
                 ws.log_event("system", note)
                 self._emit(StreamChunk("npc_talk", f"\n{note}\n", actor="系統"))
                 npc_agent.pending_directives.append(
-                    f"玩家的{result.check}檢定{'成功' if result.success else '失敗'}。"
-                    "請依照這個結果與你的個性自然回應；"
-                    "檢定失敗時不要做出玩家想要的讓步。"
+                    _social_result_directive(result.check, result.success)
                 )
 
             # ── NPC response ──────────────────────────────────────────────────
