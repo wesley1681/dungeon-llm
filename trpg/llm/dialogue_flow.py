@@ -1,11 +1,11 @@
 """Jev-backed conversation decisions.
 
-NPC and player utterances use the same directional action catalog with explicit
-actor and target identities. Callers expose only the actions available to that
-speaker: NPCs currently have attack/join/give/offer_quest, while players have
-attack/join/give. Only give and offer_quest need a second Jev call to select a
-valid world-state candidate. Pending replies and narrative quest completion are
-judged alongside or after those actions as appropriate.
+NPC and player utterances use a directional action catalog with explicit actor
+and target identities. Callers expose only the actions available to that
+speaker: NPCs may request_to_join, while players may invite_to_party. Only give
+and offer_quest need a second Jev call to select a valid world-state candidate.
+Pending replies and narrative quest completion are judged alongside or after
+those actions as appropriate.
 
 This module only decides. World-state mutation lives in ``game.py``.
 """
@@ -15,6 +15,8 @@ import math
 import pathlib
 from dataclasses import dataclass
 from typing import Any, Mapping
+
+from .action_executor import build_action_candidates
 
 try:  # Tests can inject a fake client; runtime uses the installed SDK.
     from typesafe_sdk import Choice, Noul, Score, TypeSafeClient
@@ -65,14 +67,35 @@ DIALOGUE_ACTIONS = {
         "true": "發言者明確動手、施法攻擊，或宣告立即對對方發動攻擊。",
         "false": "只是生氣、辱罵、警告、拒絕，或威脅將來可能攻擊。",
     },
-    "join": {
+    "invite_to_party": {
         "threshold": 0.80,
         "instructions": (
-            "`utterance.text` 是否由 `utterance.actor` 主動提出，讓對話中的 NPC "
-            "加入或長期跟隨玩家隊伍？"
+            "`utterance.text` 是否表示 `utterance.actor` 主動邀請 "
+            "`utterance.target` 加入或長期跟隨 `utterance.actor` 所屬的隊伍？"
         ),
-        "true": "發言者明確提出 NPC 加入、同行，或長期成為玩家隊伍成員的提議。",
-        "false": "只是暫時幫忙、同行一小段、談論隊伍，或回覆既有的加入提議。",
+        "true": (
+            "`utterance.actor` 明確邀請 `utterance.target` 加入、同行，"
+            "或長期成為 `utterance.actor` 所屬隊伍的成員。"
+        ),
+        "false": (
+            "`utterance.actor` 是請求加入 `utterance.target` 所屬的隊伍、"
+            "只是暫時幫忙或同行一小段、談論隊伍，或回覆既有的加入提議。"
+        ),
+    },
+    "request_to_join": {
+        "threshold": 0.80,
+        "instructions": (
+            "`utterance.text` 是否表示 `utterance.actor` 主動請求加入或長期跟隨 "
+            "`utterance.target` 所屬的隊伍？"
+        ),
+        "true": (
+            "`utterance.actor` 明確請求加入、同行，或長期成為 "
+            "`utterance.target` 所屬隊伍的成員。"
+        ),
+        "false": (
+            "`utterance.actor` 是邀請 `utterance.target` 加入自己的隊伍、"
+            "只是暫時幫忙或同行一小段、談論隊伍，或回覆既有的加入提議。"
+        ),
     },
     "give": {
         "threshold": 0.90,
@@ -94,8 +117,8 @@ DIALOGUE_ACTIONS = {
     },
 }
 
-NPC_DIALOGUE_ACTIONS = ("attack", "join", "give", "offer_quest")
-PLAYER_DIALOGUE_ACTIONS = ("attack", "join", "give")
+NPC_DIALOGUE_ACTIONS = ("attack", "request_to_join", "give", "offer_quest")
+PLAYER_DIALOGUE_ACTIONS = ("attack", "invite_to_party", "give")
 
 
 @dataclass
@@ -349,7 +372,7 @@ class DialogueDirector:
     def _action_questions(allowed_actions) -> tuple[tuple[str, ...], dict[str, Any]]:
         if Noul is None:
             raise RuntimeError("缺少 typesafe-sdk；請先安裝 requirements.txt 中的依賴")
-        requested = tuple(dict.fromkeys(allowed_actions or ()))
+        requested = tuple(allowed_actions or ())
         unknown = set(requested) - set(DIALOGUE_ACTIONS)
         if unknown:
             raise ValueError(f"未知的對話行動：{sorted(unknown)}")
@@ -481,8 +504,11 @@ class DialogueDirector:
                 answer = str(self._typed_answer(
                     response, "choices", "join_response").choice)
                 if answer in ("accept", "reject"):
-                    # A response to an existing offer is not a second join offer.
-                    events = [e for e in events if e["event"] != "join"]
+                    # A response to an existing proposal is not a new proposal.
+                    events = [
+                        e for e in events
+                        if e["event"] not in ("invite_to_party", "request_to_join")
+                    ]
                     events.append({
                         "event": f"join_{answer}",
                         "actor_id": actor_id,
@@ -573,14 +599,11 @@ class DialogueDirector:
         quest_event = next(
             (event for event in events if event.get("event") == "offer_quest"), None)
 
-        items: list[str] = []
+        items: list[dict[str, Any]] = []
         giver = ws.characters.get(give_event.get("actor_id")) if give_event else None
         if giver is not None:
-            items.extend(w.name for w in getattr(giver, "weapons", []))
-            items.extend(c.name for c in getattr(giver, "consumables", [])
-                         if c.quantity > 0)
-            items.extend(str(item) for item in getattr(giver, "gear", []))
-            items = list(dict.fromkeys(items))
+            items = build_action_candidates(
+                ws, give_event.get("actor_id", ""))["inventory"]
 
         quest_giver_id = quest_event.get("actor_id") if quest_event else ""
         quests = [q for q in ws.quests.values()
@@ -590,7 +613,7 @@ class DialogueDirector:
             return resolved
 
         questions: dict[str, Any] = {}
-        item_keys = {f"item_{i}": name for i, name in enumerate(items)}
+        item_keys = {f"item_{i}": item for i, item in enumerate(items)}
         quest_keys = {f"quest_{i}": q.id for i, q in enumerate(quests)}
         if item_keys:
             questions["give_item"] = Choice(
@@ -599,8 +622,8 @@ class DialogueDirector:
                     "`candidates.items` 中由發言者交付的物品。"
                 ),
                 criteria={
-                    **{key: f"發言者持有的「{name}」。"
-                       for key, name in item_keys.items()},
+                    **{key: f"發言者持有的「{item['name']}」。"
+                       for key, item in item_keys.items()},
                     "none": "發言沒有明確對應任何候選物品。",
                 },
             )
@@ -629,8 +652,8 @@ class DialogueDirector:
                 "target": self._character_ref(ws, target_id),
             },
             "candidates": {
-                "items": [{"key": key, "name": name}
-                          for key, name in item_keys.items()],
+                "items": [{"key": key, **item}
+                          for key, item in item_keys.items()],
                 "quests": [{
                     "key": key,
                     "id": q.id,

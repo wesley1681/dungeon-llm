@@ -181,7 +181,7 @@ class TagAgent:
             if candidates["room_npcs"]:
                 add_choice(
                     index, ActionIntent.TALK, "target",
-                    f"{path} 明確表示現在要與哪一名 NPC 交談？",
+                    f"判斷 {path} 是否想與某位在場 NPC 交談或互動，並選出最可能的對象。",
                     candidates["room_npcs"],
                 )
 
