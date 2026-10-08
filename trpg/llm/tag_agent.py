@@ -20,6 +20,7 @@ except ImportError:  # pragma: no cover - only before dependencies are installed
 _DEBUG_DIR = pathlib.Path(__file__).parent.parent / "debug"
 _DEFAULT_THRESHOLD = 0.80
 _NONE = "none"
+_PICKUP_ALL = "pickup_all"
 
 
 class ActionIntent(str, Enum):
@@ -112,6 +113,7 @@ class TagAgent:
         candidates: list[dict[str, Any]],
         *,
         none_meaning: str,
+        extra_choices: Mapping[str, tuple[Any, Any]] | None = None,
     ) -> tuple[Any, dict[str, Any]]:
         if Choice is None:
             raise RuntimeError("缺少 typesafe-sdk；請先安裝 requirements.txt 中的依賴")
@@ -121,6 +123,9 @@ class TagAgent:
             option_id = f"option_{index}"
             criteria[option_id] = candidate
             values[option_id] = candidate
+        for option_id, (criterion, value) in (extra_choices or {}).items():
+            criteria[option_id] = criterion
+            values[option_id] = value
         return Choice(instructions=instructions, criteria=criteria), values
 
     def _build_questions(
@@ -141,10 +146,14 @@ class TagAgent:
             candidates: list[dict[str, Any]],
             *,
             required: bool = True,
+            extra_choices: Mapping[str, tuple[Any, Any]] | None = None,
         ) -> None:
             question_id = _question_id(index, intent, field)
             question, values = self._choice(
-                instructions, candidates, none_meaning=common_none,
+                instructions,
+                candidates,
+                none_meaning=common_none,
+                extra_choices=extra_choices,
             )
             questions[question_id] = question
             bindings[question_id] = {
@@ -220,10 +229,17 @@ class TagAgent:
                     )
 
             if candidates["pickup_items"]:
+                pickup_items = candidates["pickup_items"]
+                pickup_all_choice = (
+                    {_PICKUP_ALL: ("拾取全部", pickup_items)}
+                    if len(pickup_items) >= 2 else None
+                )
                 add_choice(
                     index, ActionIntent.PICKUP, "item",
-                    f"{path} 明確表示現在要拾起哪一件周遭物品？",
-                    candidates["pickup_items"],
+                    f"{path} 明確表示現在要拾起哪一件周遭物品？"
+                    "若明確表示要拾取所有物品，選擇「拾取全部」。",
+                    pickup_items,
+                    extra_choices=pickup_all_choice,
                 )
 
             usable_items = [
@@ -582,10 +598,17 @@ class TagAgent:
                 needed = required.get(index, {}).get(name)
                 if needed is None or (index, name) in blocked or not needed.issubset(fields):
                     continue
-                command = self._command(name, action, fields)
-                if command is not None:
-                    commands.append(command)
-                    per_action_commands.setdefault(index, []).append(command)
+                field_variants = (
+                    ({**fields, "item": item} for item in fields["item"])
+                    if name == ActionIntent.PICKUP.value
+                    and isinstance(fields.get("item"), list)
+                    else (fields,)
+                )
+                for command_fields in field_variants:
+                    command = self._command(name, action, command_fields)
+                    if command is not None:
+                        commands.append(command)
+                        per_action_commands.setdefault(index, []).append(command)
 
         action_results = [
             {**action, "commands": per_action_commands.get(index, [])}

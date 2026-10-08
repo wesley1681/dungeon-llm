@@ -266,6 +266,40 @@ def test_travel_choice_only_contains_current_room_exits(monkeypatch):
     }
 
 
+def test_pickup_all_choice_expands_to_one_command_per_item(monkeypatch):
+    agent, client, world = _agent(
+        monkeypatch,
+        choices={"action_0_pickup_item": "pickup_all"},
+    )
+    world.dungeon_map.current_room.loot.append("繩索")
+
+    judgment = agent.judge_actions([{
+        "actor_id": "kaine", "text": "我把地上所有東西都撿起來",
+    }])
+
+    criteria = client.last_questions["action_0_pickup_item"].criteria
+    assert criteria["pickup_all"] == "拾取全部"
+    assert judgment["commands"] == [
+        {
+            "action": "pickup", "actor_id": "kaine",
+            "item": {"source": "room", "index": 0, "name": "火把"},
+        },
+        {
+            "action": "pickup", "actor_id": "kaine",
+            "item": {"source": "room", "index": 2, "name": "繩索"},
+        },
+    ]
+
+
+def test_pickup_all_choice_requires_at_least_two_items(monkeypatch):
+    agent, client, _ = _agent(monkeypatch)
+
+    agent.judge_actions([{"actor_id": "kaine", "text": "我撿起火把"}])
+
+    criteria = client.last_questions["action_0_pickup_item"].criteria
+    assert "pickup_all" not in criteria
+
+
 def test_search_uses_noul_threshold(monkeypatch):
     agent, _, _ = _agent(
         monkeypatch,
