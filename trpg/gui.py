@@ -19,9 +19,35 @@ from .game import (
 )
 
 _PUMP_MS = 40          # event-poll cadence (ms) on the tk main loop
-_BATTLE_PX = 560       # battlefield image side (px)
+_BATTLE_PX = 680       # battlefield image side (px)
 _MELEE_FONT = ("Microsoft JhengHei", 11)
 _MONO_FONT = ("Consolas", 10)
+
+_STAT_LABELS = {
+    "STR": "力量",
+    "DEX": "敏捷",
+    "CON": "體質",
+    "INT": "智力",
+    "WIS": "感知",
+    "CHA": "魅力",
+}
+
+_STATUS_LABELS = {
+    "dodging": "閃避",
+    "hidden": "躲藏",
+    "reckless": "魯莽攻擊",
+    "blessed": "祝福",
+    "shielded": "法盾",
+    "raging": "狂暴",
+    "restrained": "束縛",
+    "paralyzed": "麻痺",
+    "frightened": "恐懼",
+    "poisoned": "中毒",
+    "stunned": "震懾",
+    "petrified": "石化",
+    "asleep": "沉睡",
+    "swallowed": "被吞噬",
+}
 
 # Combat trace log (repo root, overwritten each launch). The GUI transcript
 # is in-memory only; this file provides the details needed to diagnose a fight —
@@ -35,13 +61,112 @@ _LOG_PATH = pathlib.Path(__file__).resolve().parent.parent / "desktop_game_log.t
 _DEDICATED = {"end", "move", "dodge", "hide", "disengage"}
 
 
+def _object_name(value) -> str:
+    """Return the display name of an equipment/status value."""
+    return str(getattr(value, "name", value))
+
+
+def character_panel_data(character, character_id: str | None = None) -> dict:
+    """Build display-only character data without depending on Tk widgets."""
+    from .engine.abilities import ABILITY_REGISTRY
+
+    if character.is_dead():
+        status = "死亡"
+    elif character.is_dying():
+        saves = character.death_saves
+        status = f"瀕死（成功 {saves.get('successes', 0)}／失敗 {saves.get('failures', 0)}）"
+    else:
+        status_names = []
+        for effect in list(character.status_effects):
+            name = _object_name(effect)
+            status_names.append(_STATUS_LABELS.get(name, name))
+        if character.concentrating_on:
+            concentration = ABILITY_REGISTRY.get(character.concentrating_on)
+            concentration_name = (
+                concentration.display_name
+                if concentration is not None else character.concentrating_on
+            )
+            status_names.append(f"專注：{concentration_name}")
+        status = "、".join(status_names) or "正常"
+
+    abilities = []
+    ability_ids = dict.fromkeys(
+        list(character.known_abilities) + list(character.reactions))
+    for skill_id in ability_ids:
+        ability = ABILITY_REGISTRY.get(skill_id)
+        name = ability.display_name if ability is not None else skill_id
+        if skill_id in character.ability_uses:
+            uses = character.ability_uses[skill_id]
+            name += f"（剩 {uses} 次）" if uses is not None else "（不限次數）"
+        abilities.append(name)
+
+    spell_slots = [
+        f"{level} 環 × {remaining}"
+        for level, remaining in sorted(character.spell_slots.items())
+    ]
+    if character.spellcasting_ability:
+        stat_id = character.spellcasting_ability
+        stat_label = _STAT_LABELS.get(stat_id, stat_id)
+        spell_slots.insert(0, f"施法屬性：{stat_label} {stat_id}")
+
+    stats = []
+    for stat_id, label in _STAT_LABELS.items():
+        value = getattr(character.stats, stat_id)
+        stats.append({
+            "id": stat_id,
+            "label": label,
+            "value": value,
+            "modifier": character.stats.modifier(stat_id),
+        })
+
+    return {
+        "id": character_id or character.id,
+        "name": character.name,
+        "race": character.race,
+        "class": character.class_,
+        "level": character.level,
+        "hp": character.hp,
+        "max_hp": character.max_hp,
+        "ac": character.ac,
+        "status": status,
+        "stats": stats,
+        "skills": list(character.skill_proficiencies),
+        "saving_throws": list(character.saving_throw_proficiencies),
+        "abilities": abilities,
+        "spell_slots": spell_slots,
+        "weapons": [_object_name(item) for item in list(character.weapons)],
+        "consumables": [
+            f"{item.name} × {item.quantity}" for item in list(character.consumables)
+        ],
+        "equipment": [_object_name(item) for item in list(character.equipment)],
+        "gear": [str(item) for item in list(character.gear)],
+    }
+
+
+def party_panel_data(world_state) -> list[dict]:
+    """Return party members in party order, skipping stale character ids."""
+    return [
+        character_panel_data(world_state.characters[character_id], character_id)
+        for character_id in list(world_state.party_ids)
+        if character_id in world_state.characters
+    ]
+
+
 class GameGUI(tk.Tk):
     def __init__(self, state: dict):
         super().__init__()
         self.title("⚔ 地下城探索：失竊的護符")
-        self.geometry("1120x840")
+        self.geometry("1280x860")
+        self.minsize(1024, 720)
         self.session = state["session"]
         self.world_state = state["world_state"]
+        self._human_id = next(
+            (
+                cid for cid, character in self.world_state.characters.items()
+                if character.controller_type == "human"
+            ),
+            "kaine",
+        )
 
         self._last_speaker = None          # transcript: whose line is currently open
         self._awaiting = None              # None | 'explore' | 'combat' | 'conversation'
@@ -50,30 +175,46 @@ class GameGUI(tk.Tk):
         self._pending_skill = None         # skill dict awaiting a target/cell click
         self._aim = None                   # None | 'point' | 'enemy' | 'ally'
         self._bf_photo = None              # keep a ref so tk doesn't GC the image
+        self._party_data = None            # last rendered display snapshot
+        self._selected_party_id = None
         try:
             self._logf = open(_LOG_PATH, "w", encoding="utf-8")
         except Exception:
             self._logf = None
 
         self._build_ui()
+        self._refresh_party_panel(force=True)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
-        human_id = next(
-            (
-                cid for cid, character in self.world_state.characters.items()
-                if character.controller_type == "human"
-            ),
-            "kaine",
-        )
-        self._append(f"你（{self._name(human_id)}）", self.world_state.scene, "you")
+        self._append(
+            f"你（{self._name(self._human_id)}）", self.world_state.scene, "you")
         self.after(_PUMP_MS, self._pump)
 
     # ── layout ────────────────────────────────────────────────────────────────
     def _build_ui(self):
-        # transcript (fills the space above the combat panel + input row)
-        top = ttk.Frame(self, padding=6)
-        top.pack(side="top", fill="both", expand=True)
+        # input row stays available in both exploration and combat modes.
+        bottom = ttk.Frame(self, padding=6)
+        bottom.pack(side="bottom", fill="x")
+        self.entry = ttk.Entry(bottom, font=_MELEE_FONT)
+        self.entry.pack(side="left", fill="x", expand=True)
+        self.entry.bind("<Return>", lambda _e: self._on_enter())
+        self.send_btn = ttk.Button(bottom, text="確認", command=self._on_enter)
+        self.send_btn.pack(side="left", padx=6)
+        self._set_input_enabled(False)
+
+        # Exploration and combat are sibling views. Combat replaces the whole
+        # content area; ending combat restores the transcript and party panel.
+        self.content = ttk.Frame(self)
+        self.content.pack(side="top", fill="both", expand=True)
+
+        self.exploration = ttk.Frame(self.content)
+        self.exploration.pack(fill="both", expand=True)
+        panes = ttk.PanedWindow(self.exploration, orient="horizontal")
+        panes.pack(fill="both", expand=True, padx=6, pady=6)
+
+        transcript = ttk.Frame(panes)
+        panes.add(transcript, weight=3)
         self.log = scrolledtext.ScrolledText(
-            top, wrap="word", font=_MELEE_FONT, state="disabled",
+            transcript, wrap="word", font=_MELEE_FONT, state="disabled",
             bg="#0d1117", fg="#d0d6de", insertbackground="#d0d6de", padx=8, pady=6)
         self.log.pack(fill="both", expand=True)
         for tag, color in (("gm", "#e0c86a"), ("llm_player", "#6ab7ff"),
@@ -82,13 +223,62 @@ class GameGUI(tk.Tk):
             self.log.tag_config(tag, foreground=color)
         self.log.tag_config("speaker", font=("Microsoft JhengHei", 11, "bold"))
 
-        # combat panel — packed in only during a fight (see _show_combat)
-        self.combat = ttk.Frame(self, padding=6)
+        sidebar = ttk.Frame(panes, width=340)
+        panes.add(sidebar, weight=1)
+        ttk.Label(sidebar, text="隊伍", font=("Microsoft JhengHei", 14, "bold")).pack(
+            anchor="w", padx=8, pady=(4, 2))
+
+        party_scroll = ttk.Frame(sidebar)
+        party_scroll.pack(fill="both", expand=True)
+        self.party_canvas = tk.Canvas(
+            party_scroll, width=330, highlightthickness=0, borderwidth=0)
+        party_bar = ttk.Scrollbar(
+            party_scroll, orient="vertical", command=self.party_canvas.yview)
+        self.party_canvas.configure(yscrollcommand=party_bar.set)
+        party_bar.pack(side="right", fill="y")
+        self.party_canvas.pack(side="left", fill="both", expand=True)
+        self.party_body = ttk.Frame(self.party_canvas, padding=(8, 4))
+        self._party_window = self.party_canvas.create_window(
+            (0, 0), window=self.party_body, anchor="nw")
+        self.party_body.bind(
+            "<Configure>",
+            lambda _event: self.party_canvas.configure(
+                scrollregion=self.party_canvas.bbox("all")))
+        self.party_canvas.bind(
+            "<Configure>",
+            lambda event: self.party_canvas.itemconfigure(
+                self._party_window, width=event.width))
+
+        # Full content-area combat view — packed only during a fight.
+        self.combat = ttk.Frame(self.content, padding=10)
         self.bf = tk.Label(self.combat, bg="#181c24", cursor="crosshair")
-        self.bf.pack(side="left")
+        self.bf.pack(side="left", anchor="center", padx=(0, 10))
         self.bf.bind("<Button-1>", self._on_bf_click)
-        ctrl = ttk.Frame(self.combat, padding=(10, 0))
-        ctrl.pack(side="left", fill="both", expand=True)
+
+        # The battlefield has a fixed useful size, but the controls can be
+        # taller than a small window. Keep them in their own scrolling pane so
+        # every skill and dedicated action remains reachable.
+        combat_side = ttk.Frame(self.combat)
+        combat_side.pack(side="left", fill="both", expand=True)
+        self.combat_canvas = tk.Canvas(
+            combat_side, highlightthickness=0, borderwidth=0)
+        combat_bar = ttk.Scrollbar(
+            combat_side, orient="vertical", command=self.combat_canvas.yview)
+        self.combat_canvas.configure(yscrollcommand=combat_bar.set)
+        combat_bar.pack(side="right", fill="y")
+        self.combat_canvas.pack(side="left", fill="both", expand=True)
+        ctrl = ttk.Frame(self.combat_canvas, padding=(10, 0))
+        self._combat_ctrl_window = self.combat_canvas.create_window(
+            (0, 0), window=ctrl, anchor="nw")
+        ctrl.bind(
+            "<Configure>",
+            lambda _event: self.combat_canvas.configure(
+                scrollregion=self.combat_canvas.bbox("all")))
+        self.combat_canvas.bind(
+            "<Configure>",
+            lambda event: self.combat_canvas.itemconfigure(
+                self._combat_ctrl_window, width=event.width))
+
         self.combat_status = ttk.Label(ctrl, text="", font=_MONO_FONT, justify="left")
         self.combat_status.pack(anchor="w")
         ttk.Label(ctrl, text="你的招式：").pack(anchor="w", pady=(6, 0))
@@ -103,16 +293,112 @@ class GameGUI(tk.Tk):
         ttk.Button(btns, text="取消瞄準", command=self._cancel_aim).pack(side="left")
         self.aim_hint = ttk.Label(ctrl, text="", foreground="#e0c86a")
         self.aim_hint.pack(anchor="w")
+        self.bind_all("<MouseWheel>", self._route_mousewheel, add="+")
 
-        # input row (always at the very bottom)
-        bottom = ttk.Frame(self, padding=6)
-        bottom.pack(side="bottom", fill="x")
-        self.entry = ttk.Entry(bottom, font=_MELEE_FONT)
-        self.entry.pack(side="left", fill="x", expand=True)
-        self.entry.bind("<Return>", lambda _e: self._on_enter())
-        self.send_btn = ttk.Button(bottom, text="確認", command=self._on_enter)
-        self.send_btn.pack(side="left", padx=6)
-        self._set_input_enabled(False)
+    @staticmethod
+    def _is_within(widget, ancestor) -> bool:
+        while widget is not None:
+            if widget == ancestor:
+                return True
+            widget = getattr(widget, "master", None)
+        return False
+
+    def _route_mousewheel(self, event):
+        """Scroll the sidebar under the pointer, including all child widgets."""
+        units = int(-event.delta / 120)
+        if self._is_within(event.widget, self.party_canvas):
+            self.party_canvas.yview_scroll(units, "units")
+            return "break"
+        if self._is_within(event.widget, self.combat_canvas):
+            self.combat_canvas.yview_scroll(units, "units")
+            return "break"
+        return None
+
+    def _select_party_member(self, character_id: str):
+        self._selected_party_id = character_id
+        self._refresh_party_panel(force=True)
+
+    def _detail_section(self, parent, title: str, items: list[str]):
+        box = ttk.LabelFrame(parent, text=title, padding=(7, 4))
+        box.pack(fill="x", pady=(0, 6))
+        ttk.Label(
+            box, text="、".join(items) if items else "無",
+            justify="left", wraplength=285,
+        ).pack(anchor="w", fill="x")
+
+    def _refresh_party_panel(self, force: bool = False):
+        data = party_panel_data(self.world_state)
+        if not force and data == self._party_data:
+            return
+        self._party_data = data
+
+        ids = [member["id"] for member in data]
+        if self._selected_party_id not in ids:
+            self._selected_party_id = ids[0] if ids else None
+
+        for widget in self.party_body.winfo_children():
+            widget.destroy()
+
+        if not data:
+            ttk.Label(self.party_body, text="目前沒有隊伍成員").pack(anchor="w")
+            return
+
+        for member in data:
+            selected = member["id"] == self._selected_party_id
+            row = ttk.Frame(self.party_body, relief="solid", borderwidth=1, padding=6)
+            row.pack(fill="x", pady=(0, 6))
+            prefix = "▶ " if selected else ""
+            ttk.Button(
+                row,
+                text=f"{prefix}{member['name']}　Lv.{member['level']} {member['class']}",
+                command=lambda character_id=member["id"]:
+                    self._select_party_member(character_id),
+            ).pack(fill="x")
+            hp_row = ttk.Frame(row)
+            hp_row.pack(fill="x", pady=(5, 1))
+            hp_max = max(1, member["max_hp"])
+            ttk.Progressbar(
+                hp_row, maximum=hp_max,
+                value=max(0, min(member["hp"], hp_max)),
+            ).pack(side="left", fill="x", expand=True)
+            ttk.Label(
+                hp_row, text=f"  HP {member['hp']}/{member['max_hp']}"
+            ).pack(side="left")
+            ttk.Label(
+                row, text=f"AC {member['ac']}　狀態：{member['status']}",
+                foreground="#9aa4b2",
+            ).pack(anchor="w")
+
+        member = next(
+            item for item in data if item["id"] == self._selected_party_id)
+        ttk.Separator(self.party_body).pack(fill="x", pady=(4, 8))
+        ttk.Label(
+            self.party_body, text=member["name"],
+            font=("Microsoft JhengHei", 13, "bold"),
+        ).pack(anchor="w")
+        ttk.Label(
+            self.party_body,
+            text=f"{member['race']}／{member['class']}　等級 {member['level']}　AC {member['ac']}",
+        ).pack(anchor="w", pady=(0, 7))
+
+        stats_box = ttk.LabelFrame(self.party_body, text="屬性", padding=(7, 4))
+        stats_box.pack(fill="x", pady=(0, 6))
+        for index, stat in enumerate(member["stats"]):
+            text = (
+                f"{stat['label']} {stat['id']}  {stat['value']} "
+                f"({stat['modifier']:+d})"
+            )
+            ttk.Label(stats_box, text=text).grid(
+                row=index // 2, column=index % 2, sticky="w", padx=(0, 12), pady=1)
+
+        self._detail_section(self.party_body, "技能熟練", member["skills"])
+        self._detail_section(self.party_body, "豁免熟練", member["saving_throws"])
+        self._detail_section(self.party_body, "職業能力／法術", member["abilities"])
+        self._detail_section(self.party_body, "法術位", member["spell_slots"])
+        self._detail_section(self.party_body, "武器", member["weapons"])
+        self._detail_section(self.party_body, "消耗品", member["consumables"])
+        self._detail_section(self.party_body, "穿戴裝備", member["equipment"])
+        self._detail_section(self.party_body, "一般道具", member["gear"])
 
     # ── event pump (tk main loop) ───────────────────────────────────────────────
     def _pump(self):
@@ -127,6 +413,7 @@ class GameGUI(tk.Tk):
             if drained and self._combat_active():
                 self._redraw_battlefield()
         finally:
+            self._refresh_party_panel()
             self.after(_PUMP_MS, self._pump)
 
     def _handle(self, ev):
@@ -145,6 +432,7 @@ class GameGUI(tk.Tk):
             self._log("\n========== COMBAT START ==========")
             self._log("先攻順序: " + " → ".join(ev.order))
             self._dump_roster()
+            self._show_combat()
         elif isinstance(ev, RoundStart):
             self._append("回合", f"—— 第 {ev.number} 回合 ——", "sys")
             self._log(f"\n----- Round {ev.number} -----")
@@ -284,7 +572,7 @@ class GameGUI(tk.Tk):
         go through here (echo, gate off, then hand the command to the session)."""
         if self._awaiting is None:
             return
-        self._append("你（凱恩）", text, "you")
+        self._append(f"你（{self._name(self._human_id)}）", text, "you")
         self._awaiting = None
         self._cancel_aim()
         self._set_input_enabled(False)
@@ -297,8 +585,10 @@ class GameGUI(tk.Tk):
         return bool(c and c.active and c.initiative_order)
 
     def _show_combat(self):
+        if self.exploration.winfo_ismapped():
+            self.exploration.pack_forget()
         if not self.combat.winfo_ismapped():
-            self.combat.pack(side="bottom", fill="x")
+            self.combat.pack(fill="both", expand=True)
         self._redraw_battlefield()
 
     def _hide_combat(self):
@@ -307,9 +597,12 @@ class GameGUI(tk.Tk):
         self._clear_skill_buttons()
         if self.combat.winfo_ismapped():
             self.combat.pack_forget()
+        if not self.exploration.winfo_ismapped():
+            self.exploration.pack(fill="both", expand=True)
+        self._refresh_party_panel(force=True)
 
     def _redraw_battlefield(self):
-        actor_id = self._combat_view["actor_id"] if self._combat_view else "kaine"
+        actor_id = self._combat_view["actor_id"] if self._combat_view else self._human_id
         img, transform = gui_combat.render_battlefield(
             self.world_state, actor_id, px=_BATTLE_PX)
         self._transform = transform
