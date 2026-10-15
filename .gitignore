@@ -56,3 +56,7 @@ scripts/*_fingerprints.json
 # Local LLM backend config (may contain API keys / local-only paths)
 /_server_config.json
 /_deepseek_config.json
+
+/SKILL.md
+/NPC行動設計.yaml
+/combat_policy_net_dataflow.html
